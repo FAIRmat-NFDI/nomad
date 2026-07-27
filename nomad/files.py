@@ -532,14 +532,16 @@ class ZipFileSource(BrowsableFileSource):
 
     def __init__(
         self,
-        zip_file: str,
+        zip_file: str | None,
         sub_path: str = '',
         fs: AbstractFileSystem | None = None,
+        zip_fs: ZipFileSystem | None = None,
     ):
         super().__init__(fs)
         assert is_safe_relative_path(sub_path)
         self.sub_path = sub_path
-        self._zip_fs = ZipFileSystem(zip_file)
+        self._zip_fs = zip_fs or ZipFileSystem(zip_file)
+        self._owns_zip_fs = zip_fs is None
 
     def to_streamed_files(self) -> Iterable[StreamedFile]:
         for target_path in self._zip_fs.find(self.sub_path):
@@ -564,10 +566,16 @@ class ZipFileSource(BrowsableFileSource):
             assert path.startswith(self.sub_path + os.path.sep), (
                 'Provided `path` is not a sub path.'
             )
-        return ZipFileSource(self._zip_fs.fo, path)
+        return ZipFileSource(
+            None,
+            path,
+            fs=self._fs,
+            zip_fs=self._zip_fs,
+        )
 
     def close(self):
-        self._zip_fs.close()
+        if self._owns_zip_fs:
+            self._zip_fs.close()
 
 
 class CombinedFileSource(FileSource):
