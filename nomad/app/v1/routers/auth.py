@@ -51,6 +51,7 @@ from nomad.auth.tokens import (
 from nomad.config import config
 from nomad.config.models.config import ModeEnum
 from nomad.models.common import UTCDateTime
+from nomad.tracing import traced
 from nomad.utils import get_logger
 
 from ..common import root_path
@@ -76,6 +77,7 @@ oauth2_scheme = OAuth2PasswordBearer(
 )
 
 
+@traced(span_name='graph.auth.resolve_user')
 def _resolve_user_with_scopes(
     *,
     required_scopes: set[str],
