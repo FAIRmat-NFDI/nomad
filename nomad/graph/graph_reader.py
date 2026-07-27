@@ -102,6 +102,7 @@ from nomad.mongo.groups import MongoUserGroup, get_mongo_user_group
 from nomad.mongo.package import PackageDefinition
 from nomad.mongo.search import MongoQueryError, create_mongo_query
 from nomad.processing import Entry, Upload
+from nomad.tracing import trace_span, traced
 
 logger = utils.get_logger(__name__)
 
@@ -1161,6 +1162,7 @@ class GeneralReader:
 
         return entry
 
+    @traced(span_name='graph.entry.retrieve')
     async def retrieve_entry(self, entry_id: str) -> str | dict:
         if (
             entry := await asyncio.to_thread(self._retrieve_entry_if_visible, entry_id)
@@ -1253,6 +1255,8 @@ class GeneralReader:
         omit_keys=None,
         wildcard: bool = False,
     ):
+        # The list contents are intentionally not traced individually; the
+        # enclosing archive walk span provides the useful aggregate timing.
         # the original archive may be an empty list
         # populate an empty list to keep the structure
         await _populate_result(node.result_root, node.current_path, [])
@@ -1473,6 +1477,7 @@ class MongoReader(GeneralReader):
     def datasets(self):
         return Dataset.m_def.a_mongo.objects(user_id=self.auth_user_id)
 
+    @traced(span_name='graph.mongo.query_es')
     async def _query_es(self, config: RequestConfig):
         search_params: dict = {
             'owner': 'user' if self.auth_user_id else 'public',
@@ -1514,6 +1519,7 @@ class MongoReader(GeneralReader):
             v['entry_id']: _overwrite(v) for v in search_response.data
         }
 
+    @traced(span_name='graph.mongo.query_entries')
     async def _query_entries(self, config: RequestConfig):
         if not config.query:
             return None, self.entries
@@ -1546,6 +1552,7 @@ class MongoReader(GeneralReader):
             mongo_query
         )
 
+    @traced(span_name='graph.mongo.query_uploads')
     async def _query_uploads(self, config: RequestConfig):
         if not config.query:
             return None, self.uploads
@@ -1564,6 +1571,7 @@ class MongoReader(GeneralReader):
             mongo_query
         )
 
+    @traced(span_name='graph.mongo.query_datasets')
     async def _query_datasets(self, config: RequestConfig):
         if not config.query:
             return None, self.datasets
@@ -1599,6 +1607,7 @@ class MongoReader(GeneralReader):
         )
         return query.model_dump(exclude_unset=True), MongoUserGroup.get_by_query(query)
 
+    @traced(span_name='graph.mongo.normalise')
     async def _normalise(
         self, mongo_result, config: RequestConfig, transformer: Callable
     ) -> tuple[dict, PaginationResponse | None]:
@@ -1682,6 +1691,7 @@ class MongoReader(GeneralReader):
 
         return mongo_dict, pagination_response
 
+    @traced(span_name='graph.mongo.read')
     async def read(self):
         """
         All read() methods, including the ones in the subclasses, should return a dict as the response.
@@ -2247,6 +2257,7 @@ class EntryReader(MongoReader):
     def datasets(self):
         return Dataset.m_def.a_mongo.objects(entries=self.target_entry_id)
 
+    @traced(span_name='graph.entry.build_layout_read_plan')
     async def _build_layout_read_plan(
         self, target_entry: dict[str, Any], archive: GenericDict
     ) -> _EntryLayoutReadPlan:
@@ -2287,6 +2298,7 @@ class EntryReader(MongoReader):
             archive_request=archive_request,
         )
 
+    @traced(span_name='graph.entry.read_layout_archive')
     async def _read_layout_archive(
         self, archive: GenericDict, request: _LayoutArchiveRequest
     ) -> dict[str, Any]:
@@ -2301,6 +2313,7 @@ class EntryReader(MongoReader):
             return await reader.read(archive)
 
     # noinspection PyMethodOverriding
+    @traced(span_name='graph.entry.read')
     async def read(self, entry_id: str) -> dict:  # type: ignore
         """Read one entry and resolve a server-selected layout when requested."""
         with self._prepare_reading() as response:
@@ -2884,6 +2897,7 @@ class ArchiveReader(ArchiveLikeReader):
 
         return False
 
+    @traced(span_name='graph.archive.read')
     async def read(self, *args) -> dict:
         """
         Read the given archive with the required fields.
@@ -2896,23 +2910,24 @@ class ArchiveReader(ArchiveLikeReader):
             metadata = await goto_child(_archive, 'metadata')
 
             with self._prepare_reading() as response:
-                await self._walk(
-                    GraphNode(
-                        upload_id=await goto_child(metadata, 'upload_id'),
-                        entry_id=await goto_child(metadata, 'entry_id'),
-                        current_path=[],
-                        result_root=response,
-                        ref_result_root=self.global_root,
-                        archive=_archive,
-                        archive_root=_archive,
-                        definition=EntryArchive.m_def,
-                        visited_path=set(),
-                        current_depth=0,
-                        reader=self,
-                    ),
-                    self.required_query,
-                    self.global_config,
-                )
+                with trace_span('graph.archive.walk'):
+                    await self._walk(
+                        GraphNode(
+                            upload_id=await goto_child(metadata, 'upload_id'),
+                            entry_id=await goto_child(metadata, 'entry_id'),
+                            current_path=[],
+                            result_root=response,
+                            ref_result_root=self.global_root,
+                            archive=_archive,
+                            archive_root=_archive,
+                            definition=EntryArchive.m_def,
+                            visited_path=set(),
+                            current_depth=0,
+                            reader=self,
+                        ),
+                        self.required_query,
+                        self.global_config,
+                    )
 
                 return response
 
