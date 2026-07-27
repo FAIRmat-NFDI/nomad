@@ -23,7 +23,7 @@ dependencies = [
   "elasticsearch>=7.17.3", # lower versions have incompatibilies with some numpy versions.
   "fsspec>=2026.2.0",
   "h5py>=3.6.0",
-  "httpx>=0.23.3,<0.28", # breaking change in 0.28 breaks keycloak compatibility
+  "httpx>=0.23.3,<1",
   "jmespath>=0.10.0",
   "jsonpath-ng",
   "json_stream",
