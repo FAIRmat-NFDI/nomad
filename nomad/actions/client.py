@@ -74,7 +74,6 @@ def _get_runtime() -> Runtime:
             if _runtime is None:
                 _runtime = Runtime(
                     telemetry=TelemetryConfig(metrics=_get_metrics_config()),
-                    worker_heartbeat_interval=None,
                 )
 
     return _runtime
