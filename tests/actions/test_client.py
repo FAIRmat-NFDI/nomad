@@ -34,7 +34,7 @@ async def test_get_client():
 
 
 class FakeRuntime:
-    def __init__(self, *, telemetry, worker_heartbeat_interval):
+    def __init__(self, *, telemetry, worker_heartbeat_interval=None):
         self.telemetry = telemetry
         self.worker_heartbeat_interval = worker_heartbeat_interval
 
@@ -44,7 +44,7 @@ async def test_get_client_reuses_runtime(monkeypatch):
     created_runtimes = []
     connect = AsyncMock(side_effect=[object(), object()])
 
-    def runtime_factory(*, telemetry, worker_heartbeat_interval):
+    def runtime_factory(*, telemetry, worker_heartbeat_interval=None):
         runtime = FakeRuntime(
             telemetry=telemetry,
             worker_heartbeat_interval=worker_heartbeat_interval,
@@ -75,7 +75,7 @@ async def test_get_client_disables_prometheus_exporter_for_app(monkeypatch):
     created_runtimes = []
     connect = AsyncMock(return_value=object())
 
-    def runtime_factory(*, telemetry, worker_heartbeat_interval):
+    def runtime_factory(*, telemetry, worker_heartbeat_interval=None):
         runtime = FakeRuntime(
             telemetry=telemetry,
             worker_heartbeat_interval=worker_heartbeat_interval,
