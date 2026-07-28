@@ -253,6 +253,10 @@ async def test_transfer_respond(
                 else users_dict['user1'].user_id
             )
             assert group_response.json()['owner'] == expected_owner_id
+            if action == 'accept':
+                assert (
+                    users_dict['user1'].user_id not in group_response.json()['members']
+                )
 
     pending_record = OwnershipTransferRecord.objects(
         resource_type=_resource_record_type(resource_type),

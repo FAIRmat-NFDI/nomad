@@ -334,7 +334,11 @@ def _list_ownership_transfers(
 
     transfers: list[OwnershipTransferResource] = []
     for record in query.order_by('-updated_at'):
-        resource = get_resource(record.resource_id)
+        try:
+            resource = get_resource(record.resource_id)
+        except Exception:
+            continue
+
         if resource is None:
             continue
 
@@ -650,11 +654,10 @@ def _respond_to_group_ownership_transfer(
         updated_members_info = [
             UserGroupMember(user_id=member.user_id, role=member.role)
             for member in group.members_info
+            if member.role != UserGroupMemberRole.OWNER
         ]
         found_target = False
         for member in updated_members_info:
-            if member.role == UserGroupMemberRole.OWNER:
-                member.role = UserGroupMemberRole.MEMBER
             if member.user_id == user.user_id:
                 member.role = UserGroupMemberRole.OWNER
                 found_target = True
