@@ -206,7 +206,7 @@ def assert_dataset_deleted(dataset_id):
     ],
 )
 def test_datasets(client, data, query, size, status_code):
-    url = 'datasets/'
+    url = 'datasets'
     if len(query) > 0:
         url += '?' + urlencode(query, doseq=True)
     response = client.get(url)
@@ -331,7 +331,7 @@ def test_post_datasets(
     headers = auth_headers[user_label]
     user = users_dict.get(user_label, user_label)
 
-    response = client.post('datasets/', headers=headers, json=dataset)
+    response = client.post('datasets', headers=headers, json=dataset)
 
     assert_response(response, status_code=status_code)
     if status_code != 200:

@@ -183,7 +183,7 @@ function DatasetsPage() {
       return
     }
     const {page_size, page, order_by, order} = pagination
-    const url = `/datasets/?page_size=${page_size}&page=${page}&order_by=${order_by}&order=${order}&user_id=${user.sub}`
+    const url = `/datasets?page_size=${page_size}&page=${page}&order_by=${order_by}&order=${order}&user_id=${user.sub}`
     api.get(url, null, {returnRequest: true})
       .then(setApiData)
       .catch(errors.raiseError)

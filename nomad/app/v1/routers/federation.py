@@ -45,7 +45,7 @@ class APITag(str, Enum):
 
 
 @router.post(
-    '/logs/',
+    '/logs',
     tags=[APITag.DEFAULT],
     summary='Receive logs in logstash format from other Nomad installations and store into central logstash '
     'for further analysis.',

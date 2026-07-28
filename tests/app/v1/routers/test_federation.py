@@ -65,7 +65,7 @@ def test_single_logrecord(is_gzip, api_v1, central_logstash_mock):
         send_record_post = deepcopy(record)
         headers = None
 
-    target = f'{config.client.url}/v1/federation/logs/'
+    target = f'{config.client.url}/v1/federation/logs'
 
     with central_logstash_mock as server:
         ret = requests.post(target, data=send_record_post, headers=headers)
@@ -100,7 +100,7 @@ def test_nginx_ipaddress_header(
     send_header_ip, expected_ip, api_v1, central_logstash_mock
 ):
     send_record = create_log_record() + b'\n'
-    target = f'{config.client.url}/v1/federation/logs/'
+    target = f'{config.client.url}/v1/federation/logs'
 
     with central_logstash_mock as server:
         header = {'X-Forwarded-For': send_header_ip}
@@ -115,7 +115,7 @@ def test_nginx_ipaddress_header(
 
 @pytest.mark.timeout(3)
 def test_two_records_with_redundant_newline(api_v1, central_logstash_mock):
-    target = f'{config.client.url}/v1/federation/logs/'
+    target = f'{config.client.url}/v1/federation/logs'
 
     log1 = create_log_record(msg='testmsg1') + b'\n'
     log2 = create_log_record(msg='testmsg2') + b'\n'
@@ -150,7 +150,7 @@ def test_two_records_with_redundant_newline(api_v1, central_logstash_mock):
 )
 @pytest.mark.timeout(3)
 def test_invalid_logrecord(msg, size, api_v1, central_logstash_mock):
-    target = f'{config.client.url}/v1/federation/logs/'
+    target = f'{config.client.url}/v1/federation/logs'
     invalid = msg.encode()
 
     with central_logstash_mock:
