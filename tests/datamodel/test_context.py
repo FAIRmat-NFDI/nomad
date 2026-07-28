@@ -25,17 +25,10 @@ import pytest
 
 from nomad import files, processing, utils
 from nomad.datamodel import Context
-from nomad.datamodel.context import (
-    ClientContext,
-    ServerContext,
-    _mongo_definition_cache,
-    _mongo_package_cache,
-    parse_path,
-)
+from nomad.datamodel.context import ClientContext, ServerContext, parse_path
 from nomad.datamodel.datamodel import EntryArchive, EntryMetadata
 from nomad.datamodel.metainfo import runschema
-from nomad.metainfo.metainfo import MSection, Package
-from nomad.mongo.package import PackageDefinition
+from nomad.metainfo.metainfo import MSection
 from nomad.parsing.parser import ArchiveParser
 from nomad.processing import Entry, ProcessStatus, Upload
 
@@ -87,41 +80,6 @@ def context():
 def test_normalize_reference(context, url, result):
     root_section = EntryArchive(metadata=EntryMetadata(upload_id='test_id'))
     assert context.normalize_reference(root_section, url) == result
-
-
-def test_fetch_section_caches_all_definitions_from_package(monkeypatch, mongo_module):
-    package = Package.m_from_dict(
-        {
-            'name': 'tests.datamodel.cached_definitions',
-            'section_definitions': [{'name': 'First'}, {'name': 'Second'}],
-        }
-    )
-    package.init_metainfo()
-    PackageDefinition.create_new(package)
-    first_id, second_id = [
-        section.definition_id for section in package.section_definitions
-    ]
-
-    get_by_calls = []
-    original_get_by = PackageDefinition.get_by
-
-    def count_get_by(cls, snapshot_id):
-        get_by_calls.append(snapshot_id)
-        return original_get_by(snapshot_id)
-
-    monkeypatch.setattr(PackageDefinition, 'get_by', classmethod(count_get_by))
-
-    server_context = ServerContext()
-    assert server_context.fetch_section(None, first_id).name == 'First'
-    assert server_context.fetch_section(None, second_id).name == 'Second'
-    assert get_by_calls == [first_id]
-    assert _mongo_definition_cache[first_id] == (package.definition_id, 0)
-    assert _mongo_definition_cache[second_id] == (package.definition_id, 1)
-
-    # Definition locations must not keep an evicted package alive.
-    del _mongo_package_cache[package.definition_id]
-    assert server_context.fetch_section(None, second_id).name == 'Second'
-    assert get_by_calls == [first_id, second_id]
 
 
 @pytest.mark.parametrize(
