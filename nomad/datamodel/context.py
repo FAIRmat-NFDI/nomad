@@ -24,11 +24,9 @@ import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import final
 from urllib.parse import urlsplit, urlunsplit
 
 import requests
-from cachetools import LRUCache
 from ruamel import yaml
 
 from nomad import utils
@@ -53,47 +51,10 @@ def _opener_and_dumper(file_name: str) -> tuple:
     return loader, dumper
 
 
-# use to cache packages that are retrieved from MongoDB
-_mongo_package_cache: LRUCache = LRUCache(128)
-# Resolve package and section IDs without fetching their package document first.
-_mongo_definition_cache: LRUCache = LRUCache(8192)
-
-
-def _cache_package_definitions(
-    package: Package,
-    package_id: str,
-    section_ids: list[str],
-):
-    _mongo_package_cache[package_id] = package
-    _mongo_definition_cache[package_id] = (package_id, None)
-    for section_index, section_id in enumerate(section_ids):
-        _mongo_definition_cache[section_id] = (package_id, section_index)
-
-
-def _get_cached_definition(definition_id: str):
-    location = _mongo_definition_cache.get(definition_id)
-    if location is None:
-        return None
-
-    package_id, section_index = location
-    package = _mongo_package_cache.get(package_id)
-    if package is None:
-        return None
-
-    if section_index is None:
-        return package
-    if section_index >= len(package.section_definitions):
-        return None
-    return package.section_definitions[section_index]
-
-
 def populate_builtin_packages():
-    for package in Package.registry.values():
-        _cache_package_definitions(
-            package,
-            package.definition_id,
-            [section.definition_id for section in package.section_definitions],
-        )
+    from nomad.schemas import cache_builtin_packages
+
+    cache_builtin_packages()
 
 
 class Context:
@@ -369,47 +330,16 @@ class Context:
         """
         raise NotImplementedError
 
-    def _fetch_package(self, def_ref: str | None, def_id: str) -> dict:
-        """
-        Fetch a package by the reference name and ID of one of its section definitions.
-        """
-        raise NotImplementedError()
-
-    @final
     def fetch_section(self, def_ref: str | None, def_id: str):
         """
         Fetch a section definition by its reference name and ID.
         """
-        if definition := _get_cached_definition(def_id):
-            return definition
-
         try:
-            mongo_package = self._fetch_package(def_ref, def_id)
+            from nomad.schemas import get_schema
+
+            return get_schema(def_ref, def_id)
         except Exception:  # noqa
             return None
-
-        snapshot_package_id = mongo_package['snapshot_package_id']
-
-        pkg: Package
-        if snapshot_package_id in _mongo_package_cache:
-            pkg = _mongo_package_cache[snapshot_package_id]
-        else:
-            pkg = Package.m_from_dict(mongo_package['data'], m_context=self)
-            pkg.upload_id = mongo_package.get('upload_id', None)
-            pkg.entry_id = mongo_package.get('entry_id', None)
-
-            pkg.init_metainfo()
-            pkg.snapshot_id = snapshot_package_id
-            pkg.loaded_from_mongodb = True
-            for snapshot, section in zip(
-                mongo_package['snapshot_section_ids'], pkg.section_definitions
-            ):
-                section.snapshot_id = snapshot
-
-        _cache_package_definitions(
-            pkg, snapshot_package_id, mongo_package['snapshot_section_ids']
-        )
-        return _get_cached_definition(def_id)
 
     @contextmanager
     def update_entry(
@@ -549,56 +479,6 @@ class ServerContext(Context):
 
     def process_updated_raw_file(self, path, allow_modify=False):
         self.upload.process_updated_raw_file(path, allow_modify)
-
-    def _fetch_package(self, def_ref: str | None, def_id: str) -> dict:
-        if def_ref is None or '://' not in def_ref:
-            # not a valid url, may be just a plain python name or reference name
-            # use information on the current server
-            from nomad.mongo.package import PackageDefinition
-
-            mong_package = PackageDefinition.get_by(def_id)
-
-            return {
-                'entry_id': mong_package.get('entry_id', None),
-                'upload_id': mong_package.get('upload_id', None),
-                'snapshot_package_id': mong_package['snapshot_package_id'],
-                'snapshot_section_id': def_id,
-                'snapshot_section_ids': mong_package['snapshot_section_ids'],
-                'data': mong_package['package_definition'],
-            }
-
-        try:
-            url_parts = urlsplit(def_ref)
-        except ValueError:
-            raise MetainfoReferenceError(
-                f'Cannot retrieve section {def_id} from {def_ref}.'
-            )
-
-        # appears to be a valid url
-        # build the corresponding request to retrieve the definition
-        # important: here we assume the original reference url has the following form:
-        #     https://example.nomad.site/some/prefix?possible=query#<definition_contains_id>
-        # The definition_id is extracted from the url and used to build the request.
-        # The target endpoint is assumed to be
-        #     https://example.nomad.site/some/prefix/metainfo/<definition_id>
-        response = requests.get(
-            urlunsplit(
-                (
-                    url_parts.scheme,
-                    url_parts.netloc,
-                    url_parts.path,
-                    f'metainfo/{def_id}',
-                    '',
-                )
-            )
-        )
-
-        if response.status_code >= 400:
-            raise MetainfoReferenceError(
-                f'Cannot retrieve section {def_id} from {def_ref}.'
-            )
-
-        return response.json()
 
     @contextmanager
     def update_entry(
@@ -769,37 +649,6 @@ class ClientContext(Context):
             return super().create_reference(section, quantity_def, value)
         except AssertionError:
             return f'<unavailable url>/#{value.m_path()}'
-
-    def _fetch_package(self, def_ref: str | None, def_id: str) -> dict:
-        if def_ref and def_ref.startswith('http'):
-            try:
-                url_parts = urlsplit(def_ref)
-                # it appears to be a valid remote url
-                # we assume the netloc is the installation_url
-                url = urlunsplit(
-                    (
-                        url_parts.scheme,
-                        url_parts.netloc,
-                        f'api/v1/metainfo/{def_id}',
-                        '',
-                        '',
-                    )
-                )
-            except ValueError:
-                # falls back to default installation_url
-                url = f'{self.installation_url}/metainfo/{def_id}'
-        else:
-            # falls back to default installation_url
-            url = f'{self.installation_url}/metainfo/{def_id}'
-
-        response = requests.get(url)
-
-        if response.status_code >= 400:
-            raise MetainfoReferenceError(
-                f'Cannot retrieve section {def_id} from {def_ref}.'
-            )
-
-        return response.json()
 
     @contextmanager
     def update_entry(

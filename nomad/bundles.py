@@ -48,9 +48,9 @@ from nomad.files import (
 )
 from nomad.files import bundle_info_filename as BUNDLE_INFO_FILENAME
 from nomad.metainfo import Package, Section
-from nomad.metainfo.util import resolve_m_def
 from nomad.processing.base import ProcessStatus
 from nomad.processing.data import Entry, Upload, mongo_entry_metadata
+from nomad.schemas import get_schema
 
 
 def _get_section_defs_for_upload(upload_id: str) -> list[Section]:
@@ -77,10 +77,11 @@ def _get_section_defs_for_upload(upload_id: str) -> list[Section]:
             if not qualified_name:
                 continue
 
-            definition = resolve_m_def(qualified_name)
+            definition_id = section_def.get('definition_id')
+            definition = get_schema(qualified_name, definition_id)
             if isinstance(definition, Section):
                 definitions_by_id.setdefault(
-                    section_def.get('definition_id', definition.definition_id),
+                    definition_id or definition.definition_id,
                     definition,
                 )
 

@@ -20,6 +20,7 @@ import io
 import json
 import os
 import zipfile
+from types import SimpleNamespace
 
 from nomad.bundles import (
     BundleExporter,
@@ -32,6 +33,7 @@ from nomad.config import config
 from nomad.datamodel import EntryArchive
 from nomad.datamodel.datamodel import EntryMetadata
 from nomad.metainfo import MSection, Package, Quantity
+from nomad.mongo.package import PackageDefinition
 from nomad.processing import Entry, Upload
 
 # Test for helper functions
@@ -63,6 +65,45 @@ def test_get_section_defs_for_upload(non_empty_processed_with_temporal):
     assert EntryMetadata.m_def.qualified_name() in qualified_names
     assert 'nomad.datamodel.results.Results' in qualified_names
     assert 'runschema.run.Run' in qualified_names
+
+
+def test_get_section_defs_for_upload_with_custom_schema(mongo_module, monkeypatch):
+    package = Package(name='tests.custom_bundle_schema')
+    package.upload_id = 'test-upload'
+    package.entry_id = 'test-schema-entry'
+
+    class CustomSchema(MSection):
+        value = Quantity(type=str)
+
+    package.section_definitions.append(CustomSchema.m_def)
+    PackageDefinition.create_new(package)
+
+    monkeypatch.setattr(
+        'nomad.bundles.Upload.get',
+        lambda upload_id: SimpleNamespace(main_author=None),
+    )
+    monkeypatch.setattr(
+        'nomad.bundles.search.search_iterator',
+        lambda **kwargs: [
+            {
+                'section_defs': [
+                    {
+                        'definition_qualified_name': package.qualified_name()
+                        + f'.{CustomSchema.m_def.name}',
+                        'definition_id': CustomSchema.m_def.definition_id,
+                    }
+                ]
+            }
+        ],
+    )
+
+    definitions = _get_section_defs_for_upload('test-upload')
+
+    assert len(definitions) == 1
+    assert definitions[0].definition_id == CustomSchema.m_def.definition_id
+    assert definitions[0].qualified_name() == (
+        f'entry_id:{package.entry_id}.{CustomSchema.m_def.name}'
+    )
 
 
 def test_get_package_for_section():
