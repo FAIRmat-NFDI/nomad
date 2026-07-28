@@ -333,7 +333,7 @@ class DatasetCreate(BaseModel):  # type: ignore
 
 
 @router.get(
-    '/',
+    '',
     tags=[APITag.DEFAULT],
     summary='Get a list of datasets',
     response_model=DatasetsResponse,
@@ -417,7 +417,7 @@ def get_dataset(
 
 
 @router.post(
-    '/',
+    '',
     tags=[APITag.DEFAULT],
     summary='Create a new dataset',
     response_model=DatasetResponse,

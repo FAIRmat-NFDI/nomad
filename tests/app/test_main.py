@@ -18,6 +18,7 @@
 
 
 from tempfile import NamedTemporaryFile
+from urllib.parse import urlparse
 
 import pytest
 from fastapi import FastAPI
@@ -25,6 +26,7 @@ from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from starlette.routing import Mount
 
+from nomad.app.v1.main import app as api_v1_app
 from nomad.app.v1.models.models import User
 from nomad.auth.scopes import Scope, _resolve_scopes
 from nomad.auth.tokens import AuthResult
@@ -310,6 +312,31 @@ def test_user_dependency_on_all_endpoints():
 
 
 # Tests for mount_with_trailing_slash_redirect
+
+
+@pytest.fixture
+def api_v1_client():
+    return TestClient(api_v1_app, follow_redirects=False)
+
+
+@pytest.mark.parametrize(
+    ('method', 'legacy_path', 'canonical_path'),
+    [
+        pytest.param('GET', '/datasets/', '/datasets', id='datasets-get'),
+        pytest.param('POST', '/datasets/', '/datasets', id='datasets-post'),
+        pytest.param(
+            'POST', '/federation/logs/', '/federation/logs', id='federation-logs'
+        ),
+        pytest.param('GET', '/north/', '/north', id='north'),
+    ],
+)
+def test_api_v1_trailing_slash_redirects_to_canonical_path(
+    api_v1_client, method, legacy_path, canonical_path
+):
+    response = api_v1_client.request(method, legacy_path)
+
+    assert response.status_code == 307
+    assert urlparse(response.headers['location']).path == canonical_path
 
 
 @pytest.fixture

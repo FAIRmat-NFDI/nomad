@@ -74,7 +74,7 @@ def transfer_logs():
         )
         return False
 
-    url = f'{config.oasis.central_nomad_deployment_url}/v1/federation/logs/'
+    url = f'{config.oasis.central_nomad_deployment_url}/v1/federation/logs'
     try:
         headers = {'Content-Encoding': 'gzip'}
 

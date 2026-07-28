@@ -113,7 +113,7 @@ def _get_status(tool: ToolModel, user: User) -> ToolModel:
 
 
 @router.get(
-    '/',
+    '',
     tags=[APITag.DEFAULT],
     response_model=ToolsResponseModel,
     summary='Get a list of all configured tools and their current state.',
