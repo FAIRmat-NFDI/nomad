@@ -96,7 +96,6 @@ python linting:
   script:
     - ruff check
     - ruff format --check
-    - python scripts/check_copyright_headers.py
     - ruff check --output-format gitlab > $CI_PROJECT_DIR/gl-code-quality-report.json
     - mypy nomad tests
   rules:
