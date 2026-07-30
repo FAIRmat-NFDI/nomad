@@ -18,11 +18,16 @@
 import React, { useState } from 'react'
 import PropTypes from 'prop-types'
 import { apiBase } from '../../config'
+import { refreshBrowserAuth } from '../api'
+import { useKeycloak } from '@react-keycloak/web'
 import { Tooltip, IconButton, Menu, MenuItem } from '@material-ui/core'
 import DownloadIcon from '@material-ui/icons/CloudDownload'
+import { useErrors } from '../errors'
 
 const EntryDownloadButton = React.memo(function EntryDownloadButton(props) {
   const {tooltip, disabled, buttonProps, dark, query} = props
+  const { keycloak } = useKeycloak()
+  const { raiseError } = useErrors()
   const [anchorEl, setAnchorEl] = useState(null)
 
   const handleClick = event => {
@@ -30,12 +35,17 @@ const EntryDownloadButton = React.memo(function EntryDownloadButton(props) {
     setAnchorEl(event.currentTarget)
   }
 
-  const handleSelect = (urlSuffix) => {
+  const handleSelect = async (urlSuffix) => {
     setAnchorEl(null)
     const queryStringData = query
     const owner = query.visibility || 'visible'
     const url = `${apiBase}/v1/entries/${urlSuffix}?owner=${owner}&json_query=${JSON.stringify(queryStringData)}`
-    window.location.assign(url)
+    try {
+      await refreshBrowserAuth(keycloak)
+      window.location.assign(url)
+    } catch (error) {
+      raiseError(new Error('Could not refresh your session before downloading. Please sign in again and retry.'))
+    }
   }
 
   const handleClose = () => {

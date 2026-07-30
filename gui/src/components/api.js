@@ -559,22 +559,48 @@ export const withApi = (Component) => React.forwardRef((props, ref) => {
   return <Component ref={ref} {...apiProps} raiseError={raiseError} {...props} />
 })
 
-export const onKeycloakEvent = (keycloak) => {
+const prefixPaths = (path) => {
+  const prefixes = ['/']
+  let prefix = ''
+
+  for (const segment of path.split('/').filter(Boolean)) {
+    prefix += `/${segment}`
+    prefixes.push(prefix)
+  }
+
+  return prefixes
+}
+
+export const syncAuthorizationCookie = (keycloak) => {
   const cookies = new Cookies()
   const path = apiBase.startsWith('/') ? apiBase : new URL(apiBase).pathname
-  return () => {
-    // Will be called whenever a keycloak event occurs
-    if (keycloak.authenticated) {
-      // Authenticated. Set authentication cookie
-      cookies.set('Authorization', 'Bearer ' + keycloak.token,
-        {
-          path: path,
-          expires: new Date((keycloak.tokenParsed.exp + keycloak.timeSkew) * 1000),
-          sameSite: 'strict'
-        })
-    } else {
-      // Not authenticated. Remove the cookie.
-      cookies.remove('Authorization', {path: path})
-    }
+  const ancestorPaths = prefixPaths(path).filter(p => p !== path)
+  for (const p of ancestorPaths) cookies.remove('Authorization', {path: p})
+  if (keycloak.authenticated) {
+    // Authenticated. Set authentication cookie.
+    cookies.set('Authorization', 'Bearer ' + keycloak.token,
+      {
+        path: path,
+        expires: new Date((keycloak.tokenParsed.exp + keycloak.timeSkew) * 1000),
+        sameSite: 'strict'
+      })
+  } else {
+    // Not authenticated. Remove the current cookie as well.
+    cookies.remove('Authorization', {path: path})
   }
 }
+
+/**
+ * Refreshes the access token and synchronizes the cookie used by browser
+ * navigations, which cannot carry the normal Axios Authorization header.
+ */
+export const refreshBrowserAuth = async (keycloak, minValidity = 30) => {
+  if (!keycloak.authenticated) {
+    return
+  }
+
+  await keycloak.updateToken(minValidity)
+  syncAuthorizationCookie(keycloak)
+}
+
+export const onKeycloakEvent = (keycloak) => () => syncAuthorizationCookie(keycloak)
