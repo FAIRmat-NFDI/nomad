@@ -21,7 +21,7 @@
 from __future__ import annotations
 
 import importlib
-from typing import Any, NotRequired, TypedDict, cast
+from typing import Any, TypedDict, cast
 
 from cachetools import LRUCache
 
@@ -35,14 +35,14 @@ _mongo_package_cache: LRUCache[str, Package] = LRUCache(128)
 _mongo_definition_cache: LRUCache[str, tuple[str, int | None]] = LRUCache(8192)
 
 
-class MongoPackage(TypedDict):
+class MongoPackage(TypedDict, total=False):
     """MongoDB representation of a serialized metainfo package."""
 
     snapshot_package_id: str
     snapshot_section_ids: list[str]
     package_definition: dict[str, Any]
-    entry_id: NotRequired[str | None]
-    upload_id: NotRequired[str | None]
+    entry_id: str | None
+    upload_id: str | None
 
 
 def _cache_package_definitions(
