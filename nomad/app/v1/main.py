@@ -43,6 +43,7 @@ from .routers import (
     metainfo,
     north,
     north_new,
+    notifications,
     ownership_transfers,
     schemas,
     suggestions,
@@ -138,5 +139,6 @@ app.include_router(schemas.router, prefix='/schemas')
 app.include_router(suggestions.router, prefix='/suggestions')
 app.include_router(systems.router, prefix='/systems')
 app.include_router(ownership_transfers.router, prefix='/ownership-transfers')
+app.include_router(notifications.router, prefix='/notifications')
 app.include_router(uploads.router, prefix='/uploads')
 app.include_router(users.router, prefix='/users')
