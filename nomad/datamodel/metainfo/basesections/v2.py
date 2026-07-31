@@ -118,7 +118,10 @@ class BaseSection(Schema):
     )
     datetime = Quantity(
         type=Datetime,
-        description='The date and time associated with this section.',
+        description=(
+            'The date and time associated with the activity or entity described by the '
+            'section.'
+        ),
         a_eln=dict(component='DateTimeEditQuantity'),
     )
     lab_id = Quantity(
@@ -136,16 +139,11 @@ class BaseSection(Schema):
     def normalize(self, archive: EntryArchive, logger: 'BoundLogger') -> None:
         """
         The normalizer for the `BaseSection` class.
-        Will set the `datetime` to now if not set. If this section is the top-level
-        section of the entry, it will update the `entry_name` in the metadata of the
-        archive. It will also ensure that `results.eln` exists and add information
-        from this section to `results.eln`.
+        If this section is the top-level section of the entry, it will update the
+        `entry_name` in the metadata of the archive. It will also ensure that
+        `results.eln` exists and add information from this section to `results.eln`.
         """
         super().normalize(archive, logger)
-
-        # Set datetime to now if not set
-        if self.datetime is None:
-            self.datetime = now()
 
         # Update entry name if this is the top-level section
         if isinstance(self.m_parent, EntryArchive):
@@ -180,6 +178,11 @@ class Entity(BaseSection):
 
     m_def = Section(
         links=['http://purl.obolibrary.org/obo/BFO_0000002'],
+    )
+    datetime = Quantity(
+        type=Datetime,
+        description='The date and time when this entity was created.',
+        a_eln=dict(component='DateTimeEditQuantity'),
     )
 
 
@@ -240,13 +243,18 @@ class Activity(BaseSection):
         description='The date and time when this activity was started.',
         a_eln=dict(component='DateTimeEditQuantity', label='starting time'),
     )
+    datetime_end = Quantity(
+        type=Datetime,
+        description='The date and time when this activity ended.',
+        a_eln=dict(component='DateTimeEditQuantity', label='ending time'),
+    )
     method = Quantity(
         type=str,
         description='A short consistent handle for the applied method.',
     )
     location = Quantity(
         type=str,
-        description='location of the experiment.',
+        description='The location associated with this activity.',
         a_eln=dict(component='StringEditQuantity'),
     )
     steps = SubSection(

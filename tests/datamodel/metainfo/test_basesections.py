@@ -46,7 +46,7 @@ def test_basesection(mainfile, entry_name):
 
     # Check that top level basesection was properly normalized
     assert test_archive.data.name == entry_name
-    assert test_archive.data.datetime is not None
+    assert test_archive.data.datetime is None
 
     # Check that the metadata section was properly populated
     assert test_archive.metadata.entry_name == entry_name
