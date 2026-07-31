@@ -132,26 +132,30 @@ def non_empty_uploaded(
     return example_upload_id, non_empty_example_upload
 
 
-@pytest.fixture(scope='function')
-def oasis_publishable_upload(
+@pytest_asyncio.fixture(scope='function')
+async def oasis_publishable_upload(
     api_v1,
     proc_infra,
-    non_empty_processed: processing.Upload,
+    non_empty_processed_with_temporal: processing.Upload,
     internal_example_user_metadata,
     monkeypatch,
     user1,
+    temporal_worker: TemporalWorkerContext,
 ):
     """
     Creates a published upload which can be used with Upload.publish_externally. Some monkeypatching
     is done which replaces IDs when importing.
     """
     # Create a published upload
-    set_upload_entry_metadata(non_empty_processed, internal_example_user_metadata)
-    non_empty_processed.publish_upload()
-    non_empty_processed.block_until_complete(interval=0.01)
+    set_upload_entry_metadata(
+        non_empty_processed_with_temporal, internal_example_user_metadata
+    )
+    async with temporal_worker():
+        await asyncio.to_thread(non_empty_processed_with_temporal.publish_upload)
+        await non_empty_processed_with_temporal.await_workflows()
 
     suffix = '_2'  # Will be added to all IDs in the mirrored upload
-    upload_id = non_empty_processed.upload_id
+    upload_id = non_empty_processed_with_temporal.upload_id
 
     # Do some tricks to add suffix to the ID fields
     old_bundle_importer_open = bundles.BundleImporter.open
@@ -199,11 +203,23 @@ def oasis_publishable_upload(
         'nomad.bundles.BundleImporter._import_files', new_bundle_import_files
     )
 
+    async def async_post(url, data, params, **kwargs):
+        async with temporal_worker():
+            return await asyncio.to_thread(
+                lambda: api_v1.post(
+                    build_url(url.lstrip('/api/v1/'), params),
+                    data=data.read(),
+                    **kwargs,
+                )
+            )
+
     # Further monkey patching
-    def new_post(url, data, params={}, **kwargs):
-        return api_v1.post(
-            build_url(url.lstrip('/api/v1/'), params), data=data.read(), **kwargs
-        )
+    def new_post(url, data=None, params=None, **kwargs):
+        if params is None:
+            params = {}
+
+        # Run async work inside a loop explicitly
+        return asyncio.run(async_post(url, data, params, **kwargs))
 
     monkeypatch.setattr('requests.post', new_post)
     monkeypatch.setattr('nomad.config.oasis.is_oasis', True)
@@ -212,13 +228,13 @@ def oasis_publishable_upload(
     monkeypatch.setattr('nomad.config.oasis.central_nomad_deployment_url', '/api')
 
     # create a dataset to also test this aspect of oasis uploads
-    entry = non_empty_processed.successful_entries[0]
+    entry = non_empty_processed_with_temporal.successful_entries[0]
     datamodel.Dataset(
         dataset_id='dataset_id', dataset_name='dataset_name', user_id=user1.user_id
     ).a_mongo.save()
     entry.datasets = ['dataset_id']
     entry.save()
-    return non_empty_processed.upload_id, suffix
+    return non_empty_processed_with_temporal.upload_id, suffix
 
 
 @pytest_asyncio.fixture(scope='function')
