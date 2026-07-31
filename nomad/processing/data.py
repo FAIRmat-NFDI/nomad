@@ -2277,6 +2277,7 @@ class Upload(Proc):
                 )
 
             self.published_to.append(target_deployment_url)
+            self.save()
         finally:
             PathObject(tmp_dir).delete()
 
