@@ -62,10 +62,10 @@ structlogging.ConsoleFormatter.short_format = True
 setattr(logging, 'Formatter', structlogging.ConsoleFormatter)
 
 pytest_plugins = (
+    'tests.fixtures.infrastructure',
     'tests.fixtures.data',
     'tests.fixtures.groups',
     'tests.fixtures.group_uploads',
-    'tests.fixtures.infrastructure',
     'tests.fixtures.mails',
     'tests.fixtures.users',
 )

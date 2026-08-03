@@ -276,8 +276,8 @@ def test_topology_1d(one_d):
         pytest.param(
             rattle(
                 stack(
-                    surf(conv_fcc('Cu'), [1, 0, 0], vacuum=0),
-                    surf(conv_fcc('Ni'), [1, 0, 0], vacuum=0),
+                    surf(conv_fcc('Cu'), [1, 0, 0], vacuum=None),
+                    surf(conv_fcc('Ni'), [1, 0, 0], vacuum=None),
                 )
             ),
             stacked_cu_ni_surface_topology(),
