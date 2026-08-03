@@ -579,7 +579,7 @@ def setup_for_transfer_bundle(request, monkeypatch, mongo_function):
         )
 
 
-def _perform_transfer_request(
+async def _perform_transfer_request(
     upload_id,
     client: TestClient,
     request_auth,
@@ -595,10 +595,12 @@ def _perform_transfer_request(
     transfer_config = {
         key: value for key, value in transfer_config.items() if value is not None
     }
-    response = client.post(
-        f'uploads/{upload_id}/action/transfer',
-        headers=request_auth,
-        json=transfer_config,
+    response = await asyncio.to_thread(
+        lambda: client.post(
+            f'uploads/{upload_id}/action/transfer',
+            headers=request_auth,
+            json=transfer_config,
+        )
     )
     body = response.json()
     return response, body
@@ -631,7 +633,7 @@ def _compare_entries_meta_info(old_upload, new_upload, embargo_length):
             assert new_entry_metadata_dict[k] == v, f'Metadata not matching: {k}'
 
 
-def _check_success_transfer_upload(
+async def _check_success_transfer_upload(
     response, client, upload_id, suffix, user_auth, embargo_length
 ):
     old_upload = Upload.get(upload_id)
@@ -641,11 +643,19 @@ def _check_success_transfer_upload(
     assert upload['current_process'] == '_publish_externally'
     assert upload['process_running']
 
-    assert_processing(client, upload_id, user_auth, published=old_upload.published)
-    assert_processing(
-        client, upload_id + suffix, user_auth, published=old_upload.published
+    await asyncio.to_thread(
+        lambda: assert_processing(
+            client, upload_id, user_auth, published=old_upload.published
+        )
     )
+    await asyncio.to_thread(
+        lambda: assert_processing(
+            client, upload_id + suffix, user_auth, published=old_upload.published
+        )
+    )
+
     old_upload = Upload.get(upload_id)
+    assert old_upload['current_process'] == '_publish_externally'
     new_upload = Upload.get(upload_id + suffix)
     assert len(old_upload.successful_entries) == len(new_upload.successful_entries) == 1
 
@@ -660,7 +670,7 @@ def _check_success_transfer_upload(
     )
 
 
-def _request_transfer_start(
+async def _request_transfer_start(
     auth_headers,
     client: TestClient,
     oasis_publishable_upload: tuple[str, Literal['_v2']],
@@ -680,7 +690,7 @@ def _request_transfer_start(
     upload_id, suffix = oasis_publishable_upload
     user_auth = auth_headers[user]
     target_deployment_token = _get_token(auth_headers, target_deployment_user or user)
-    response, body = _perform_transfer_request(
+    response, body = await _perform_transfer_request(
         upload_id,
         client,
         request_auth=user_auth,
@@ -689,13 +699,12 @@ def _request_transfer_start(
         target_deployment_token=target_deployment_token,
     )
     if check_success:
-        _check_success_transfer_upload(
+        await _check_success_transfer_upload(
             response, client, upload_id, suffix, user_auth, embargo_length
         )
     return response, body
 
 
-@pytest.mark.skip('REMOVE-CELERY')
 @pytest.mark.parametrize(
     'embargo_length, expected_response_code',
     [
@@ -706,28 +715,31 @@ def _request_transfer_start(
         pytest.param(40, 422, id='embargo_length=40'),
     ],
 )
-def test_embargo_length(
+@pytest.mark.asyncio
+async def test_embargo_length(
     auth_headers,
+    temporal_worker,
     client: TestClient,
     oasis_publishable_upload: tuple[str, Literal['_v2']],
     embargo_length: int,
     expected_response_code: int,
 ):
-    response, body = _request_transfer_start(
-        auth_headers,
-        client,
-        oasis_publishable_upload,
-        embargo_length,
-        check_success=expected_response_code < 400,
-    )
+    async with temporal_worker():
+        response, body = await _request_transfer_start(
+            auth_headers,
+            client,
+            oasis_publishable_upload,
+            embargo_length,
+            check_success=expected_response_code < 400,
+        )
 
     assert response.status_code == expected_response_code
     if expected_response_code >= 400:
         assert len(body['detail']) > 0  # Check error message info
 
 
-def _check_workflow_failure(
-    response, client, upload_id, user_auth, error_messages: list[str]
+async def _check_workflow_failure(
+    client, upload_id, user_auth, error_messages: list[str]
 ):
     """
     Waits until the workflow fails and check that the error messages
@@ -736,19 +748,21 @@ def _check_workflow_failure(
         error_messages: The messages to be checked if exist in the upload
     """
     # The workflow should successfully start
-    assert response.status_code == 200
+    upload = Upload.get(upload_id)
+    await asyncio.to_thread(lambda: block_until_completed(client, upload_id, user_auth))
+    await upload.await_workflows()
+    upload = Upload.get(upload_id)
+    assert upload.process_status == ProcessStatus.FAILURE
+    assert len(upload.errors) > 0
+    upload_error = upload['errors'][0]
 
-    # Check that the workflow endup failing
-    old_upload_data = block_until_completed(client, upload_id, user_auth)
-    assert old_upload_data['process_status'] == ProcessStatus.FAILURE
-    assert len(old_upload_data['errors']) > 0
-    upload_error = old_upload_data['errors'][0]
     for expected_error in error_messages:
         assert expected_error in upload_error
 
 
-@pytest.mark.skip('REMOVE-CELERY')
-def test_bad_formatted_token(
+@pytest.mark.asyncio
+async def test_bad_formatted_token(
+    temporal_worker,
     auth_headers,
     client: TestClient,
     oasis_publishable_upload: tuple[str, Literal['_v2']],
@@ -756,23 +770,27 @@ def test_bad_formatted_token(
     upload_id, _ = oasis_publishable_upload
     auth = auth_headers['user0']
 
-    response, _ = _perform_transfer_request(
-        upload_id, client, request_auth=auth, target_deployment_token='abcdef'
-    )
-    _check_workflow_failure(
-        response,
-        client,
-        upload_id,
-        user_auth=auth,
-        error_messages=[
+    async with temporal_worker():
+        response, _ = await _perform_transfer_request(
+            upload_id, client, request_auth=auth, target_deployment_token='abcdef'
+        )
+        errors = [
             'Error message from external deployment',
             'user does not exist',
-        ],
-    )
+        ]
+        await _check_workflow_failure(
+            client,
+            upload_id,
+            user_auth=auth,
+            error_messages=errors,
+        )
+        for error_message in errors:
+            assert error_message in response.json()['detail']
 
 
-@pytest.mark.skip('REMOVE-CELERY')
-def test_invalid_token(
+@pytest.mark.asyncio
+async def test_invalid_token(
+    temporal_worker,
     auth_headers,
     client: TestClient,
     oasis_publishable_upload: tuple[str, Literal['_v2']],
@@ -781,29 +799,37 @@ def test_invalid_token(
     user = 'user1'
     user_auth = auth_headers[user]
 
-    response, _ = _request_transfer_start(
-        auth_headers,
-        client,
-        oasis_publishable_upload,
-        0,
-        user,
-        target_deployment_user='invalid',
-        check_success=False,
-    )
-    _check_workflow_failure(
-        response,
-        client,
-        upload_id,
-        user_auth,
-        error_messages=[
+    async with temporal_worker():
+        # try:
+        response, _ = await _request_transfer_start(
+            auth_headers,
+            client,
+            oasis_publishable_upload,
+            0,
+            user,
+            target_deployment_user='invalid',
+            check_success=False,
+        )
+        # Check that the workflow properly handled the error
+        # and stored a meaningful error message in the upload
+        error_messages = [
             'Error message from external deployment',
             'user does not exist',
-        ],
-    )
+        ]
+        await _check_workflow_failure(
+            client,
+            upload_id,
+            user_auth=user_auth,
+            error_messages=error_messages,
+        )
+        # The response should also contain the error messages from the workflow
+        for error_message in error_messages:
+            assert error_message in response.json()['detail']
 
 
-@pytest.mark.skip('REMOVE-CELERY')
-def test_workflow_failed(
+@pytest.mark.asyncio
+async def test_transfer_externally_workflow_failed(
+    temporal_worker,
     auth_headers,
     client: TestClient,
     oasis_publishable_upload: tuple[str, Literal['_v2']],
@@ -827,23 +853,23 @@ def test_workflow_failed(
     )
     upload_id, _ = oasis_publishable_upload
     user = 'user0'
-    response, _ = _request_transfer_start(
-        auth_headers,
-        client,
-        oasis_publishable_upload,
-        user=user,
-        check_success=False,
-    )
-    _check_workflow_failure(
-        response,
-        client,
-        upload_id,
-        user_auth=auth_headers[user],
-        error_messages=[error_message],
-    )
+    async with temporal_worker():
+        response, _ = await _request_transfer_start(
+            auth_headers,
+            client,
+            oasis_publishable_upload,
+            user=user,
+            check_success=False,
+        )
+        await _check_workflow_failure(
+            client,
+            upload_id,
+            user_auth=auth_headers[user],
+            error_messages=[error_message],
+        )
+        assert error_message in response.json()['detail']
 
 
-@pytest.mark.skip('REMOVE-CELERY')
 @pytest.mark.parametrize(
     'user',
     [
@@ -852,37 +878,43 @@ def test_workflow_failed(
         'user2',  # normal user
     ],
 )
-def test_different_user_roles(
+@pytest.mark.asyncio
+async def test_different_user_roles(
+    temporal_worker,
     auth_headers,
     client: TestClient,
     oasis_publishable_upload: tuple[str, Literal['_v2']],
     user,
 ):
-    _request_transfer_start(
-        auth_headers, client, oasis_publishable_upload, 0, user, check_success=True
-    )
+    async with temporal_worker():
+        await _request_transfer_start(
+            auth_headers, client, oasis_publishable_upload, 0, user, check_success=True
+        )
 
 
-@pytest.mark.skip('REMOVE-CELERY')
-def test_token_not_provided(
+@pytest.mark.asyncio
+async def test_token_not_provided(
+    temporal_worker,
     auth_headers,
     client: TestClient,
     oasis_publishable_upload: tuple[str, Literal['_v2']],
 ):
     upload_id, _ = oasis_publishable_upload
-    response, body = _perform_transfer_request(
-        upload_id,
-        client,
-        request_auth=auth_headers['user0'],
-        target_deployment_token=None,
-    )
-    assert response.status_code == 422
-    assert len(body['detail']) > 0
+    async with temporal_worker():
+        response, body = await _perform_transfer_request(
+            upload_id,
+            client,
+            request_auth=auth_headers['user0'],
+            target_deployment_token=None,
+        )
+        assert response.status_code == 422
+        assert len(body['detail']) > 0
 
 
-@pytest.mark.skip('REMOVE-CELERY')
+@pytest.mark.asyncio
 @pytest.mark.disable_health_check_patch
-def test_external_deployment_health_failed(
+async def test_external_deployment_health_failed(
+    temporal_worker,
     auth_headers,
     client: TestClient,
     oasis_publishable_upload: tuple[str, Literal['_v2']],
@@ -894,16 +926,16 @@ def test_external_deployment_health_failed(
         'nomad.app.v1.routers.uploads.utils.perform_status_check',
         Mock(side_effect=Exception(error_message)),
     )
-    response, body = _request_transfer_start(
-        auth_headers, client, oasis_publishable_upload, check_success=False
-    )
-    assert 'detail' in body
-    assert 'Failed to check external deployment health' in body['detail']
-    assert error_message in body['detail']
-    assert response.status_code == 400
+    async with temporal_worker():
+        response, body = await _request_transfer_start(
+            auth_headers, client, oasis_publishable_upload, check_success=False
+        )
+        assert 'detail' in body
+        assert 'Failed to check external deployment health' in body['detail']
+        assert error_message in body['detail']
+        assert response.status_code == 400
 
 
-@pytest.mark.skip('REMOVE-CELERY')
 @pytest.mark.enable_target_deployment_url_validation
 @pytest.mark.parametrize(
     'target_url, expected_message',
@@ -915,44 +947,50 @@ def test_external_deployment_health_failed(
         ),
     ],
 )
-def test_invalid_target_url(
+@pytest.mark.asyncio
+async def test_invalid_target_url(
+    temporal_worker,
     auth_headers,
     client: TestClient,
     oasis_publishable_upload: tuple[str, Literal['_v2']],
     target_url,
     expected_message,
 ):
-    response, body = _request_transfer_start(
-        auth_headers,
-        client,
-        oasis_publishable_upload,
-        check_success=False,
-        target_deployment_url=target_url,
-    )
-    assert expected_message in body['detail']
-    assert response.status_code == 422
+    async with temporal_worker():
+        response, body = await _request_transfer_start(
+            auth_headers,
+            client,
+            oasis_publishable_upload,
+            check_success=False,
+            target_deployment_url=target_url,
+        )
+        assert expected_message in body['detail']
+        assert response.status_code == 422
 
 
-@pytest.mark.skip('REMOVE-CELERY')
-def test_default_target_url(
+@pytest.mark.asyncio
+async def test_default_target_url(
+    temporal_worker,
     auth_headers,
     client: TestClient,
     oasis_publishable_upload: tuple[str, Literal['_v2']],
 ):
     upload_id, _ = oasis_publishable_upload
-    _request_transfer_start(
-        auth_headers,
-        client,
-        oasis_publishable_upload,
-        check_success=True,
-    )
-    old_upload = Upload.get(upload_id)
-    assert len(old_upload.published_to) == 1
-    assert old_upload.published_to[0] == config.oasis.central_nomad_deployment_url
+    async with temporal_worker():
+        await _request_transfer_start(
+            auth_headers,
+            client,
+            oasis_publishable_upload,
+            check_success=True,
+        )
+        old_upload = Upload.get(upload_id)
+        assert len(old_upload.published_to) == 1
+        assert old_upload.published_to[0] == config.oasis.central_nomad_deployment_url
 
 
-@pytest.mark.skip('REMOVE-CELERY')
-def test_transfer_processing_upload(
+@pytest.mark.asyncio
+async def test_transfer_processing_upload(
+    temporal_worker,
     auth_headers,
     client: TestClient,
     oasis_publishable_upload: tuple[str, Literal['_v2']],
@@ -961,43 +999,49 @@ def test_transfer_processing_upload(
     Transfer an upload that is being processed should fail
     """
     upload_id, _ = oasis_publishable_upload
-    upload = Upload.get(upload_id)
-    upload.process_upload()
-    response, body = _request_transfer_start(
-        auth_headers,
-        client,
-        oasis_publishable_upload,
-        check_success=False,
-    )
+    async with temporal_worker():
+        upload = Upload.get(upload_id)
+        upload.process_upload()
+        response, body = await _request_transfer_start(
+            auth_headers,
+            client,
+            oasis_publishable_upload,
+            check_success=False,
+        )
 
-    assert 'detail' in body
-    assert (
-        body['detail']
-        == 'The upload is currently being processed, operation not allowed.'
-    )
-    assert response.status_code == 400
+        assert 'detail' in body
+        assert (
+            body['detail']
+            == 'The upload is currently being processed, operation not allowed.'
+        )
+        assert response.status_code == 400
 
 
-@pytest.mark.skip('REMOVE-CELERY')
-def test_non_published_upload(
-    auth_headers, client: TestClient, non_empty_processed: Upload
+@pytest.mark.asyncio
+async def test_non_published_upload(
+    temporal_worker,
+    auth_headers,
+    client: TestClient,
+    non_empty_processed_with_temporal: Upload,
 ):
     """
-    Non published uploads should not be able to transferred
+    Non published uploads should not be able to be transferred
     """
-    upload_id = non_empty_processed.upload_id
-    response, body = _perform_transfer_request(
-        upload_id,
-        client,
-        request_auth=auth_headers['user0'],
-        target_deployment_token=_get_token(auth_headers, 'user0'),
-    )
-    assert response.status_code == 400
-    assert body['detail'] == 'The upload should be published first.'
+    upload_id = non_empty_processed_with_temporal.upload_id
+    async with temporal_worker():
+        response, body = await _perform_transfer_request(
+            upload_id,
+            client,
+            request_auth=auth_headers['user0'],
+            target_deployment_token=_get_token(auth_headers, 'user0'),
+        )
+        assert response.status_code == 400
+        assert body['detail'] == 'The upload should be published first.'
 
 
-@pytest.mark.skip('REMOVE-CELERY')
-def test_transfer_duplicated_upload(
+@pytest.mark.asyncio
+async def test_transfer_duplicated_upload(
+    temporal_worker,
     auth_headers,
     client: TestClient,
     oasis_publishable_upload: tuple[str, Literal['_v2']],
@@ -1005,30 +1049,34 @@ def test_transfer_duplicated_upload(
     upload_id, _ = oasis_publishable_upload
     user = 'user0'
     user_auth = auth_headers[user]
-    _request_transfer_start(
-        auth_headers,
-        client,
-        oasis_publishable_upload,
-        user=user,
-        check_success=True,
-    )
+    async with temporal_worker() as _:
+        await _request_transfer_start(
+            auth_headers,
+            client,
+            oasis_publishable_upload,
+            user=user,
+            check_success=True,
+        )
 
-    # Trying to transfer again should fail
-    response, _ = _request_transfer_start(
-        auth_headers,
-        client,
-        oasis_publishable_upload,
-        user=user,
-        check_success=False,
-    )
-    _check_workflow_failure(
-        response,
-        client,
-        upload_id,
-        user_auth,
-        error_messages=[
+    async with temporal_worker() as _:
+        # Trying to transfer again should fail
+        response, _ = await _request_transfer_start(
+            auth_headers,
+            client,
+            oasis_publishable_upload,
+            user=user,
+            check_success=False,
+        )
+        error_messages = [
             'Error message from external deployment',
             'Failed to import bundle: Upload with id',
             'already exists',
-        ],
-    )
+        ]
+        await _check_workflow_failure(
+            client,
+            upload_id,
+            user_auth=user_auth,
+            error_messages=error_messages,
+        )
+        for error_message in error_messages:
+            assert error_message in response.json()['detail']

@@ -128,6 +128,7 @@ from nomad.workflows.shared_objects import (
     TransferUploadOwnershipWorkflowInput,
     UploadProcessingWorkflowInput,
 )
+from nomad.workflows.utils import extract_temporal_error_details
 
 section_metadata = datamodel.EntryArchive.metadata.name
 section_workflow = datamodel.EntryArchive.workflow2.name
@@ -2211,8 +2212,9 @@ class Upload(Proc):
                 retry_policy=RetryPolicy(maximum_attempts=1),
             )
         except Exception as e:
-            self.cleanup_upload_after_workflow_fail(workflow_id, e)
-            raise ProcessFailure(f'Failed to start temporal workflow: {e}')
+            raise ProcessFailure(
+                f'Failed to start temporal workflow: {extract_temporal_error_details(e)}'
+            )
 
     def _publish_externally_local(
         self,

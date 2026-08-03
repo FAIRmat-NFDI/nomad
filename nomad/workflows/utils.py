@@ -19,6 +19,13 @@
 import math
 from typing import TypeVar
 
+_GENERIC_TEMPORAL_ERROR_MESSAGES = (
+    'child workflow failed',
+    'child workflow execution failed',
+    'workflow execution failed',
+    'activity task failed',
+    'activity failed',
+)
 T = TypeVar('T')
 MAX_CONCURRENT_ACTIVITIES_PER_WORKFLOW = 1000
 CLEANUP_ENTRY_BATCH_SIZE = 100
@@ -55,3 +62,30 @@ def generate_batches(
         item_batches.append(items[start_idx:end_idx])
 
     return item_batches
+
+
+def extract_temporal_error_details(error: Exception) -> str:
+    """Return the most specific message from a Temporal error cause chain."""
+    messages: list[str] = []
+    current: Exception | None = error
+    seen: set[int] = set()
+
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        message = str(current).strip()
+        if message:
+            messages.append(message)
+        current = getattr(current, 'cause', None)
+
+    if not messages:
+        return str(error)
+
+    for message in reversed(messages):
+        lowered_message = message.lower()
+        if not any(
+            generic_message in lowered_message
+            for generic_message in _GENERIC_TEMPORAL_ERROR_MESSAGES
+        ):
+            return message
+
+    return messages[-1]

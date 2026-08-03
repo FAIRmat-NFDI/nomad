@@ -28,6 +28,7 @@ from nomad.app.v1.models.models import TransferBundleRequest
 from nomad.datacite import DataCiteException
 from nomad.datacite.service import create_doi_for_upload, publish_doi
 from nomad.mongo.doi import EmbeddedDOI
+from nomad.processing.base import ProcessFailure
 from nomad.search import QueryValidationError, search_iterator
 from nomad.tracing import traced
 
@@ -482,12 +483,17 @@ def transfer_upload_bundle(
     _check_upload_not_processing(upload)
     upload_utils.check_external_deployment_status(target_deployment_url)
 
-    upload.publish_externally(
-        target_deployment_url=target_deployment_url,
-        auth_token=transfer_options.auth_token,
-        embargo_length=transfer_options.embargo_length,
-    )
-    return UploadProcDataResponse(upload_id=upload_id, data=upload_to_pydantic(upload))
+    try:
+        upload.publish_externally(
+            target_deployment_url=target_deployment_url,
+            auth_token=transfer_options.auth_token,
+            embargo_length=transfer_options.embargo_length,
+        )
+        return UploadProcDataResponse(
+            upload_id=upload_id, data=upload_to_pydantic(upload)
+        )
+    except ProcessFailure as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 @router.post(
