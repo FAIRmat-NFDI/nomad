@@ -27,6 +27,8 @@ from temporalio import workflow
 from temporalio.common import Priority, RetryPolicy
 from temporalio.exceptions import ActivityError
 
+from nomad.workflows.utils import extract_temporal_error_details
+
 EDIT_UPLOAD_METADATA_PRIORITY = Priority(priority_key=1)
 PUBLISH_UPLOAD_PRIORITY = Priority(priority_key=2)
 PUBLISH_EXTERNALLY_PRIORITY = Priority(priority_key=2)
@@ -38,41 +40,6 @@ PROCESS_UPLOAD_PRIORITY = Priority(priority_key=4)
 UPDATE_UPLOAD_PRIORITY = Priority(priority_key=4)
 BATCH_PROCESS_ENTRY_PRIORITY = Priority(priority_key=5)
 PROCESS_ENTRY_PRIORITY = Priority(priority_key=5)
-
-_GENERIC_TEMPORAL_ERROR_MESSAGES = (
-    'child workflow failed',
-    'child workflow execution failed',
-    'workflow execution failed',
-    'activity task failed',
-    'activity failed',
-)
-
-
-def _extract_error_details(error: Exception) -> str:
-    """Return the most specific message from a Temporal error cause chain."""
-    messages: list[str] = []
-    current: Exception | None = error
-    seen: set[int] = set()
-
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        message = str(current).strip()
-        if message:
-            messages.append(message)
-        current = getattr(current, 'cause', None)
-
-    if not messages:
-        return str(error)
-
-    for message in reversed(messages):
-        lowered_message = message.lower()
-        if not any(
-            generic_message in lowered_message
-            for generic_message in _GENERIC_TEMPORAL_ERROR_MESSAGES
-        ):
-            return message
-
-    return messages[-1]
 
 
 with workflow.unsafe.imports_passed_through():
@@ -616,7 +583,7 @@ class UpdateUploadWorkflow:
                 workflow_id=workflow_info.workflow_id,
                 workflow_tmp_dir=input.workflow_tmp_dir,
                 failure_message='Process upload failed',
-                error_details=_extract_error_details(e),
+                error_details=extract_temporal_error_details(e),
             )
             raise e
 
@@ -717,7 +684,7 @@ class EditUploadMetadataWorkflow:
                 upload_id=input.upload_id,
                 workflow_id=workflow_info.workflow_id,
                 failure_message='Edit metadata failed',
-                error_details=_extract_error_details(e),
+                error_details=extract_temporal_error_details(e),
             )
             raise e
 
@@ -788,7 +755,7 @@ class TransferUploadOwnershipWorkflow:
                 upload_id=input.upload_id,
                 workflow_id=workflow_info.workflow_id,
                 failure_message='Ownership transfer failed',
-                error_details=_extract_error_details(e),
+                error_details=extract_temporal_error_details(e),
             )
             raise e
         finally:
@@ -847,7 +814,7 @@ class ImportBundleWorkflow:
                 upload_id=input.upload_id,
                 workflow_id=workflow_info.workflow_id,
                 failure_message='Import bundle failed',
-                error_details=_extract_error_details(e),
+                error_details=extract_temporal_error_details(e),
             )
             raise e
 
@@ -908,7 +875,7 @@ class PublishUploadWorkflow:
                 upload_id=input.upload_id,
                 workflow_id=workflow_info.workflow_id,
                 failure_message='Publish upload failed',
-                error_details=_extract_error_details(e),
+                error_details=extract_temporal_error_details(e),
             )
             raise e
 
@@ -964,14 +931,15 @@ class PublishExternallyWorkflow:
             )
 
         except Exception as e:
+            print('THIS IS THE ORIGINAL ERRROR', e)
             finalize_input = FinalizeUploadProcessingFailureInput(
                 result='failure',
                 upload_id=input.upload_id,
                 workflow_id=workflow_info.workflow_id,
                 failure_message='Publish externally failed',
-                error_details=_extract_error_details(e),
+                error_details=extract_temporal_error_details(e),
             )
-            raise e
+            raise
 
         finally:
             await workflow.execute_activity(
