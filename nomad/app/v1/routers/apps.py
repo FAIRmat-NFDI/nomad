@@ -458,7 +458,7 @@ def _initialize_search_quantities():
     response_model=dict[str, Any],
     response_model_exclude_none=True,
 )
-async def get_entry_points(
+def get_entry_points(
     _user: Annotated[
         User,
         Depends(get_current_user([Scope.APPS_READ])),
@@ -579,7 +579,7 @@ def _build_app_response(app: App) -> dict[str, Any]:
     response_model_exclude_none=True,
     responses=create_responses(_bad_app_not_found, _bad_search_quantity_parse),
 )
-async def get_entry_point(
+def get_entry_point(
     app_path: str,
     _user: Annotated[
         User,
@@ -612,7 +612,7 @@ async def get_entry_point(
     response_model_exclude_none=True,
     responses=create_responses(_bad_search_quantity_parse),
 )
-async def validate(
+def validate(
     app: App,
     _user: Annotated[
         User,
@@ -635,7 +635,7 @@ async def validate(
     response_model_exclude_none=True,
     responses=create_responses(_bad_app_not_found),
 )
-async def get_entry_point_search_quantities(
+def get_entry_point_search_quantities(
     data: SearchQuantityRequest,
     _user: Annotated[
         User,

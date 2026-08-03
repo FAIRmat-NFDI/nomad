@@ -324,7 +324,7 @@ _bad_credentials_response = (
     summary='Get an OIDC token response',
     responses=create_responses(_bad_credentials_response),
 )
-async def get_token(
+def get_token(
     response: Response,
     form_data: Annotated[OAuth2PasswordRequestFormStrict, Depends()],
 ) -> OIDCToken:

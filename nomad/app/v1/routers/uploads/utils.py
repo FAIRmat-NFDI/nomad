@@ -24,6 +24,7 @@ import zipfile
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+import anyio
 import requests
 from fastapi import HTTPException, Request, UploadFile, status
 from mongoengine.queryset.visitor import Q
@@ -40,6 +41,45 @@ from ...models import MetadataPagination, User
 from .models import EntryProcData, UploadProcData, UploadRole
 
 logger = nomad_utils.get_logger(__name__)
+
+
+def _get_local_files(local_path: str) -> tuple[list[str], list[str]]:
+    """Return files below a local upload path without touching the event loop."""
+    if not os.path.exists(local_path):
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail='The specified local_path cannot be found.',
+        )
+    if os.path.isfile(local_path):
+        return [local_path], ['']
+
+    upload_paths = []
+    upload_folders = []
+    for root, _, filepaths in os.walk(local_path):
+        for uploaded_file in filepaths:
+            upload_paths.append(os.path.abspath(os.path.join(root, uploaded_file)))
+            folder = os.path.relpath(root, local_path)
+            upload_folders.append('' if folder == '.' else folder)
+    return upload_paths, upload_folders
+
+
+def _remove_directory(path: str) -> None:
+    if os.path.exists(path):
+        shutil.rmtree(path)
+
+
+def _add_archive_extension(upload_path: str) -> str | None:
+    ext = (
+        '.zip'
+        if zipfile.is_zipfile(upload_path)
+        else '.tar'
+        if tarfile.is_tarfile(upload_path)
+        else None
+    )
+    if ext:
+        shutil.move(upload_path, upload_path + ext)
+        return upload_path + ext
+    return None
 
 
 def validate_target_deployment_url(url: str) -> None:
@@ -119,11 +159,6 @@ async def _get_files_if_provided(
                 You are not authorized to access this path.
                 """),
             )
-        if not os.path.exists(local_path):
-            raise HTTPException(
-                status.HTTP_400_BAD_REQUEST,
-                detail='The specified local_path cannot be found.',
-            )
         method = 0
     elif file:
         # Method 1: Data provided as formdata
@@ -157,32 +192,18 @@ async def _get_files_if_provided(
 
     # Forward the file path (if method == 0) or save the file(s)
     if method == 0:
-        is_file = os.path.isfile(local_path)
-        # Single file
-        if is_file:
-            upload_paths = [local_path]
-            upload_folders = ['']
-        # Folder
-        else:
-            upload_paths = []
-            upload_folders = []
-            for root, _, filepaths in os.walk(local_path):
-                for uploaded_file in filepaths:
-                    file_path = os.path.abspath(os.path.join(root, uploaded_file))
-                    folder = os.path.relpath(root, local_path)
-                    if folder == '.':
-                        folder = ''
-                    upload_paths.append(file_path)
-                    upload_folders.append(folder)
+        upload_paths, upload_folders = await anyio.to_thread.run_sync(
+            _get_local_files, local_path
+        )
     else:
-        tmp_dir = files.mkdtemp(tmp_dir_prefix)
+        tmp_dir = await anyio.to_thread.run_sync(files.mkdtemp, tmp_dir_prefix)
         upload_paths = []
         uploaded_bytes = 0
         upload_folders = []
         for source_stream, source_file_name in sources:
             upload_path = os.path.join(tmp_dir, source_file_name)
             try:
-                with open(upload_path, 'wb') as f:
+                async with await anyio.open_file(upload_path, 'wb') as f:
                     uploaded_bytes = 0
                     log_interval = 1e9
                     next_log_at = log_interval
@@ -191,7 +212,7 @@ async def _get_files_if_provided(
                             # End of data stream
                             break
                         uploaded_bytes += len(chunk)
-                        f.write(chunk)
+                        await f.write(chunk)
                         if uploaded_bytes > next_log_at:
                             logger.info(
                                 'large upload in progress',
@@ -201,8 +222,7 @@ async def _get_files_if_provided(
                     logger.info(f'upload completed', uploaded_bytes={uploaded_bytes})
             except Exception as e:
                 if not (isinstance(e, RuntimeError) and 'Stream consumed' in str(e)):
-                    if os.path.exists(tmp_dir):
-                        shutil.rmtree(tmp_dir)
+                    await anyio.to_thread.run_sync(_remove_directory, tmp_dir)
                     logger.warn('IO error receiving upload data', exc_info=e)
                     raise HTTPException(
                         status.HTTP_400_BAD_REQUEST,
@@ -213,27 +233,21 @@ async def _get_files_if_provided(
 
         if not uploaded_bytes and method == 2:
             # No data was provided
-            shutil.rmtree(tmp_dir)
+            await anyio.to_thread.run_sync(_remove_directory, tmp_dir)
             return [], [], None
 
     logger.info(f'received uploaded file(s)')
     if method == 2 and no_file_name_info_provided:
         # Only ok if uploaded file is a zip or a tar archive.
-        ext = (
-            '.zip'
-            if zipfile.is_zipfile(upload_path)
-            else '.tar'
-            if tarfile.is_tarfile(upload_path)
-            else None
+        archive_path = await anyio.to_thread.run_sync(
+            _add_archive_extension, upload_path
         )
-        if not ext:
+        if archive_path is None:
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
                 detail='No file name provided, and the file does not look like a zip or tar file.',
             )
-        # Add the correct extension
-        shutil.move(upload_path, upload_path + ext)
-        upload_paths = [upload_path + ext]
+        upload_paths = [archive_path]
         upload_folders = ['']
 
     return upload_paths, upload_folders, method

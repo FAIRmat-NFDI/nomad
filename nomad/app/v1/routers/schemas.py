@@ -45,7 +45,7 @@ class SerializationFormat(str, Enum):
     tags=[APITag.DEFAULT],
     summary='Return a serialization of a specific data schema.',
 )
-async def get_schema(
+def get_schema(
     _user: Annotated[User, Depends(get_current_user([Scope.SCHEMAS_READ]))],
     schema_id: Annotated[
         str,

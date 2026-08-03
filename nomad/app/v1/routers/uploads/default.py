@@ -570,8 +570,9 @@ async def post_upload(
     upload = await anyio.to_thread.run_sync(create_upload_sync)
 
     if request.headers.get('Accept') == 'application/json':
+        upload_data = await anyio.to_thread.run_sync(upload_to_pydantic, upload)
         upload_proc_data_response = UploadProcDataResponse(
-            upload_id=upload_id, data=upload_to_pydantic(upload)
+            upload_id=upload_id, data=upload_data
         )
         response_text = upload_proc_data_response.model_dump_json()
         media_type = 'application/json'
@@ -921,9 +922,8 @@ async def post_upload_edit(
             )
         )
         upload = await anyio.to_thread.run_sync(Upload.get, upload_id)
-        return UploadProcDataResponse(
-            upload_id=upload_id, data=upload_to_pydantic(upload)
-        )
+        upload_data = await anyio.to_thread.run_sync(upload_to_pydantic, upload)
+        return UploadProcDataResponse(upload_id=upload_id, data=upload_data)
     except RequestValidationError:
         raise  # A problem which we have handled explicitly. Fastapi does json conversion.
     except Exception as e:
@@ -1437,7 +1437,7 @@ async def put_upload_raw_path(
         _get_upload_with_write_access, upload_id, user, False
     )
 
-    if local_path and not os.path.isfile(local_path):
+    if local_path and not await anyio.to_thread.run_sync(os.path.isfile, local_path):
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             detail='Uploading folders with local_path is not yet supported.',
@@ -1665,7 +1665,9 @@ async def put_upload_raw_path(
     finally:
         if wait_for_processing and method != 0 and upload_paths:
             try:
-                shutil.rmtree(os.path.dirname(upload_paths[0]))
+                await anyio.to_thread.run_sync(
+                    shutil.rmtree, os.path.dirname(upload_paths[0])
+                )
             except Exception:  # noqa
                 pass
 
