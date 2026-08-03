@@ -71,7 +71,7 @@ async def logs(
     # it is still enough to protect against accidental/malicious large log transfers
     if len(content) > config.logtransfer.transfer_capacity * 2:
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail=f'log size too large, max size is {config.logtransfer.transfer_capacity}',
         )
 

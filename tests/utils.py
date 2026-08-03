@@ -153,8 +153,9 @@ def create_template_upload_file(
         for i in range(0, auxfiles):
             with zf.open(f'{directory}/{i}.aux', 'w') as f:
                 f.write(b'content')
-            for mainfile in mainfiles:
-                zf.write(mainfile, f'{directory}/{os.path.basename(mainfile)}')
+
+        for mainfile in mainfiles:
+            zf.write(mainfile, f'{directory}/{os.path.basename(mainfile)}')
 
         for additional_file in more_files:
             zf.write(
