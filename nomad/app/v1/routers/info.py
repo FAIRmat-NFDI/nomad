@@ -135,7 +135,7 @@ class InfoModel(BaseModel):
     response_model=InfoModel,
 )
 @cache(expire=INFO_CACHE_TTL)
-async def get_info(
+def get_info(
     _user: Annotated[
         User,
         Depends(get_current_user([Scope.INFO_READ])),

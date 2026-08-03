@@ -81,7 +81,7 @@ class SuggestionsRequest(BaseModel):
     response_model_exclude_none=True,
 )
 @traced(span_name='suggestions.get_suggestions')
-async def get_suggestions(
+def get_suggestions(
     request: Request,
     data: SuggestionsRequest,
     _user: Annotated[User, Depends(get_current_user([Scope.SUGGESTIONS_READ]))],

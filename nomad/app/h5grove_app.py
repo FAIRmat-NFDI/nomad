@@ -24,6 +24,7 @@ import urllib.parse
 from collections.abc import Callable
 from typing import Any
 
+import anyio
 import h5py
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -93,7 +94,7 @@ def open_zipped_h5_file(
 open_file_with_error_fallback.__closure__[0].cell_contents = open_zipped_h5_file  # noqa
 
 
-async def check_user_access(
+def check_user_access(
     upload_id: str,
     user: User = Depends(
         get_current_user([Scope.UPLOADS_READ, Scope.EXTERNAL_H5GROVE_READ])
@@ -122,7 +123,7 @@ async def add_upload_folder_path(request: Request, call_next):
 
     upload_path = f'/uploads/{upload_id}/{source}/'
     if source == 'archive' and isinstance(
-        UploadFiles.get(upload_id), PublicUploadFiles
+        await anyio.to_thread.run_sync(UploadFiles.get, upload_id), PublicUploadFiles
     ):
         path = f'{file}{path}'
 

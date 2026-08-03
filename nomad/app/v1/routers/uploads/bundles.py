@@ -59,6 +59,14 @@ from .utils import (
 router = APIRouter()
 
 
+def _cleanup_bundle_import(
+    bundle_importer: BundleImporter, bundle_path: str | None, method: int | None
+) -> None:
+    bundle_importer.close()
+    if bundle_path and method != 0:
+        bundle_importer.delete_bundle()
+
+
 _upload_bundle_response = (
     200,
     {'content': {'application/zip': {'example': '<zipped bundle data>'}}},
@@ -344,7 +352,7 @@ async def post_upload_bundle(
     method = None
 
     if local_path:
-        if not os.path.isfile(local_path):
+        if not await anyio.to_thread.run_sync(os.path.isfile, local_path):
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
                 detail='You can only target a single bundle file using local_path.',
@@ -391,14 +399,13 @@ async def post_upload_bundle(
 
         upload = await anyio.to_thread.run_sync(do_import)
 
-        return UploadProcDataResponse(
-            upload_id=upload.upload_id, data=upload_to_pydantic(upload)
-        )
+        upload_data = await anyio.to_thread.run_sync(upload_to_pydantic, upload)
+        return UploadProcDataResponse(upload_id=upload.upload_id, data=upload_data)
     except Exception as e:
         if bundle_importer:
-            bundle_importer.close()
-            if bundle_path and method != 0:
-                bundle_importer.delete_bundle()
+            await anyio.to_thread.run_sync(
+                _cleanup_bundle_import, bundle_importer, bundle_path, method
+            )
         if isinstance(e, HTTPException):
             raise
         raise HTTPException(
