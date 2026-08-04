@@ -21,7 +21,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-import httpx
+import httpx2
 from temporalio.client import Client
 
 from nomad.config.models.config import TemporalOIDC
@@ -49,11 +49,11 @@ async def fetch_oidc_access_token(settings: TemporalOIDC) -> OIDCAccessToken:
     if settings.scope:
         data['scope'] = settings.scope
 
-    async with httpx.AsyncClient(timeout=settings.request_timeout) as client:
+    async with httpx2.AsyncClient(timeout=settings.request_timeout) as client:
         response = await client.post(
             settings.token_url,
             data=data,
-            auth=httpx.BasicAuth(settings.client_id, settings.client_secret),
+            auth=httpx2.BasicAuth(settings.client_id, settings.client_secret),
         )
         response.raise_for_status()
         body = response.json()

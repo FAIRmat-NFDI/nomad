@@ -26,7 +26,7 @@ from time import monotonic
 from typing import Any
 
 from click import progressbar
-from httpx import AsyncClient, Timeout
+from httpx2 import AsyncClient, Timeout
 from keycloak import KeycloakOpenID
 
 from nomad import metainfo as mi
@@ -426,7 +426,7 @@ class ArchiveQuery:
         Params:
             ids (list[tuple[str, str]]): a list of tuples of entry id and upload id
 
-            session (httpx.AsyncClient): httpx client
+            session (httpx2.AsyncClient): HTTPX2 client
 
             semaphore (asyncio.Semaphore): semaphore
 

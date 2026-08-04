@@ -32,7 +32,7 @@ from datetime import datetime, timedelta, timezone
 from tempfile import TemporaryDirectory
 from typing import Literal
 
-import httpx
+import httpx2
 
 
 def get_package_path(package_name: str) -> str:
@@ -85,7 +85,7 @@ def download_file(url: str, filepath: str) -> str | None:
     directory = os.path.dirname(final_filepath)
 
     try:
-        with httpx.stream(
+        with httpx2.stream(
             'GET',
             url,
         ) as response:

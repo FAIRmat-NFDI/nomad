@@ -23,7 +23,7 @@ from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 import pytest_asyncio
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from nomad.config import config
 from nomad.mongo.action import ActionDocument

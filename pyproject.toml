@@ -23,7 +23,7 @@ dependencies = [
   "elasticsearch>=7.17.3", # lower versions have incompatibilies with some numpy versions.
   "fsspec>=2026.2.0",
   "h5py>=3.6.0",
-  "httpx>=0.23.3,<1",
+  "httpx2>=2,<3",
   "jmespath>=0.10.0",
   "jsonpath-ng",
   "json_stream",
