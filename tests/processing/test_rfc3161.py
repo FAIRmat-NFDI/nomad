@@ -19,7 +19,7 @@
 import datetime
 import os
 
-import httpx
+import httpx2
 import pytest
 import rfc3161ng
 
@@ -59,8 +59,8 @@ from tests.utils import set_upload_entry_metadata
 def test_rfc3161ng_timestamp(server, cert, result, monkeysession):
     # this is due to requests being used by rfc3161ng
     # requests methods are modified in conftest.py which prohibits calling external servers
-    monkeysession.setattr('requests.get', httpx.get)
-    monkeysession.setattr('requests.post', httpx.post)
+    monkeysession.setattr('requests.get', httpx2.get)
+    monkeysession.setattr('requests.post', httpx2.post)
 
     token = get_rfc3161_token('test_hash', server=server, cert=cert)
     if token is not None:

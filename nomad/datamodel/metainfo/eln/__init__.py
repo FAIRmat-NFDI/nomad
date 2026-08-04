@@ -875,9 +875,9 @@ class Substance(System):
             archive (EntryArchive): The archive that is being normalized.
             logger (Any): A structlog logger.
         """
-        import httpx
+        import httpx2
 
-        response = httpx.get(
+        response = httpx2.get(
             f'https://commonchemistry.cas.org/api/detail?cas_rn={self.cas_number}',
             timeout=2,
         )
@@ -963,9 +963,9 @@ class Substance(System):
         Returns:
             bool: Whether the search found a unique result.
         """
-        import httpx
+        import httpx2
 
-        response = httpx.get(
+        response = httpx2.get(
             f'https://commonchemistry.cas.org/api/search?q={search}', timeout=2
         )
         if response.status_code == 200:

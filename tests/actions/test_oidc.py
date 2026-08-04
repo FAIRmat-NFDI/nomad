@@ -20,7 +20,7 @@ import asyncio
 import time
 from unittest.mock import AsyncMock
 
-import httpx
+import httpx2
 import pytest
 
 from nomad.actions import oidc as oidc_module
@@ -57,7 +57,7 @@ async def test_fetch_oidc_access_token_uses_client_credentials(monkeypatch):
     response = FakeResponse({'access_token': 'token-1', 'expires_in': 60})
     fake_client = FakeHTTPClient(response)
     monkeypatch.setattr(
-        oidc_module.httpx,
+        oidc_module.httpx2,
         'AsyncClient',
         lambda **kwargs: fake_client,
     )
@@ -81,14 +81,14 @@ async def test_fetch_oidc_access_token_uses_client_credentials(monkeypatch):
         'grant_type': 'client_credentials',
         'scope': 'temporal',
     }
-    assert isinstance(call.kwargs['auth'], httpx.BasicAuth)
+    assert isinstance(call.kwargs['auth'], httpx2.BasicAuth)
 
 
 @pytest.mark.asyncio
 async def test_fetch_oidc_access_token_rejects_invalid_response(monkeypatch):
     fake_client = FakeHTTPClient(FakeResponse({'expires_in': 60}))
     monkeypatch.setattr(
-        oidc_module.httpx,
+        oidc_module.httpx2,
         'AsyncClient',
         lambda **kwargs: fake_client,
     )

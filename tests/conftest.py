@@ -31,7 +31,7 @@ from pathlib import Path
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
-from httpx import ASGITransport, AsyncClient
+from httpx2 import ASGITransport, AsyncClient
 
 from nomad.config import config
 
@@ -332,10 +332,10 @@ async def async_api_v1(monkeypatch, user_molds):
         'http://testserver/api/v1/entries/archive/query',
     )
 
-    monkeypatch.setattr('httpx.AsyncClient.get', getattr(test_client, 'get'))
-    monkeypatch.setattr('httpx.AsyncClient.put', getattr(test_client, 'put'))
-    monkeypatch.setattr('httpx.AsyncClient.post', getattr(test_client, 'post'))
-    monkeypatch.setattr('httpx.AsyncClient.delete', getattr(test_client, 'delete'))
+    monkeypatch.setattr('httpx2.AsyncClient.get', getattr(test_client, 'get'))
+    monkeypatch.setattr('httpx2.AsyncClient.put', getattr(test_client, 'put'))
+    monkeypatch.setattr('httpx2.AsyncClient.post', getattr(test_client, 'post'))
+    monkeypatch.setattr('httpx2.AsyncClient.delete', getattr(test_client, 'delete'))
 
     def mocked_auth_headers(self) -> dict:
         for user in user_molds.values():
