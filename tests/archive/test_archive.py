@@ -512,6 +512,70 @@ def all_archive():
 @pytest.mark.parametrize(
     'required,inplace_result,root_result',
     [
+        pytest.param(
+            {'run': {'system': {'*': '*'}}},
+            {
+                'run': [
+                    {
+                        'system': [
+                            {
+                                'atoms': {'labels': ['He']},
+                                'symmetry': [{'space_group_number': 221}],
+                            },
+                            {
+                                'atoms': {'labels': ['H']},
+                                'symmetry': [{'space_group_number': 221}],
+                            },
+                        ]
+                    }
+                ],
+                'm_ref_archives': {},
+            },
+            {
+                'run': [
+                    {
+                        'system': [
+                            {
+                                'atoms': {'labels': ['He']},
+                                'symmetry': [{'space_group_number': 221}],
+                            },
+                            {
+                                'atoms': {'labels': ['H']},
+                                'symmetry': [{'space_group_number': 221}],
+                            },
+                        ]
+                    }
+                ],
+                'm_ref_archives': {},
+            },
+            id='wildcard',
+        ),
+        pytest.param(
+            {'run': {'system': {'*': '*', 'symmetry': 'exclude'}}},
+            {
+                'run': [
+                    {
+                        'system': [
+                            {'atoms': {'labels': ['He']}},
+                            {'atoms': {'labels': ['H']}},
+                        ]
+                    }
+                ],
+                'm_ref_archives': {},
+            },
+            {
+                'run': [
+                    {
+                        'system': [
+                            {'atoms': {'labels': ['He']}},
+                            {'atoms': {'labels': ['H']}},
+                        ]
+                    }
+                ],
+                'm_ref_archives': {},
+            },
+            id='wildcard-with-exclude',
+        ),
         pytest.param('include', all_archive(), all_archive(), id='include-all'),
         pytest.param('*', all_archive(), all_archive(), id='include-all-alias'),
         pytest.param(

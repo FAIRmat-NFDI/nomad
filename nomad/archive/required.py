@@ -68,7 +68,7 @@ def _parse_required_key(key: str) -> tuple[str, tuple[int, int] | int]:
     match = _query_archive_key_pattern.match(key)
 
     if not match:
-        raise Exception(f'invalid key format: {key}')
+        raise HTTPException(422, detail=[dict(msg=f'invalid required key', loc=[key])])
 
     return _extract_key_and_index(match)
 
@@ -176,83 +176,6 @@ class RequiredReader:
 
         # store user information that will be used to retrieve references using the same authentication
         self.user = user
-
-    # def validate(
-    #         self, required: Union[str, dict], definition: Definition = None,
-    #         loc: list = None, is_root: bool = False) -> dict:
-    #     '''
-    #     Validates the required specification of this instance. It will replace all
-    #     string directives with dicts. Those will have keys `_def` and `_directive`. It
-    #     will add a key `_def` to all dicts. The `_def` will be the respective metainfo
-    #     definition. It will also add key `_ref`. It will be None or contain a
-    #     Reference instance, if the definition is a reference target.
-    #
-    #     This method will raise an exception (:class:`RequiredValidationError`) to denote
-    #     any mismatches between the required specification and the metainfo, also, to denote
-    #     misused directives, bad structure, etc.
-    #
-    #     raises:
-    #         - RequiredValidationError
-    #     '''
-    #     if is_root and isinstance(required, dict):
-    #         resolve_inplace = required.get('resolve-inplace', None)
-    #         if isinstance(resolve_inplace, bool):
-    #             self.resolve_inplace = resolve_inplace
-    #         elif resolve_inplace is not None:
-    #             raise RequiredValidationError('resolve-inplace is not a bool', ['resolve-inplace'])
-    #
-    #     if definition is None:
-    #         definition = self.root_section_def
-    #     if loc is None:
-    #         loc = []
-    #
-    #     # replace definition with the target definition, if its reference or subsection
-    #     reference = None
-    #     if isinstance(definition, Quantity):
-    #         if isinstance(definition.type, Reference):
-    #             reference = definition.type
-    #             if isinstance(definition.type, QuantityReference):
-    #                 definition = definition.type.target_quantity_def.m_resolved()
-    #             else:
-    #                 definition = definition.type.target_section_def.m_resolved()
-    #     elif isinstance(definition, SubSection):
-    #         definition = definition.sub_section.m_resolved()
-    #
-    #     is_directive = isinstance(required, str)
-    #     if not isinstance(definition, Section) and not is_directive:
-    #         raise RequiredValidationError(
-    #             f'{definition.name} is not a section or reference', loc)
-    #
-    #     if is_directive:
-    #         # TODO support 'exclude'
-    #         if required == 'exclude':
-    #             raise RequiredValidationError('exclude is not supported yet', loc)
-    #         if required not in ['*', 'include', 'exclude', 'include-resolved']:
-    #             raise RequiredValidationError(f'{required} is not a valid directive', loc)
-    #         return dict(_def=definition, _directive=required, _ref=reference)
-    #
-    #     result: Dict[str, Any] = dict(_def=definition, _ref=reference)
-    #     for key, value in cast(dict, required).items():
-    #         if key == 'resolve-inplace':
-    #             continue
-    #
-    #         loc.append(key)
-    #         try:
-    #             prop, index = _parse_required_key(key)
-    #         except Exception:
-    #             raise RequiredValidationError(f'invalid key format {key}', loc)
-    #         if prop == '*':
-    #             # TODO support wildcards
-    #             raise RequiredValidationError('wildcard (*) keys are not supported yet', loc)
-    #         try:
-    #             prop_def = cast(Section, definition).all_properties[prop]
-    #         except KeyError:
-    #             raise RequiredValidationError(f'{definition.name} has not property {prop}', loc)
-    #         result[key] = self.validate(value, prop_def, loc)
-    #         result[key].update(_prop=prop, _index=index)
-    #         loc.pop()
-    #
-    #     return result
 
     @traced(span_name='archive.RequiredReader.read')
     def read(
@@ -592,49 +515,54 @@ class RequiredReader:
 
         assert isinstance(required, dict)
 
-        for key, val in required.items():
-            try:
-                prop, index = _parse_required_key(key)
-            except Exception:
-                raise HTTPException(
-                    422, detail=[dict(msg=f'invalid required key', loc=[key])]
+        def handle_child(_prop, _index, _value):
+            if (_prop_def := dataset.definition.all_properties.get(_prop)) is None:
+                return
+
+            _prop_def = self._unwrap_reference(_prop_def)
+
+            def apply_kernel(_x):
+                return self._apply_required(
+                    _value, _x, dataset.replace(definition=_prop_def)
                 )
 
-            if (prop_def := dataset.definition.all_properties.get(prop)) is None:
-                # raise HTTPException(
-                #     422,
-                #     detail=[
-                #         dict(
-                #             msg=f'{dataset.definition.name} has no property {prop}',
-                #             loc=[key],
-                #         )
-                #     ],
-                # )
-                continue
-
-            prop_def = self._unwrap_reference(prop_def)
-
             try:
-                archive_child = _extract_child(archive_item, prop, index)
+                _child = _extract_child(archive_item, _prop, _index)
 
-                if isinstance(archive_child, GenericList):
-                    result[prop] = [
-                        self._apply_required(
-                            val, item, dataset.replace(definition=prop_def)
-                        )
-                        for item in archive_child
-                    ]
+                if isinstance(_child, GenericList):
+                    result[_prop] = [apply_kernel(item) for item in _child]
                 else:
-                    result[prop] = self._apply_required(
-                        val, archive_child, dataset.replace(definition=prop_def)
-                    )
-            except ArchiveError as e:
+                    result[_prop] = apply_kernel(_child)
+            except ArchiveError as _e:
                 # We continue just logging the error. Unresolvable references
                 # will appear as unset references in the returned archive.
-                utils.get_logger(__name__).error('archive error', exc_info=e)
-                continue
+                utils.get_logger(__name__).error('archive error', exc_info=_e)
             except (KeyError, IndexError):
-                continue
+                pass
+
+        if '*' not in required:
+            for key, val in required.items():
+                if val != 'exclude':
+                    prop, index = _parse_required_key(key)
+                    handle_child(prop, index, val)
+        else:
+            # has wildcard, and potentially exclude, need to go through all children regardless
+            prop_map: dict = {}
+            for key, value in required.items():
+                if key == '*':
+                    continue
+                prop, index = _parse_required_key(key)
+                prop_map[prop] = {'index': index, 'value': value}
+
+            default_required = required.get('*')
+            for child in archive_item:
+                child_config: dict = prop_map.get(child, {})
+                if child_config.get('value') != 'exclude':
+                    handle_child(
+                        child,
+                        child_config.get('index'),
+                        child_config.get('value', default_required),
+                    )
 
         return result
 
