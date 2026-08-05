@@ -864,6 +864,36 @@ def _versioned_archive_file_object(
     return actual_dir.join_file(file_name(f'-{suffixes[0]}'))
 
 
+class RawPathReader:
+    """Request-scoped access to a single raw path.
+
+    The base implementation is intentionally thin so staging uploads retain their
+    existing filesystem behaviour. ``PublicUploadFiles`` supplies the ZIP-aware
+    implementation below.
+    """
+
+    def __init__(self, upload_files: UploadFiles, path: str):
+        self.upload_files = upload_files
+        self.path = path
+
+    def exists(self) -> bool:
+        return self.upload_files.raw_exists(self.path)
+
+    def isfile(self) -> bool:
+        return self.upload_files.raw_isfile(self.path)
+
+    def mime_type(self) -> str:
+        return self.upload_files.raw_file_mime_type(self.path)
+
+    @contextmanager
+    def open(self, *args, **kwargs):
+        with self.upload_files.raw_file(self.path, *args, **kwargs) as file:
+            yield file
+
+    def close(self):
+        """Release request-scoped resources, if any."""
+
+
 class UploadFiles(DirectoryObject):
     """Abstract base class for upload files."""
 
@@ -1065,6 +1095,15 @@ class UploadFiles(DirectoryObject):
                 magic.from_buffer(raw_file.read(2048), mime=True)
                 or 'application/octet-stream'
             )
+
+    def raw_path_reader(self, path: str) -> RawPathReader:
+        """Return a short-lived reader for inspecting and opening one raw path.
+
+        The default reader delegates to the existing raw-file methods. Published
+        uploads override this with a reader that keeps one ZIP filesystem open for
+        the whole download request.
+        """
+        return RawPathReader(self, path)
 
     @contextmanager
     def read_archive(self, entry_id: str) -> Iterator[ArchiveReader]:
@@ -2076,6 +2115,78 @@ class StagingUploadFiles(UploadFiles):
             yield bundle_file_source.child(bundle_info_filename)
 
 
+class ZipRawPathReader(RawPathReader):
+    """Keep a published raw ZIP filesystem alive for one download request."""
+
+    upload_files: PublicUploadFiles
+
+    def __init__(self, upload_files: PublicUploadFiles, path: str):
+        super().__init__(upload_files, path)
+        self._archive_context = None
+        self._zip_fs = None
+        self._raw_zip_exists = None
+        self._closed = False
+
+    def _filesystem(self):
+        if self._zip_fs is None:
+            self._archive_context = self.upload_files._zip_fs()
+            self._zip_fs = self._archive_context.__enter__()
+        return self._zip_fs
+
+    def _has_raw_zip(self) -> bool:
+        if self._raw_zip_exists is None:
+            self._raw_zip_exists = self.upload_files.raw_zip_file_object().exists()
+        return self._raw_zip_exists
+
+    def exists(self) -> bool:
+        if not is_safe_relative_path(self.path):
+            return False
+        if not self._has_raw_zip():
+            # Keep the established behaviour that an empty raw root exists.
+            return not self.path
+        return self._filesystem().exists(self.path)
+
+    def isfile(self) -> bool:
+        return (
+            is_safe_relative_path(self.path)
+            and self._has_raw_zip()
+            and self._filesystem().isfile(self.path)
+        )
+
+    def mime_type(self) -> str:
+        assert self.isfile(), 'Provided path does not specify a file, or is invalid.'
+        with self._filesystem().open(self.path, 'rb') as raw_file:
+            return (
+                magic.from_buffer(raw_file.read(2048), mime=True)
+                or 'application/octet-stream'
+            )
+
+    @contextmanager
+    def open(self, *args, **kwargs):
+        assert is_safe_relative_path(self.path)
+        mode = kwargs.pop('mode', None)
+        if args:
+            mode = args[0]
+        mode = mode or 'rb'
+        encoding = kwargs.pop('encoding', None)
+
+        try:
+            with self._filesystem().open(self.path, **kwargs) as raw_file:
+                yield (
+                    io.TextIOWrapper(raw_file, encoding=encoding)
+                    if 't' in mode
+                    else raw_file
+                )
+        except (FileNotFoundError, IsADirectoryError, KeyError) as e:
+            raise KeyError(self.path) from e
+
+    def close(self):
+        if not self._closed:
+            self._closed = True
+            if self._archive_context is not None:
+                self._archive_context.__exit__(None, None, None)
+
+
 class PublicUploadFiles(UploadFiles):
     @classmethod
     def _file_area(cls):
@@ -2200,6 +2311,9 @@ class PublicUploadFiles(UploadFiles):
             self.raw_zip_file_object().os_path, mode, fs=self.storage_fs
         ) as zip_fs:
             yield zip_fs
+
+    def raw_path_reader(self, path: str) -> RawPathReader:
+        return ZipRawPathReader(self, path)
 
     def archive_hdf5_location(self, entry_id: str) -> str:
         fp = self.h5_fp(self.access)

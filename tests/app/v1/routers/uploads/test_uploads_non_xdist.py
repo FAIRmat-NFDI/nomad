@@ -20,6 +20,7 @@ import io
 import os
 import time
 import zipfile
+from contextlib import contextmanager
 from typing import Any
 
 import pytest
@@ -1567,6 +1568,37 @@ def test_get_upload_raw_path(
                     assert expected_content in response.text, (
                         'Expected content not found'
                     )
+
+
+def test_get_published_raw_file_reuses_and_closes_one_zip_filesystem(
+    monkeypatch, auth_headers, client, example_data
+):
+    """Metadata lookup and streaming share one ZIP reader for a file response."""
+    opened = 0
+    closed = 0
+    original_zip_fs = PublicUploadFiles._zip_fs
+
+    @contextmanager
+    def tracked_zip_fs(self, *args, **kwargs):
+        nonlocal opened, closed
+        opened += 1
+        with original_zip_fs(self, *args, **kwargs) as zip_fs:
+            try:
+                yield zip_fs
+            finally:
+                closed += 1
+
+    monkeypatch.setattr(PublicUploadFiles, '_zip_fs', tracked_zip_fs)
+
+    response = client.get(
+        'uploads/id_published/raw/test_content/subdir/test_entry_01/mainfile.json',
+        headers=auth_headers['user1'],
+    )
+
+    assert response.status_code == 200
+    assert response.content
+    assert opened == 1
+    assert closed == 1
 
 
 @pytest.mark.parametrize(
