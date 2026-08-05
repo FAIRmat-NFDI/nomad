@@ -267,6 +267,47 @@ class Services(ConfigBaseModel):
         normalize_loglevel
     )
 
+    @field_validator('api_base_path', mode='before')
+    @classmethod
+    def normalize_api_base_path(cls, value: str) -> str:
+        """Normalize the public deployment base path.
+
+        The configured value remains a public URL path (and consequently uses ``/``
+        for a root deployment).  ``route_prefix`` below is the corresponding value
+        for composing routes, where the root is represented by an empty prefix.
+        """
+        if not isinstance(value, str):
+            raise ValueError('services.api_base_path must be a string')
+
+        value = value.strip()
+        if value == '/':
+            return '/'
+        if not value:
+            raise ValueError('services.api_base_path must not be empty')
+        if not value.startswith('/'):
+            raise ValueError('services.api_base_path must start with "/"')
+        if '//' in value:
+            raise ValueError('services.api_base_path must not contain empty segments')
+        return value.rstrip('/')
+
+    @property
+    def route_prefix(self) -> str:
+        """The deployment base path suitable for composing application routes.
+
+        Root deployments use an empty prefix so that ``join_path('api', 'v1')``
+        becomes ``/api/v1`` rather than ``//api/v1``.
+        """
+        if self.api_base_path == '/':
+            return ''
+        return self.api_base_path
+
+    def join_path(self, *parts: str) -> str:
+        """Join URL path components below this deployment's public base path."""
+        segments = [part.strip('/') for part in parts if part and part.strip('/')]
+        if not segments:
+            return self.route_prefix or '/'
+        return f'{self.route_prefix}/{"/".join(segments)}'
+
     def api_url(
         self,
         ssl: bool = True,
@@ -278,6 +319,15 @@ class Services(ConfigBaseModel):
         Returns the url of the current running nomad API. This is for server-side use.
         This is not the NOMAD url to use as a client, use `nomad.config.client.url` instead.
         """
+        return f'{self.base_url(ssl, api_host, api_port)}{self.join_path(api)}'
+
+    def base_url(
+        self,
+        ssl: bool = True,
+        api_host: str | None = None,
+        api_port: int | None = None,
+    ) -> str:
+        """Return the scheme and authority of this deployment, without its path."""
         if api_port is None:
             api_port = self.api_port  # type: ignore
         if api_host is None:
@@ -286,8 +336,7 @@ class Services(ConfigBaseModel):
         host_and_port = api_host
         if api_port not in [80, 443]:
             host_and_port += ':' + str(api_port)
-        base_path = self.api_base_path.strip('/')
-        return f'{protocol}://{host_and_port}/{base_path}/{api}'
+        return f'{protocol}://{host_and_port}'
 
 
 def resolve_scopes_valid(scope_options):
@@ -2074,14 +2123,10 @@ WARNING: Modifying the storage configuration of an existing installation would m
         return self.services.api_url(ssl, api, api_host, api_port)
 
     def gui_url(self, page: str | None = None):
-        base = self.api_url(True)[:-3]
-        if base.endswith('/'):
-            base = base[:-1]
-
+        base = self.services.base_url(True)
         if page is not None:
-            return f'{base}/gui/{page}'
-
-        return f'{base}/gui'
+            return f'{base}{self.services.join_path("gui", page)}'
+        return f'{base}{self.services.join_path("gui")}'
 
     def north_url(self, ssl: bool = True):
         return self.api_url(
@@ -2092,7 +2137,7 @@ WARNING: Modifying the storage configuration of an existing installation would m
         )
 
     def hub_url(self):
-        return f'http://{self.north.hub_host}:{self.north.hub_port}{self.services.api_base_path}/north/hub'
+        return f'http://{self.north.hub_host}:{self.north.hub_port}{self.services.join_path("north", "hub")}'
 
     @model_validator(mode='after')
     @classmethod
@@ -2107,9 +2152,9 @@ WARNING: Modifying the storage configuration of an existing installation would m
             if north:
                 values.ui.north.enabled = north.enabled
             if services:
-                values.ui.app_base = f'{"https" if services.https else "http"}://{services.api_host}:{services.api_port}{values.services.api_base_path.rstrip("/")}'
+                values.ui.app_base = f'{"https" if services.https else "http"}://{services.api_host}:{services.api_port}{services.route_prefix}'
             if services and north:
-                values.ui.north_base = f'{"https" if services.https else "http"}://{north.hub_host}:{north.hub_port}{services.api_base_path.rstrip("/")}/north'
+                values.ui.north_base = f'{"https" if services.https else "http"}://{north.hub_host}:{north.hub_port}{services.join_path("north")}'
 
         # Backwards compatibility for auth settings stored in the oasis config.
         if 'require_authentication' in values.oasis.model_fields_set:

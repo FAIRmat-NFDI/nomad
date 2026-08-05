@@ -33,6 +33,6 @@ from nomad.config import config
 # After importing the api/infrastructure module, the config values have already been used and
 # changing them afterwards does not change anything anymore.
 
-# For convenience we test the api without path prefix.
+# For convenience we test the API with the root deployment base path.
 ORIGINAL_API_BASE_PATH = config.services.api_base_path
-config.services.api_base_path = ''
+config.services.api_base_path = '/'

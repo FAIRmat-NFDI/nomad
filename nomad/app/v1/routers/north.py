@@ -358,7 +358,7 @@ def start_tool(
             'default_url': tool.default_url,
         },
         'environment': {
-            'SUBFOLDER': f'{config.services.api_base_path.rstrip("/")}/north/user/{user.username}/',
+            'SUBFOLDER': f'{config.services.join_path("north", "user", user.username)}/',
             'JUPYTERHUB_CLIENT_API_URL': f'{config.north_url()}/hub/api',
             'NOMAD_CLIENT_USER': user.username,
             'NOMAD_CLIENT_ACCESS_TOKEN': access_token,

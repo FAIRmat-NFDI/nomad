@@ -231,15 +231,15 @@ def run_app(
                 with open(source_file) as f:
                     file_data = f.read()
                 file_data = file_data.replace(
-                    '/nomad-oasis', config.services.api_base_path
+                    '/nomad-oasis', config.services.route_prefix
                 )
                 with open(source_file, 'w') as f:
                     f.write(file_data)
 
         # App and gui are served from the same server, same port. Replace the base urls with
         # relative paths
-        config.ui.app_base = f'{config.services.api_base_path.rstrip("/")}'
-        config.ui.north_base = f'{config.services.api_base_path.rstrip("/")}/north'
+        config.ui.app_base = config.services.route_prefix
+        config.ui.north_base = config.services.join_path('north')
 
     from nomad.utils import get_logger
 
