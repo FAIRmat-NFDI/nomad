@@ -24,7 +24,7 @@ from rdflib import Graph
 
 from nomad.config import config
 
-root_path = f'{config.services.api_base_path}/dcat'
+root_path = config.services.join_path('dcat')
 base_url = config.api_url(api='dcat')
 
 

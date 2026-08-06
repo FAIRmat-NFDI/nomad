@@ -130,14 +130,14 @@ from nomad.tracing import setup_tracing
 setup_tracing(app)
 setup_prometheus(app)
 
-app_base = config.services.api_base_path
+app_base = config.services.route_prefix
 
 
 def temporal_client() -> Client:
     return app.state.temporal_client
 
 
-@app.get(f'{app_base}/alive')
+@app.get(config.services.join_path('alive'))
 async def alive():
     return 'I am, alive!'
 
@@ -147,7 +147,7 @@ async def health():
     return {'healthcheck': 'ok'}
 
 
-app.mount(f'{app_base}/api/v1', v1_app)
+app.mount(config.services.join_path('api', 'v1'), v1_app)
 v1_app.add_middleware(
     CORSMiddleware,  # CORS has to be the first to act on request
     allow_origins=['*'],
@@ -215,25 +215,25 @@ if config.services.optimade_enabled:
     )
 
     optimade_wrapper.mount('/', optimade_app)
-    app.mount(f'{app_base}/optimade', optimade_wrapper)
+    app.mount(config.services.join_path('optimade'), optimade_wrapper)
 
 
 if config.services.dcat_enabled:
     from .dcat.main import app as dcat_app
 
-    app.mount(f'{app_base}/dcat', dcat_app)
+    app.mount(config.services.join_path('dcat'), dcat_app)
 
 
 if config.services.h5grove_enabled:
     from .h5grove_app import app as h5grove_app
 
-    app.mount(f'{app_base}/h5grove', h5grove_app)
+    app.mount(config.services.join_path('h5grove'), h5grove_app)
 
 
 @app.middleware('http')
 async def _dashboard_frame_ancestors_middleware(request: Request, call_next):
     response = await call_next(request)
-    if request.url.path.startswith(f'{app_base}/dashboards/'):
+    if request.url.path.startswith(config.services.join_path('dashboards') + '/'):
         sources = ' '.join(config.services.dashboard_frame_ancestors)
         response.headers['Content-Security-Policy'] = f'frame-ancestors {sources}'
     return response
@@ -251,7 +251,7 @@ for entry_point in config.plugins.entry_points.filtered_values():
         )
         mount_with_trailing_slash_redirect(
             app,
-            f'{app_base}/{entry_point.prefix}',
+            config.services.join_path(entry_point.prefix),
             api_app,
         )
     elif isinstance(entry_point, DashboardEntryPoint):
@@ -265,7 +265,7 @@ for entry_point in config.plugins.entry_points.filtered_values():
                 )
             mount_with_trailing_slash_redirect(
                 app,
-                f'{app_base}/dashboards/{entry_point.id_url_safe}',
+                config.services.join_path('dashboards', entry_point.id_url_safe),
                 dashboard_app,
             )
         except Exception as exc:

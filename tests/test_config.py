@@ -26,7 +26,7 @@ from pydantic import ValidationError
 from nomad.auth.scopes import _resolve_scopes
 from nomad.config import load_config
 from nomad.config.models import config as config_module
-from nomad.config.models.config import Auth
+from nomad.config.models.config import Auth, Config, Services
 from nomad.config.models.plugins import ParserEntryPoint, SchemaPackageEntryPoint
 from nomad.utils import flatten_dict
 
@@ -657,6 +657,82 @@ def test_id_url_safe_collision(entry_points, collides, mockopen, monkeypatch):
 def test_normalized_url(conf_yaml, conf_expected, mockopen, monkeypatch):
     config = load_test_config(conf_yaml, None, mockopen, monkeypatch)
     assert_config(config, conf_expected)
+
+
+@pytest.mark.parametrize(
+    'configured, expected_public, expected_prefix',
+    [
+        pytest.param('/', '/', '', id='root'),
+        pytest.param('/develop', '/develop', '/develop', id='develop'),
+        pytest.param('/prod/v1/', '/prod/v1', '/prod/v1', id='trailing-slash'),
+    ],
+)
+def test_services_base_path_normalization(configured, expected_public, expected_prefix):
+    services = Services(api_base_path=configured)
+
+    assert services.api_base_path == expected_public
+    assert services.route_prefix == expected_prefix
+    assert services.join_path('api', 'v1') == f'{expected_prefix}/api/v1'
+    assert services.join_path('/gui/') == f'{expected_prefix}/gui'
+
+
+@pytest.mark.parametrize('configured', ['', 'develop', '/develop//v1'])
+def test_services_base_path_rejects_malformed_paths(configured):
+    with pytest.raises(ValidationError):
+        Services(api_base_path=configured)
+
+
+@pytest.mark.parametrize(
+    'configured, api_url, gui_url, north_url, hub_url',
+    [
+        pytest.param(
+            '/',
+            'https://nomad.example/api',
+            'https://nomad.example/gui',
+            'https://north.example:9000/north',
+            'http://north.example:9000/north/hub',
+            id='root',
+        ),
+        pytest.param(
+            '/develop',
+            'https://nomad.example/develop/api',
+            'https://nomad.example/develop/gui',
+            'https://north.example:9000/develop/north',
+            'http://north.example:9000/develop/north/hub',
+            id='develop',
+        ),
+        pytest.param(
+            '/prod/v1/',
+            'https://nomad.example/prod/v1/api',
+            'https://nomad.example/prod/v1/gui',
+            'https://north.example:9000/prod/v1/north',
+            'http://north.example:9000/prod/v1/north/hub',
+            id='prod',
+        ),
+    ],
+)
+def test_config_urls_use_normalized_base_path(
+    configured, api_url, gui_url, north_url, hub_url
+):
+    config = Config(
+        services=Services(
+            api_base_path=configured,
+            api_host='nomad.example',
+            api_port=443,
+            https=True,
+        ),
+        north={'hub_host': 'north.example', 'hub_port': 9000},
+    )
+
+    assert config.api_url() == api_url
+    assert config.gui_url() == gui_url
+    assert config.gui_url('search/entries') == f'{gui_url}/search/entries'
+    assert config.north_url() == north_url
+    assert config.hub_url() == hub_url
+    assert (
+        config.ui.app_base == f'https://nomad.example:443{config.services.route_prefix}'
+    )
+    assert config.ui.north_base == north_url
 
 
 # Tests for `Auth`

@@ -18,4 +18,4 @@
 
 from nomad.config import config
 
-root_path: str = f'{config.services.api_base_path}/api/v1'
+root_path: str = config.services.join_path('api', 'v1')

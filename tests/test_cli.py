@@ -44,6 +44,24 @@ def invoke_cli(*args, **kwargs):
     return click.testing.CliRunner().invoke(*args, obj=POPO(), **kwargs)
 
 
+@pytest.mark.parametrize(
+    'prefix, expected_location',
+    [
+        pytest.param('/', 'location /gui/', id='root'),
+        pytest.param('/develop/', 'location /develop/gui/', id='trailing-slash'),
+        pytest.param('develop', 'location /develop/gui/', id='explicit-prefix'),
+    ],
+)
+def test_nginx_conf_normalizes_root_prefix(prefix, expected_location, capsys):
+    from nomad.cli.admin.admin import nginx_conf
+
+    nginx_conf.callback(prefix, 'backend', 8000, False)
+    output = capsys.readouterr().out
+
+    assert expected_location in output
+    assert '//gui' not in output
+
+
 @pytest.fixture
 def mock_prune_pat(monkeypatch):
     captured = {}

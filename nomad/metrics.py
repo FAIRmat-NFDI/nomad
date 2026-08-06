@@ -241,8 +241,7 @@ def setup_prometheus(app: FastAPI):
     if not config.telemetry.metrics.api_prometheus_enabled:
         return
 
-    app_base = config.services.api_base_path
-    metrics_path = f'{app_base}/metrics'
+    metrics_path = config.services.join_path('metrics')
 
     # Instrument FastAPI apps recursively so mounted sub-apps can report their
     # own templated routes. Non-FastAPI mounts are still counted coarsely by the

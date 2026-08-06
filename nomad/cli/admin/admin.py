@@ -294,8 +294,10 @@ def restore(path_to_dump):
     'Useful when conf file is included within another nginx.conf.',
 )
 def nginx_conf(prefix, host, port, server):
-    prefix = prefix.rstrip('/')
-    prefix = '/{}'.format(prefix.lstrip('/'))
+    # Keep the historic permissive --prefix behavior while representing a root
+    # deployment as an empty prefix for route composition.
+    prefix = prefix.strip()
+    prefix = '' if prefix in ('', '/') else '/{}'.format(prefix.strip('/'))
 
     if server:
         print(

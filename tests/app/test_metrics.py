@@ -33,7 +33,7 @@ def test_prometheus_monitoring_disabled(monkeypatch):
     client = TestClient(app)
 
     # Assert metrics endpoint is not registered
-    metrics_path = f'{config.services.api_base_path}/metrics'
+    metrics_path = config.services.join_path('metrics')
     assert client.get(metrics_path).status_code == 404
 
 
@@ -51,7 +51,7 @@ def test_prometheus_monitoring_enabled(monkeypatch):
     client = TestClient(app)
 
     # First, fetch metrics (should exist and return 200)
-    metrics_path = f'{config.services.api_base_path}/metrics'
+    metrics_path = config.services.join_path('metrics')
     response = client.get(metrics_path)
     assert response.status_code == 200
     assert 'nomad_fastapi_requests_total' in response.text
@@ -83,7 +83,7 @@ def test_prometheus_monitoring_unmatched(monkeypatch):
     # Hit an unmatched endpoint (404)
     client.get('/invalid-route-abc')
 
-    metrics_path = f'{config.services.api_base_path}/metrics'
+    metrics_path = config.services.join_path('metrics')
     metrics_response = client.get(metrics_path)
     assert metrics_response.status_code == 200
     assert (
@@ -109,7 +109,7 @@ def test_prometheus_monitoring_mounted_fastapi_uses_templated_path(monkeypatch):
     response = client.get('/mounted-fastapi/child/123')
     assert response.status_code == 200
 
-    metrics_path = f'{config.services.api_base_path}/metrics'
+    metrics_path = config.services.join_path('metrics')
     metrics_response = client.get(metrics_path)
     assert metrics_response.status_code == 200
     assert (
@@ -136,7 +136,7 @@ def test_prometheus_monitoring_static_mount_uses_coarse_path(monkeypatch, tmp_pa
     response = client.get('/mounted-static/docs/index.html')
     assert response.status_code == 200
 
-    metrics_path = f'{config.services.api_base_path}/metrics'
+    metrics_path = config.services.join_path('metrics')
     metrics_response = client.get(metrics_path)
     assert metrics_response.status_code == 200
     assert (
