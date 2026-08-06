@@ -32,6 +32,7 @@ from fastapi import (
 )
 from fastapi import Query as FastApiQuery
 from fastapi.responses import StreamingResponse
+from pydantic.json_schema import SkipJsonSchema
 
 from nomad.bundles import BundleExporter, BundleImporter
 from nomad.tracing import traced
@@ -229,7 +230,18 @@ async def post_upload_bundle(
             )
         ),
     ] = UploadTransferFormat.bundle,
-    file: Annotated[list[UploadFile] | None, File()] = None,
+    file: Annotated[
+        list[UploadFile] | SkipJsonSchema[None],
+        File(
+            json_schema_extra={
+                'items': {
+                    'type': 'string',
+                    'format': 'binary',
+                    'contentMediaType': 'application/octet-stream',
+                }
+            }
+        ),
+    ] = None,
     local_path: Annotated[
         str | None,
         FastApiQuery(
