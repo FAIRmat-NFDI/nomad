@@ -231,9 +231,8 @@ class HDF5Dataset(NonPrimitive):
 
         from nomad.files import FSUtility, UploadFiles
 
-        hdf5_path: str = UploadFiles.get(
-            section_context.upload_id
-        ).archive_hdf5_location(archive.entry_id)
+        upload_files = UploadFiles.get(section_context.upload_id)
+        hdf5_path: str = upload_files.archive_hdf5_location(archive.entry_id)
 
         if isinstance(value, str):
             if not (match := match_hdf5_reference(value)):
@@ -242,7 +241,9 @@ class HDF5Dataset(NonPrimitive):
 
             file, path = match['file_id'], match['path']
 
-            with FSUtility.open_h5(hdf5_path, 'r') as hdf5_file:
+            with FSUtility.open_h5(
+                hdf5_path, 'r', fs=getattr(upload_files, 'storage_fs', None)
+            ) as hdf5_file:
                 if file in hdf5_file:
                     segment = f'{file}/{path}'
                 else:

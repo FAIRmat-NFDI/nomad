@@ -21,12 +21,14 @@ import os
 import pathlib
 import re
 import shutil
+import uuid
 import zipfile
 from collections.abc import Generator, Iterable
 from datetime import datetime
 from typing import Any
 
 import pytest
+from fsspec.implementations.memory import MemoryFileSystem
 
 from nomad import datamodel, utils
 from nomad.archive import to_json
@@ -535,6 +537,133 @@ def create_public_upload(
 
 
 class TestPublicUploadFiles(UploadFilesContract):
+    @staticmethod
+    def _create_remote_delete_copy(monkeypatch, upload_files):
+        """Configure a unique in-memory remote copy for deletion tests."""
+        remote_fs = MemoryFileSystem()
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', 's3')
+        monkeypatch.setattr(
+            config.fs.public_fs, 'bucket', f'public-delete-{uuid.uuid4().hex}'
+        )
+        monkeypatch.setattr(
+            type(config.fs.public_fs), 'target_fs', property(lambda _: remote_fs)
+        )
+
+        remote_path = FSUtility.remote_path(upload_files.os_path)
+        remote_fs.makedirs(remote_path, exist_ok=True)
+        remote_fs.pipe(f'{remote_path}/remote-marker', b'remote')
+        return remote_fs, remote_path
+
+    @staticmethod
+    def _create_local_delete_copy(upload_files):
+        with upload_files._fs.open(
+            upload_files.join_file('local-marker').location, 'wb'
+        ) as file:
+            file.write(b'local')
+
+    def test_delete_removes_remote_and_local_copies(self, monkeypatch, test_upload_id):
+        upload_files = PublicUploadFiles(test_upload_id, create=True)
+        self._create_local_delete_copy(upload_files)
+        remote_fs, remote_path = self._create_remote_delete_copy(
+            monkeypatch, upload_files
+        )
+        monkeypatch.setattr(config.fs.public_fs, 'read_mode', 'remote_then_local')
+
+        upload_files.delete()
+
+        assert not upload_files.exists()
+        assert not remote_fs.exists(remote_path)
+
+    def test_delete_remote_failure_still_removes_local_copy(
+        self, monkeypatch, test_upload_id
+    ):
+        upload_files = PublicUploadFiles(test_upload_id, create=True)
+        self._create_local_delete_copy(upload_files)
+        remote_fs, remote_path = self._create_remote_delete_copy(
+            monkeypatch, upload_files
+        )
+        original_rm = remote_fs.rm
+
+        def fail_remote_delete(*args, **kwargs):
+            raise OSError('remote delete failed')
+
+        monkeypatch.setattr(remote_fs, 'rm', fail_remote_delete)
+
+        with pytest.raises(OSError, match='remote delete failed'):
+            upload_files.delete()
+
+        assert not upload_files.exists()
+        assert remote_fs.exists(remote_path)
+        original_rm(remote_path, recursive=True)
+
+    def test_delete_local_failure_still_removes_remote_copy(
+        self, monkeypatch, test_upload_id
+    ):
+        upload_files = PublicUploadFiles(test_upload_id, create=True)
+        self._create_local_delete_copy(upload_files)
+        remote_fs, remote_path = self._create_remote_delete_copy(
+            monkeypatch, upload_files
+        )
+        original_rm = upload_files._fs.rm
+
+        def fail_local_delete(*args, **kwargs):
+            raise OSError('local delete failed')
+
+        monkeypatch.setattr(upload_files._fs, 'rm', fail_local_delete)
+
+        with pytest.raises(OSError, match='local delete failed'):
+            upload_files.delete()
+
+        assert upload_files.exists()
+        assert not remote_fs.exists(remote_path)
+        monkeypatch.setattr(upload_files._fs, 'rm', original_rm)
+
+    def test_delete_is_idempotent_when_copies_are_missing(
+        self, monkeypatch, test_upload_id
+    ):
+        upload_files = PublicUploadFiles(test_upload_id, create=True)
+        remote_fs, remote_path = self._create_remote_delete_copy(
+            monkeypatch, upload_files
+        )
+
+        upload_files.delete()
+        upload_files.delete()
+
+        assert not upload_files.exists()
+        assert not remote_fs.exists(remote_path)
+
+    def test_remote_then_local_reads_a_complete_local_backend(
+        self, monkeypatch, test_upload_id
+    ):
+        """A migration fallback selects local once, rather than mixing artifacts."""
+        _, entries, local_upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        local_raw = local_upload_files.raw_zip_file_object().os_path
+
+        remote_fs = MemoryFileSystem()
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', 's3')
+        monkeypatch.setattr(config.fs.public_fs, 'read_mode', 'remote_then_local')
+        monkeypatch.setattr(
+            type(config.fs.public_fs), 'target_fs', property(lambda _: remote_fs)
+        )
+
+        fallback_upload_files = PublicUploadFiles(test_upload_id)
+        assert fallback_upload_files.storage_fs is not remote_fs
+        with fallback_upload_files.raw_file(entries[0].mainfile) as file_obj:
+            assert file_obj.read()
+        with fallback_upload_files.read_archive(entries[0].entry_id) as archive:
+            assert entries[0].entry_id in archive
+
+        remote_raw = FSUtility.remote_path(local_raw)
+        remote_fs.makedirs(os.path.dirname(remote_raw), exist_ok=True)
+        remote_fs.put_file(local_raw, remote_raw)
+
+        remote_upload_files = PublicUploadFiles(test_upload_id)
+        assert remote_upload_files.storage_fs is remote_fs
+        with remote_upload_files.raw_file(entries[0].mainfile) as file_obj:
+            assert file_obj.read()
+
     @pytest.fixture(scope='function')
     def empty_test_upload(self, test_upload_id: str) -> UploadFiles:
         _, _, upload_files = create_public_upload(

@@ -35,7 +35,7 @@ from fastapi import (
 )
 from fastapi import Query as FastApiQuery
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 
 from nomad import files, utils
 from nomad.auth.scopes import Scope
@@ -1093,11 +1093,22 @@ def get_upload_raw(
             ),
         )
 
-    if FSUtility.is_local(file_path := upload_files.raw_zip_file_object().os_path):
+    raw_zip_file = upload_files.raw_zip_file_object()
+    file_path = raw_zip_file.os_path
+    storage_fs = upload_files.storage_fs
+    if FSUtility.is_local(file_path, fs=storage_fs):
         return FileResponse(file_path, media_type='application/zip')
 
+    if config.fs.public_fs.redirect_downloads and upload_files.access == 'public':
+        return RedirectResponse(
+            storage_fs.url(
+                raw_zip_file.location,
+                expires=config.fs.public_fs.signed_url_expiration,
+            )
+        )
+
     def file_stream():
-        with FSUtility.open(file_path) as file_obj:
+        with FSUtility.open(file_path, fs=storage_fs) as file_obj:
             while chunk := file_obj.read(2**20):
                 yield chunk
 
