@@ -642,6 +642,25 @@ public/ex/examples_template_985dc9d7/raw-public.plain.zip
 ```
 """,
     )
+    read_mode: Literal['remote_only', 'remote_then_local'] = Field(
+        'remote_only',
+        description="""Controls reads of public files when a remote filesystem is configured.
+
+``remote_only`` reads published files only from the configured remote filesystem.
+``remote_then_local`` reads from remote storage first and falls back to the local public
+filesystem only when no published artifacts are present remotely. The selected backend is
+used consistently for an upload; artifacts are never mixed between the two backends.
+""",
+    )
+    redirect_downloads: bool = Field(
+        False,
+        description='Redirect whole non-embargoed published raw ZIP downloads to signed remote URLs.',
+    )
+    signed_url_expiration: int = Field(
+        24 * 60 * 60,
+        gt=0,
+        description='Lifetime in seconds of signed URLs created for published raw ZIP downloads.',
+    )
 
     @model_validator(mode='after')
     @classmethod

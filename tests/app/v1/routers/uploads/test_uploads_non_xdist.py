@@ -24,6 +24,8 @@ from typing import Any
 
 import pytest
 
+from nomad.config import config
+from nomad.files import PublicUploadFiles
 from nomad.processing import ProcessStatus
 from tests.app.v1.routers.common import (
     assert_browser_download_headers,
@@ -1129,6 +1131,56 @@ def test_get_upload_raw(
                 with zip_file.open(name, 'r') as f:
                     file_content = f.read()
                     assert content.encode() in file_content
+
+
+def test_get_upload_raw_redirects_to_signed_remote_url(
+    monkeypatch, auth_headers, client, example_data
+):
+    class RemoteFS:
+        protocol = 's3'
+
+        def url(self, path, expires):
+            assert expires == 24 * 60 * 60
+            return f'https://storage.example.test/{path}?signature=test'
+
+    monkeypatch.setattr(config.fs.public_fs, 'redirect_downloads', True)
+    monkeypatch.setattr(PublicUploadFiles, 'storage_fs', property(lambda _: RemoteFS()))
+    monkeypatch.setattr(PublicUploadFiles, 'access', property(lambda _: 'public'))
+
+    response = client.get(
+        'uploads/id_published/raw',
+        headers=auth_headers['user1'],
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    assert response.headers['location'].startswith('https://storage.example.test/')
+
+
+def test_get_embargoed_upload_raw_does_not_redirect(
+    monkeypatch, auth_headers, client, example_data
+):
+    class RemoteFS:
+        protocol = 's3'
+
+        def open(self, path, mode):
+            return io.BytesIO(b'restricted raw ZIP')
+
+        def url(self, path, expires):
+            raise AssertionError('embargoed downloads must not use signed URLs')
+
+    monkeypatch.setattr(config.fs.public_fs, 'redirect_downloads', True)
+    monkeypatch.setattr(PublicUploadFiles, 'storage_fs', property(lambda _: RemoteFS()))
+    monkeypatch.setattr(PublicUploadFiles, 'access', property(lambda _: 'restricted'))
+
+    response = client.get(
+        'uploads/id_embargo/raw',
+        headers=auth_headers['user1'],
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    assert response.content == b'restricted raw ZIP'
 
 
 @pytest.mark.parametrize(

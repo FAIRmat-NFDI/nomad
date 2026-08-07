@@ -76,7 +76,13 @@ def open_zipped_h5_file(
                 yield f
         else:
             with FSUtility.open_h5(
-                upload_files.archive_hdf5_location(path_or_id), **h5py_options
+                upload_files.archive_hdf5_location(path_or_id),
+                fs=(
+                    upload_files.storage_fs
+                    if isinstance(upload_files, PublicUploadFiles)
+                    else None
+                ),
+                **h5py_options,
             ) as f:
                 yield f
     except OSError as e:

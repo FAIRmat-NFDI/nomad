@@ -97,6 +97,20 @@ empty_hdf5_file_size = 96
 
 class FSUtility:
     @staticmethod
+    def remote_path(path: str | UPath | PathObject) -> str:
+        """Return the configured remote location for a nominal public path."""
+        if isinstance(path, UPath):
+            path = path.path
+        elif isinstance(path, PathObject):
+            path = path.os_path
+
+        public_fs = config.fs.public_fs
+        segment = path
+        if public_fs.simplify_path:
+            segment = path.split(config.fs.public, 1)[-1]
+        return f'{public_fs.bucket}/{segment.removeprefix("/")}'
+
+    @staticmethod
     def upath(path: str | UPath | PathObject) -> UPath:
         """
         The `path` could be either relative or absolute.
@@ -113,27 +127,38 @@ class FSUtility:
         if config.fs.public not in path or public_fs.protocol is None:
             return UPath(path)
 
-        segment = path
-        if public_fs.simplify_path:
-            segment = path.split(config.fs.public, 1)[-1]
-        segment = f'{public_fs.bucket}/{segment.removeprefix("/")}'
-
         public_fs.ensure_buffer_size()
 
-        return UPath(segment, protocol=public_fs.protocol, **public_fs.extra)
+        return UPath(
+            FSUtility.remote_path(path), protocol=public_fs.protocol, **public_fs.extra
+        )
 
     @staticmethod
-    def is_local(path: str) -> bool:
-        return isinstance(FSUtility.upath(path).fs, LocalFileSystem)
+    def is_local(path: str, *, fs: AbstractFileSystem | None = None) -> bool:
+        return (
+            isinstance(fs, LocalFileSystem)
+            if fs is not None
+            else isinstance(FSUtility.upath(path).fs, LocalFileSystem)
+        )
 
     @staticmethod
     @contextmanager
-    def open(path: str, mode: Literal['r', 'w', 'a'] = 'r'):
+    def open(
+        path: str,
+        mode: Literal['r', 'w', 'a'] = 'r',
+        *,
+        fs: AbstractFileSystem | None = None,
+    ):
         """
         Open the target as plain IO object.
         """
-        upath = FSUtility.upath(path)
-        fs, location = upath.fs, upath.path
+        if fs is None:
+            upath = FSUtility.upath(path)
+            fs, location = upath.fs, upath.path
+        else:
+            location = (
+                path if isinstance(fs, LocalFileSystem) else FSUtility.remote_path(path)
+            )
         if isinstance(fs, LocalFileSystem) or mode == 'r':
             cached_fs = fs
         else:
@@ -146,11 +171,20 @@ class FSUtility:
 
     @staticmethod
     @contextmanager
-    def open_h5(path: str, mode: Literal['r', 'w', 'a'] = 'r', **kwargs):
+    def open_h5(
+        path: str,
+        mode: Literal['r', 'w', 'a'] = 'r',
+        *,
+        fs: AbstractFileSystem | None = None,
+        **kwargs,
+    ):
         """
         Open the target as HDF5 file object.
         """
-        with FSUtility.open(path, mode) as file, File(file, mode, **kwargs) as h5_file:
+        with (
+            FSUtility.open(path, mode, fs=fs) as file,
+            File(file, mode, **kwargs) as h5_file,
+        ):
             yield h5_file
 
     @staticmethod
@@ -190,11 +224,31 @@ class FSUtility:
 
     @staticmethod
     @contextmanager
-    def open_archive(path: str, mode: Literal['a', 'w', 'r'] = 'r'):
+    def open_archive(
+        path: str,
+        mode: Literal['a', 'w', 'r'] = 'r',
+        *,
+        fs: AbstractFileSystem | None = None,
+    ):
         """
         Open the target as `ZipFileSystem` or `TarFileSystem`.
         """
-        if config.fs.public in path:
+        if fs is not None:
+            if isinstance(fs, LocalFileSystem):
+                with FSUtility._open_archive_fs(path, mode) as archive_fs:
+                    yield archive_fs
+            else:
+                protocol = fs.protocol
+                if isinstance(protocol, tuple):
+                    protocol = protocol[0]
+                with FSUtility._open_archive_fs(
+                    FSUtility.remote_path(path),
+                    mode,
+                    protocol,
+                    fs.storage_options,
+                ) as archive_fs:
+                    yield archive_fs
+        elif config.fs.public in path:
             with FSUtility._open_archive_fs(
                 FSUtility.upath(path).path,
                 mode,
@@ -245,7 +299,7 @@ class PathObject:
         if isinstance(self._fs, LocalFileSystem):
             return self.os_path
 
-        return FSUtility.upath(self).path
+        return FSUtility.remote_path(self)
 
     def delete(self):
         if self.exists():
@@ -295,11 +349,19 @@ class DirectoryObject(PathObject):
     def zip_fp(self, access: str, *, fs: AbstractFileSystem | None = None):
         return self.join_file(f'raw-{access}.plain.zip', fs=fs)
 
-    def msg_fp(self, access: str, fallback: bool = False):
+    def msg_fp(
+        self,
+        access: str,
+        fallback: bool = False,
+        *,
+        fs: AbstractFileSystem | None = None,
+    ):
         def versioned_file_name(version_suffix):
             return f'archive-{access}{version_suffix}.msg.msg'
 
-        return _versioned_archive_file_object(self, versioned_file_name, fallback)
+        return _versioned_archive_file_object(
+            self, versioned_file_name, fallback, fs=fs
+        )
 
     def h5_fp(self, access: str, *, fs: AbstractFileSystem | None = None):
         return self.join_file(f'archive-{access}.h5', fs=fs)
@@ -657,7 +719,11 @@ async def create_zipstream_async(
 
 
 def _versioned_archive_file_object(
-    target_dir: DirectoryObject, file_name: Callable[[str], str], fallback: bool
+    target_dir: DirectoryObject,
+    file_name: Callable[[str], str],
+    fallback: bool,
+    *,
+    fs: AbstractFileSystem | None = None,
 ) -> PathObject:
     """
     Creates a file object for an archive file depending on the directory it is or
@@ -666,7 +732,7 @@ def _versioned_archive_file_object(
     """
     suffixes = config.fs.archive_version_suffix
 
-    fs = FSUtility.upath(target_dir).fs
+    fs = fs or FSUtility.upath(target_dir).fs
     actual_dir = DirectoryObject(target_dir.os_path, fs=fs)
 
     if not isinstance(suffixes, list):
@@ -1867,6 +1933,42 @@ class PublicUploadFiles(UploadFiles):
 
         return self.os_path.replace(config.fs.public, config.fs.public_external)
 
+    @staticmethod
+    def _artifacts_exist(path: str, fs: AbstractFileSystem) -> bool:
+        """Whether this backend has any non-empty published artifact for an upload.
+
+        This deliberately only treats absence as a fallback condition. Errors from the
+        remote filesystem propagate, rather than quietly serving a potentially stale
+        local copy.
+        """
+        directory = DirectoryObject(path, fs=fs)
+        for access in ('public', 'restricted'):
+            for artifact, minimum_size in (
+                (directory.zip_fp(access), empty_zip_file_size),
+                (
+                    directory.msg_fp(access, fallback=True, fs=fs),
+                    empty_archive_file_size,
+                ),
+                (directory.h5_fp(access), empty_hdf5_file_size),
+            ):
+                if artifact.exists() and artifact.size > minimum_size:
+                    return True
+        return False
+
+    @cached_property
+    def storage_fs(self) -> AbstractFileSystem:
+        """The single backend from which this published upload is read."""
+        public_fs = config.fs.public_fs
+        if public_fs.protocol is None:
+            return LocalFileSystem()
+
+        remote_fs = public_fs.target_fs
+        if public_fs.read_mode == 'remote_then_local' and not self._artifacts_exist(
+            self.os_path, remote_fs
+        ):
+            return LocalFileSystem()
+        return remote_fs
+
     @cached_property
     def access(self):
         """
@@ -1921,14 +2023,27 @@ class PublicUploadFiles(UploadFiles):
         If both public and restricted files exist, or if none of them exist, a KeyError will
         be thrown.
         """
-        return self.zip_fp(access or self.access, fs=FSUtility.upath(self).fs)
+        return self.zip_fp(access or self.access, fs=self.storage_fs)
+
+    def msg_fp(
+        self,
+        access: str,
+        fallback: bool = False,
+        *,
+        fs: AbstractFileSystem | None = None,
+    ):
+        selected_fs = fs if fs is not None else self.storage_fs
+        directory = DirectoryObject(self.os_path, fs=selected_fs)
+        return directory.msg_fp(access, fallback=fallback, fs=selected_fs)
 
     def h5_fp(self, access: str, *, fs: AbstractFileSystem | None = None):
-        return super().h5_fp(access, fs=config.fs.public_fs.target_fs)
+        return super().h5_fp(access, fs=fs or self.storage_fs)
 
     @contextmanager
     def _zip_fs(self, mode: Literal['a', 'w', 'r'] = 'r'):
-        with FSUtility.open_archive(self.raw_zip_file_object().os_path, mode) as zip_fs:
+        with FSUtility.open_archive(
+            self.raw_zip_file_object().os_path, mode, fs=self.storage_fs
+        ) as zip_fs:
             yield zip_fs
 
     def archive_hdf5_location(self, entry_id: str) -> str:
@@ -1940,8 +2055,12 @@ class PublicUploadFiles(UploadFiles):
 
     @contextmanager
     def _open_msg_file(self) -> Iterator[ArchiveReader]:
-        with read_archive(self.msg_fp(self.access, fallback=True).os_path) as archive:
-            yield archive
+        msg_file = self.msg_fp(self.access, fallback=True)
+        # ``read_archive`` accepts a seekable file object, allowing the selected
+        # local backend to remain local even when remote public storage is enabled.
+        with FSUtility.open(msg_file.os_path, fs=self.storage_fs) as file_obj:
+            with read_archive(file_obj) as archive:
+                yield archive
 
     def to_staging(
         self, create: bool = False, include_archive: bool = False
@@ -1966,7 +2085,9 @@ class PublicUploadFiles(UploadFiles):
                             entry_id.strip(), to_json(data)
                         )
 
-                with FSUtility.open_h5(self.archive_hdf5_location('')) as hdf5_source:
+                with FSUtility.open_h5(
+                    self.archive_hdf5_location(''), fs=self.storage_fs
+                ) as hdf5_source:
                     for entry_id, data in hdf5_source.items():
                         with File(
                             staging_upload_files.archive_hdf5_location(entry_id), 'w'
@@ -1981,8 +2102,45 @@ class PublicUploadFiles(UploadFiles):
             return not zip_fs.ls('', False)
 
     def delete(self) -> None:
-        FSUtility.upath(self).rmdir(True)
-        super().delete()
+        """Delete every configured copy of this published upload.
+
+        Published files can be read from a remote filesystem with a local fallback.
+        Deletion must therefore target both locations independently; in particular, a
+        remote error must not leave a readable local fallback behind.
+        """
+
+        def delete_directory(fs: AbstractFileSystem, cleanup_prefix: bool) -> None:
+            PathObject(self.os_path, fs=fs).delete()
+
+            # Keep the local prefix cleanup performed by DirectoryObject.delete, but
+            # make it safe when a retry finds that the upload/prefix is already gone.
+            if cleanup_prefix and config.fs.prefix_size > 0:
+                parent = os.path.dirname(self.os_path)
+                if fs.exists(parent) and not fs.ls(parent, detail=False):
+                    fs.rm(parent, recursive=True)
+
+        errors: list[Exception] = []
+        public_fs = config.fs.public_fs
+        if public_fs.protocol is not None:
+            try:
+                delete_directory(public_fs.target_fs, cleanup_prefix=False)
+            except Exception as exc:
+                errors.append(exc)
+
+        try:
+            delete_directory(self._fs, cleanup_prefix=True)
+        except Exception as exc:
+            errors.append(exc)
+
+        if len(errors) == 1:
+            raise errors[0]
+        if errors:
+            # Python 3.10 is supported, so retain both failures through exception
+            # chaining instead of using the Python 3.11 ExceptionGroup type.
+            try:
+                raise errors[1]
+            except Exception as local_error:
+                raise errors[0] from local_error
 
     def raw_exists(self, path: str) -> bool:
         if not is_safe_relative_path(path):
