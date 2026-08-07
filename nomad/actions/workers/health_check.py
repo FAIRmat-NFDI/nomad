@@ -16,6 +16,8 @@
 # limitations under the License.
 #
 
+import asyncio
+
 from aiohttp import web
 
 from nomad.config import config
@@ -32,8 +34,12 @@ def should_start_health_server(worker_config: WorkerConfig) -> bool:
 # There's no built in health check in Temporal, but we can use the following endpoint to setup
 # a healthcheck and then Docker/Kubernetes would detect worker failures/crashes and restart the container/pod.
 # This approach is suggested in https://temporal.io/blog/deploying-temporal-workers-to-amazon-ecs
-async def start_health_server(host: str, port: int) -> web.AppRunner:
+async def start_health_server(
+    host: str, port: int, worker_task: asyncio.Task | None = None
+) -> web.AppRunner:
     async def handle_health(_):
+        if worker_task is not None and worker_task.done():
+            return web.Response(status=503, text='UNHEALTHY')
         return web.Response(text='OK')
 
     app = web.Application()
