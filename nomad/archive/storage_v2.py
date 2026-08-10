@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from io import BytesIO
+from typing import BinaryIO
 
 import msgspec.msgpack
 from bitarray import bitarray
@@ -48,8 +49,8 @@ class Utility:
 
 
 class ArchiveItem:  # noqa: PLW1641
-    def __init__(self, f: BytesIO, offset: int = 0):
-        self._f: BytesIO = f
+    def __init__(self, f: BinaryIO, offset: int = 0):
+        self._f = f
         self._offset: int = offset
         # to record how many items have been accessed
         self._accessed_items: int = 0
@@ -120,7 +121,7 @@ class ArchiveItem:  # noqa: PLW1641
 
 
 class ArchiveList(ArchiveItem):
-    def __init__(self, toc: dict, f: BytesIO, offset: int = 0):
+    def __init__(self, toc: dict, f: BinaryIO, offset: int = 0):
         super().__init__(f, offset)
         self._toc: list = toc.get('toc', [])  # if empty, it's a list of small objects
         self._pos: list = toc['pos']
@@ -201,7 +202,7 @@ class ArchiveList(ArchiveItem):
 
 
 class ArchiveDict(ArchiveItem):
-    def __init__(self, toc: dict, f: BytesIO, offset: int = 0):
+    def __init__(self, toc: dict, f: BinaryIO, offset: int = 0):
         super().__init__(f, offset)
         self._toc: dict = toc['toc']
         self._pos: list = toc['pos']
@@ -250,14 +251,16 @@ class ArchiveDict(ArchiveItem):
 
 
 class ArchiveReader(ArchiveItem):
-    def __init__(self, file_or_path: str | BytesIO):
-        self._file_or_path: str | BytesIO = file_or_path
+    def __init__(self, file_or_path: str | BinaryIO):
+        self._file_or_path = file_or_path
 
         if isinstance(self._file_or_path, str):
             f = open(
                 self._file_or_path, 'rb', buffering=config.archive.read_buffer_size
             )
-        elif isinstance(self._file_or_path, BytesIO):
+        elif hasattr(self._file_or_path, 'read') and hasattr(
+            self._file_or_path, 'seek'
+        ):
             f = self._file_or_path
         else:
             raise ValueError('not a file or path')
