@@ -19,8 +19,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from io import BytesIO
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, BinaryIO
 
 from msglc import FileInfo, LazyReader, LazyWriter, combine, dump
 
@@ -31,7 +30,7 @@ v2_magic: bytes = b'nomad-archive-v2023'
 v2_magic_len: int = len(v2_magic)
 
 
-def check_archive_version(file_or_path: str | BytesIO) -> int:
+def check_archive_version(file_or_path: str | BinaryIO) -> int:
     from nomad.files import FSUtility
 
     magic_len = max(v2_magic_len, LazyWriter.magic_len())
@@ -51,7 +50,7 @@ def check_archive_version(file_or_path: str | BytesIO) -> int:
     return 1
 
 
-def write_archive(path_or_file: str | BytesIO, data: dict) -> None:
+def write_archive(path_or_file: str | BinaryIO, data: dict) -> None:
     from nomad.files import FSUtility
 
     if not isinstance(path_or_file, str):
@@ -83,7 +82,7 @@ def combine_archive(target_fp, data: Iterable[tuple]):
     combine(upath.path, _kernel(), fs=upath.fs, backend='rust')
 
 
-def read_archive(file_or_path: str | BytesIO, **kwargs):
+def read_archive(file_or_path: str | BinaryIO, **kwargs):
     """
     Allows to read a msgpack-based archive.
 

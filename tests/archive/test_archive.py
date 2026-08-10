@@ -30,9 +30,11 @@ from nomad import utils
 from nomad.archive import (
     ArchiveQueryError,
     RequiredReader,
+    check_archive_version,
     query_archive,
     read_archive,
     to_json,
+    v2_magic,
     v2_magic_len,
     write_archive,
 )
@@ -88,6 +90,66 @@ def _unpack(data, pos=None):
         return msgpack.unpackb(f.read(pos[1] - pos[0]), raw=False)
 
 
+def _create_legacy_archive(version: int, entry_id: str, entry: dict) -> bytes:
+    """Create the smallest useful archive in the legacy v1 or v2 layout."""
+    assert version in (1, 2)
+
+    packer = msgpack.Packer(autoreset=True, use_bin_type=True)
+    archive = BytesIO()
+    entry_id = utils.adjust_uuid_size(entry_id)
+
+    def encode_position(start: int, end: int) -> bytes:
+        return start.to_bytes(5, 'little') + end.to_bytes(5, 'little')
+
+    def write_raw(value: bytes) -> tuple[int, int]:
+        start = archive.tell()
+        archive.write(value)
+        return start, archive.tell()
+
+    def write(value) -> tuple[int, int]:
+        return write_raw(packer.pack(value))
+
+    if version == 2:
+        write_raw(v2_magic)
+
+    header_start = archive.tell()
+    write_raw(packer.pack_map_header(3))
+    write('toc_pos')
+    write(encode_position(0, 0))
+    write('toc')
+
+    empty_position = encode_position(0, 0)
+    toc_position = write({entry_id: [empty_position, empty_position]})
+
+    write('data')
+    write_raw(packer.pack_map_header(1))
+    write(entry_id)
+    write_raw(packer.pack_map_header(2))
+    write('toc')
+
+    packed_entry = packer.pack(entry)
+    entry_toc_position = write({'pos': [0, len(packed_entry)]})
+    write('data')
+    entry_data_position = write_raw(packed_entry)
+
+    archive.seek(header_start)
+    write_raw(packer.pack_map_header(3))
+    write('toc_pos')
+    write(encode_position(*toc_position))
+    write('toc')
+    rewritten_toc_position = write(
+        {
+            entry_id: [
+                encode_position(*entry_toc_position),
+                encode_position(*entry_data_position),
+            ]
+        }
+    )
+    assert rewritten_toc_position == toc_position
+
+    return archive.getvalue()
+
+
 def test_write_archive_empty():
     f = BytesIO()
     write_archive(f, {})
@@ -133,6 +195,25 @@ def test_read_archive_single(example_uuid, example_entry):
 
     with pytest.raises(IndexError):
         data[example_uuid]['run']['system'][2]
+
+
+@pytest.mark.parametrize('archive_version', [1, 2])
+def test_read_legacy_archive_with_fsutility_file_object(
+    tmp_path, archive_version, example_uuid, example_entry
+):
+    from nomad.files import FSUtility
+
+    path = str(tmp_path / f'legacy-v{archive_version}.msg')
+    with FSUtility.open(path, 'w') as tmp_file:
+        tmp_file.write(
+            _create_legacy_archive(archive_version, example_uuid, example_entry)
+        )
+
+    with FSUtility.open(path) as file_obj:
+        assert check_archive_version(file_obj) == archive_version
+        with read_archive(file_obj) as data:
+            assert example_uuid in data
+            assert to_json(data[example_uuid]['run']) == example_entry['run']
 
 
 def test_read_archive_multi(monkeypatch, example_uuid, example_entry):

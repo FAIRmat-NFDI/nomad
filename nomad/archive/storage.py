@@ -19,8 +19,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator, Mapping, Sequence
-from io import BufferedReader, BytesIO
-from typing import cast
+from typing import BinaryIO, cast
 
 import msgspec
 
@@ -42,7 +41,7 @@ class ArchiveError(Exception):
 
 
 class ArchiveItem:
-    def __init__(self, f: BytesIO, offset: int = 0):
+    def __init__(self, f: BinaryIO, offset: int = 0):
         self._f = f
         self._offset = offset
 
@@ -117,18 +116,20 @@ class ArchiveDict(ArchiveItem, Mapping):
 
 
 class ArchiveReader(ArchiveDict):
-    def __init__(self, file_or_path: str | BytesIO):
+    def __init__(self, file_or_path: str | BinaryIO):
         self._file_or_path = file_or_path
 
         if isinstance(self._file_or_path, str):
-            f: BytesIO = cast(
-                BytesIO,
+            f: BinaryIO = cast(
+                BinaryIO,
                 open(
                     self._file_or_path, 'rb', buffering=config.archive.read_buffer_size
                 ),
             )
-        elif isinstance(self._file_or_path, BytesIO | BufferedReader):
-            f = cast(BytesIO, self._file_or_path)
+        elif hasattr(self._file_or_path, 'read') and hasattr(
+            self._file_or_path, 'seek'
+        ):
+            f = cast(BinaryIO, self._file_or_path)
         else:
             raise ValueError('not a file or path')
 
