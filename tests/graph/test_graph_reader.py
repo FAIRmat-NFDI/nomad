@@ -4827,3 +4827,88 @@ def test_m_def_format_short_with_explicit_m_def(user1, custom_data):
     assert 'MySection' in m_def_value
     # Other quantities should still be present
     assert archive_data['my_quantity'] == 'test_value'
+
+
+def test_archive_reader_filtered_v3_lazy_reader():
+    """Regression test: v3 combined archives return msglc.LazyReader for entry archives.
+
+    Ensure ArchiveReader respects include/exclude filters on LazyReader and does
+    not treat it as a primitive value that gets copied wholesale.
+    """
+    from io import BytesIO
+
+    from msglc import FileInfo, LazyReader, combine, dump
+
+    target = BytesIO()
+
+    def generate_entries():
+        buf = BytesIO()
+        dump(
+            buf,
+            {
+                'entry_id_1': {
+                    'metadata': {
+                        'upload_id': 'upload_id_1',
+                        'entry_id': 'entry_id_1',
+                        'mainfile': 'test.json',
+                    },
+                    'results': {
+                        'material': {
+                            'chemical_formula_reduced': 'H2O',
+                        },
+                    },
+                }
+            },
+            backend='rust',
+        )
+        buf.seek(0)
+        with LazyReader(buf) as r:
+            yield FileInfo(None, 'entry_id_1', obj=r['entry_id_1'])
+
+    combine(target, generate_entries(), backend='rust')
+    target.seek(0)
+
+    with LazyReader(target) as combined_reader:
+        entry = combined_reader['entry_id_1']
+        assert isinstance(entry, LazyReader)
+
+        # 1. exclude: ['*'] should return empty dict
+        with ArchiveReader(
+            {'m_request': {'directive': 'plain', 'exclude': ['*']}}
+        ) as reader:
+            res = reader.sync_read(entry)
+            assert res == {}, f'Expected empty dict, got {res}'
+
+        # 2. include: ['results'] should only contain results, not metadata
+        with ArchiveReader(
+            {'m_request': {'directive': 'plain', 'include': ['results']}}
+        ) as reader:
+            res = reader.sync_read(entry)
+            assert 'metadata' not in res
+            assert res.get('results') == {
+                'material': {
+                    'chemical_formula_reduced': 'H2O',
+                },
+            }
+
+        # 3. exclude: ['metadata'] should omit metadata
+        with ArchiveReader(
+            {'m_request': {'directive': 'plain', 'exclude': ['metadata']}}
+        ) as reader:
+            res = reader.sync_read(entry)
+            assert 'metadata' not in res
+            assert 'results' in res
+
+        # 4. Filtered subsection query on metadata
+        with ArchiveReader(
+            {
+                'metadata': {
+                    'm_request': {
+                        'directive': 'plain',
+                        'include': ['entry_id'],
+                    }
+                }
+            }
+        ) as reader:
+            res = reader.sync_read(entry)
+            assert res == {'metadata': {'entry_id': 'entry_id_1'}}, f'Got {res}'
