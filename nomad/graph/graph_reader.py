@@ -33,7 +33,7 @@ import orjson
 from cachetools import TTLCache
 from fastapi import HTTPException
 from mongoengine import Q
-from msglc.reader import LazyDict, LazyList
+from msglc.reader import LazyDict, LazyList, LazyReader
 
 from nomad import utils
 from nomad.app.v1.models import (
@@ -108,7 +108,7 @@ logger = utils.get_logger(__name__)
 
 
 GenericList: TypeAlias = list | ArchiveList | ArchiveListNew | LazyList
-GenericDict: TypeAlias = dict | ArchiveDict | ArchiveDictNew | LazyDict
+GenericDict: TypeAlias = dict | ArchiveDict | ArchiveDictNew | LazyDict | LazyReader
 
 
 @dataclasses.dataclass(frozen=True)
