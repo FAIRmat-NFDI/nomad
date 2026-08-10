@@ -156,10 +156,16 @@ async def _connect_client(api_key: str | None) -> Client:
 
     data_converter = temporalio.converter.DataConverter(
         payload_converter_class=PydanticPayloadConverter,
-        payload_codec=None
-        # Disable encryption in dev mode
-        if config.services.mode == ModeEnum.DEVELOPMENT
-        else EncryptionCodec(),
+        # Development deployments remain unencrypted unless an explicit
+        # Temporal payload key is configured (needed for cross-Oasis Nexus).
+        payload_codec=(
+            EncryptionCodec()
+            if (
+                config.services.mode != ModeEnum.DEVELOPMENT
+                or config.temporal.payload_codec_key
+            )
+            else None
+        ),
     )
     plugins = []
     if config.telemetry.tracing.enabled:

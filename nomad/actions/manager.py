@@ -194,21 +194,46 @@ def _run_temporal_sync(coro: Coroutine[Any, Any, Any]) -> Any:
 
 
 def _to_dict(data: Any) -> dict:
-    """Convert data to dictionary and remove all secret fields"""
+    """Convert data to a dictionary without persisting Pydantic secrets."""
 
-    def _internal_to_dict(data: Any) -> dict:
-        "Convert input to dictionary"
-        if isinstance(data, BaseModel):  # pydantic
-            return data.model_dump(by_alias=True)
-        elif is_dataclass(data) and not isinstance(data, type):
-            return asdict(data)
-        elif isinstance(data, dict):  # already a dict
-            return data
-        else:
-            raise TypeError(f'Unsupported type: {type(data)}')
+    def _secret_exclusions(val: Any) -> Any:
+        """Build a Pydantic exclusion tree from values before serialization."""
+        if isinstance(val, (SecretStr, SecretBytes)):
+            return True
+        if isinstance(val, BaseModel):
+            model_exclusions: dict[Any, Any] = {}
+            for field_name in type(val).model_fields:
+                exclusion = _secret_exclusions(getattr(val, field_name))
+                if exclusion:
+                    model_exclusions[field_name] = exclusion
+            for field_name, field_value in (val.model_extra or {}).items():
+                exclusion = _secret_exclusions(field_value)
+                if exclusion:
+                    model_exclusions[field_name] = exclusion
+            return model_exclusions or None
+        if isinstance(val, dict):
+            dict_exclusions: dict[Any, Any] = {}
+            for key, item in val.items():
+                exclusion = _secret_exclusions(item)
+                if exclusion:
+                    dict_exclusions[key] = exclusion
+            return dict_exclusions or None
+        if isinstance(val, (list, tuple, set)):
+            sequence_exclusions: dict[Any, Any] = {}
+            for index, item in enumerate(val):
+                exclusion = _secret_exclusions(item)
+                if exclusion:
+                    sequence_exclusions[index] = exclusion
+            return sequence_exclusions or None
+        return None
 
     def _remove_secrets(val: Any) -> Any:
-        """Recursively remove all secrets in the generated dictionary/lists"""
+        """Recursively remove secrets while preserving normal serialization."""
+        if isinstance(val, (SecretStr, SecretBytes)):
+            return None
+        if isinstance(val, BaseModel):
+            serialized = val.model_dump(by_alias=True, exclude=_secret_exclusions(val))
+            return _remove_secrets(serialized)
         if isinstance(val, dict):
             new_data = {}
             for k, v in val.items():
@@ -216,19 +241,19 @@ def _to_dict(data: Any) -> dict:
                     continue
                 new_data[k] = _remove_secrets(v)
             return new_data
-        elif isinstance(val, list):
+        if isinstance(val, list):
             return [
                 _remove_secrets(item)
                 for item in val
                 if not isinstance(item, (SecretStr, SecretBytes))
             ]
-        elif isinstance(val, tuple):
+        if isinstance(val, tuple):
             return tuple(
                 _remove_secrets(item)
                 for item in val
                 if not isinstance(item, (SecretStr, SecretBytes))
             )
-        elif isinstance(val, set):
+        if isinstance(val, set):
             return {
                 _remove_secrets(item)
                 for item in val
@@ -236,7 +261,13 @@ def _to_dict(data: Any) -> dict:
             }
         return val
 
-    return _remove_secrets(_internal_to_dict(data))
+    if isinstance(data, BaseModel):
+        return _remove_secrets(data)
+    if is_dataclass(data) and not isinstance(data, type):
+        return _remove_secrets(asdict(data))
+    if isinstance(data, dict):
+        return _remove_secrets(data)
+    raise TypeError(f'Unsupported type: {type(data)}')
 
 
 def _validate_with_pydantic(func: Callable, arg):
@@ -517,13 +548,14 @@ def get_action_result(action_instance_id: str, user_id: str) -> dict[str, Any] |
         )
         return None
 
+    serialized_results = _to_dict(results)
     _sync_action_repository.save_result_for_user(
         action_instance_id,
         user_id,
         WorkflowExecutionStatus.COMPLETED.name,
-        _to_dict(results),
+        serialized_results,
     )
-    return results
+    return serialized_results
 
 
 async def get_action_result_async(
@@ -544,13 +576,14 @@ async def get_action_result_async(
         )
         return None
 
+    serialized_results = _to_dict(results)
     await _async_action_repository.save_result_for_user(
         action_instance_id,
         user_id,
         WorkflowExecutionStatus.COMPLETED.name,
-        _to_dict(results),
+        serialized_results,
     )
-    return results
+    return serialized_results
 
 
 async def _refresh_action_status(action: ActionRecord):
