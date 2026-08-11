@@ -53,11 +53,13 @@ import shutil
 import stat
 import tarfile
 import tempfile
+import time
 import warnings
 import zipfile
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager, suppress
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
@@ -93,6 +95,111 @@ bundle_info_filename = 'bundle_info.json'
 empty_zip_file_size = 22
 empty_archive_file_size = 32
 empty_hdf5_file_size = 96
+
+
+class _ReadStats:
+    """Accumulates bytes read and wall-clock read time from a remote filesystem."""
+
+    __slots__ = ('read_time', 'read_bytes')
+
+    def __init__(self):
+        self.read_time = 0.0
+        self.read_bytes = 0
+
+
+# A stack of active measurement contexts. Reads accumulate into every active
+# accumulator so that nested ``measure_fs_reads`` contexts (e.g. a whole-query
+# wrapper around ``load_archive``) all observe the same underlying I/O.
+_current_read_stats: ContextVar[tuple[_ReadStats, ...]] = ContextVar(
+    'nomad_fs_read_stats', default=()
+)
+
+
+@contextmanager
+def measure_fs_reads() -> Iterator[_ReadStats]:
+    """
+    Time reads against the configured remote filesystem.
+
+    Reads performed through :meth:`FSUtility.open` while this context is active
+    are accumulated into the yielded :class:`_ReadStats` object. This gives the
+    floor that graph queries cannot improve below: the time spent pulling archive
+    bytes from remote storage. It is a no-op when no remote filesystem is used.
+    """
+    stats = _ReadStats()
+    token = _current_read_stats.set((*_current_read_stats.get(), stats))
+    try:
+        yield stats
+    finally:
+        _current_read_stats.reset(token)
+
+
+class _TimedReadFile(io.BufferedIOBase):
+    """
+    Wrap a file handle opened via :meth:`FSUtility.open`, timing ``read`` calls
+    into all currently active :class:`_ReadStats` accumulators.
+    """
+
+    def __init__(self, file: IO[bytes]):
+        super().__init__()
+        self._file = file
+
+    def readable(self) -> bool:
+        return True
+
+    def read(self, size: int = -1) -> bytes:
+        start = time.perf_counter()
+        data = self._file.read(size)
+        elapsed = time.perf_counter() - start
+        for stats in _current_read_stats.get():
+            stats.read_time += elapsed
+            stats.read_bytes += len(data)
+        return data
+
+    def readinto(self, buffer) -> int:
+        if (readinto := getattr(self._file, 'readinto', None)) is None:
+            data = self._file.read(len(buffer))
+            count = len(data)
+            buffer[:count] = data
+        else:
+            start = time.perf_counter()
+            count = readinto(buffer)
+            elapsed = time.perf_counter() - start
+            for stats in _current_read_stats.get():
+                stats.read_time += elapsed
+                stats.read_bytes += count
+            return count
+        for stats in _current_read_stats.get():
+            stats.read_bytes += count
+        return count
+
+    def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+        return self._file.seek(offset, whence)
+
+    def tell(self) -> int:
+        return self._file.tell()
+
+    def close(self) -> None:
+        return self._file.close()
+
+    def fileno(self) -> int:
+        return self._file.fileno()
+
+    def flush(self) -> None:
+        return self._file.flush()
+
+    def isatty(self) -> bool:
+        return False
+
+    def __enter__(self) -> _TimedReadFile:
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        return False
+
+    @property
+    def closed(self) -> bool:
+        return self._file.closed
 
 
 class FSUtility:
@@ -167,7 +274,10 @@ class FSUtility:
             cached_fs = SimpleCacheFileSystem(fs=fs)
 
         with cached_fs.open(location, f'{mode}b') as file:
-            yield file
+            if mode == 'r' and _current_read_stats.get():
+                yield _TimedReadFile(file)
+            else:
+                yield file
 
     @staticmethod
     @contextmanager

@@ -18,7 +18,9 @@
 
 import asyncio
 import json
+from contextlib import contextmanager
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 import pytest_asyncio
@@ -140,6 +142,48 @@ def increment():
     while True:
         n += 1
         yield n
+
+
+@pytest.mark.parametrize(
+    ('span', 'expected_measurements'),
+    [
+        (None, 0),
+        (SimpleNamespace(is_recording=lambda: False), 0),
+        (SimpleNamespace(is_recording=lambda: True, set_attribute=lambda *_: None), 1),
+    ],
+    ids=['tracing-disabled', 'unsampled', 'sampled'],
+)
+def test_load_archive_measures_reads_only_for_recording_spans(
+    monkeypatch, span, expected_measurements
+):
+    measurements = []
+
+    @contextmanager
+    def fake_trace_span(*args, **kwargs):
+        yield span
+
+    @contextmanager
+    def fake_measure_fs_reads():
+        measurements.append(True)
+        yield SimpleNamespace(read_bytes=10, read_time=0.001)
+
+    class UploadFiles:
+        @contextmanager
+        def read_archive(self, entry_id):
+            yield {entry_id: {'value': 1}}
+
+    monkeypatch.setattr('nomad.graph.graph_reader.trace_span', fake_trace_span)
+    monkeypatch.setattr(
+        'nomad.graph.graph_reader.measure_fs_reads', fake_measure_fs_reads
+    )
+
+    reader = ArchiveReader({})
+    reader.upload_pool['upload-id'] = UploadFiles()
+
+    with reader.load_archive('upload-id', 'entry-id') as archive:
+        assert archive == {'value': 1}
+
+    assert len(measurements) == expected_measurements
 
 
 @pytest.mark.asyncio

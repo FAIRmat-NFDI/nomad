@@ -42,6 +42,7 @@ from nomad.files import (
     UploadFiles,
     empty_archive_file_size,
     empty_zip_file_size,
+    measure_fs_reads,
 )
 from nomad.mongo.package import PackageDefinition
 from nomad.processing import Upload
@@ -91,6 +92,40 @@ def example_mainfile_contents():
     with zipfile.ZipFile(example_file, 'r') as zf:
         with zf.open(example_mainfile_raw_path) as f:
             return f.read().decode()
+
+
+def test_measure_fs_reads_counts_only_within_context(tmp_path):
+    path = str(tmp_path / 'data.bin')
+    with open(path, 'wb') as f:
+        f.write(b'x' * 4096)
+
+    # Reads outside a measurement context are not counted.
+    with FSUtility.open(path) as f:
+        f.read()
+
+    with measure_fs_reads() as stats:
+        with FSUtility.open(path) as f:
+            assert f.read() == b'x' * 4096
+        assert stats.read_bytes == 4096
+        assert stats.read_time >= 0.0
+
+    # Reads after the context exits are not counted.
+    with FSUtility.open(path) as f:
+        f.read()
+    assert stats.read_bytes == 4096
+
+
+def test_measure_fs_reads_nested_contexts_accumulate(tmp_path):
+    path = str(tmp_path / 'data.bin')
+    with open(path, 'wb') as f:
+        f.write(b'y' * 2048)
+
+    with measure_fs_reads() as outer:
+        with measure_fs_reads() as inner:
+            with FSUtility.open(path) as f:
+                f.read()
+        assert inner.read_bytes == 2048
+        assert outer.read_bytes == 2048
 
 
 class TestObjects:
