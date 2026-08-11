@@ -31,10 +31,13 @@ from nomad.app.v1.routers.auth import (
     get_current_user,
 )
 from nomad.auth.keycloak import KeycloakError
+from nomad.auth.pat import PAT_PREFIX, PATQuery
+from nomad.auth.pat import hash_token as _hash_token
 from nomad.auth.scopes import Scope
-from nomad.auth.tokens import PAT, PAT_PREFIX, AuthResult, PATQuery, _hash_token
+from nomad.auth.tokens import AuthResult
 from nomad.common import now
 from nomad.config.models.config import ModeEnum
+from nomad.mongo.pat import PAT
 from tests.test_config import load_test_config
 
 DEFAULT_TEST_SCOPES: list[Scope] = [Scope.UPLOADS_READ]
@@ -198,7 +201,7 @@ def test_get_current_user_auth_methods(
         ),
     )
     monkeypatch.setattr(
-        'nomad.app.v1.routers.auth.authenticate_pat',
+        'nomad.app.v1.routers.auth.pat_service.authenticate',
         lambda _token: MockPAT(allowed_user.user_id) if authenticate_pat else None,
     )
 
@@ -284,7 +287,7 @@ def test_pat_can_authenticate_with_keycloak_token_allowed(
         lambda _token: (_ for _ in ()).throw(KeycloakError('invalid token')),
     )
     monkeypatch.setattr(
-        'nomad.app.v1.routers.auth.authenticate_pat',
+        'nomad.app.v1.routers.auth.pat_service.authenticate',
         lambda _token: MockPAT(allowed_user.user_id),
     )
 
@@ -858,7 +861,7 @@ def test_resolve_user_authenticated_authorized_uses_token_scopes(
     )
 
     monkeypatch.setattr(
-        'nomad.app.v1.routers.auth.authenticate_pat',
+        'nomad.app.v1.routers.auth.pat_service.authenticate',
         lambda *args, **kwargs: pat,
     )
     monkeypatch.setattr(
@@ -934,7 +937,7 @@ def test_resolve_user_authenticated_not_in_whitelist(
     pat = SimpleNamespace(user_id='user-id', scopes=['uploads:write'])
 
     monkeypatch.setattr(
-        'nomad.app.v1.routers.auth.authenticate_pat',
+        'nomad.app.v1.routers.auth.pat_service.authenticate',
         lambda *args, **kwargs: pat,
     )
     monkeypatch.setattr(

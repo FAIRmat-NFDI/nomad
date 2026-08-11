@@ -30,23 +30,20 @@ from pydantic import BaseModel, Field, field_validator
 
 from nomad import datamodel
 from nomad.auth.keycloak import KeycloakError, OIDCToken, keycloak
-from nomad.auth.scopes import Scope
-from nomad.auth.tokens import (
+from nomad.auth.pat import (
     PAT_PREFIX,
-    AuthResult,
-    PATMetadata,
+    PATCreationSpec,
     PATQuery,
     PATSortOrder,
-    authenticate_pat,
-    create_pat,
+    pat_service,
+)
+from nomad.auth.scopes import Scope
+from nomad.auth.tokens import (
+    AuthResult,
     generate_simple_token,
-    get_pat,
     get_user_from_keycloak_token,
     get_user_from_simple_token,
     get_user_from_upload_token,
-    list_pat,
-    revoke_pat,
-    rotate_pat,
 )
 from nomad.config import config
 from nomad.config.models.config import ModeEnum
@@ -123,12 +120,12 @@ def _resolve_user_with_scopes(
 
     # Resolve user from personal access token
     if auth_result is None and personal_access_token:
-        pat = authenticate_pat(personal_access_token)
+        pat = pat_service.authenticate(personal_access_token)
 
         if pat is not None:
             user = datamodel.User.get(user_id=pat.user_id)
             if user:
-                auth_result = AuthResult(user=user, scopes=pat.scopes)
+                auth_result = AuthResult(user=user, scopes=set(pat.scopes))
             else:
                 # The user was deleted, but their PAT still exists
                 logger.warning(f'Valid PAT used for missing user_id: {pat.user_id}')
@@ -361,7 +358,7 @@ def get_token(
 class PATCreateRequest(BaseModel):
     """Payload for creating a new token."""
 
-    metadata: PATMetadata
+    metadata: PATCreationSpec
     expires_in_days: int | None = 30
 
 
@@ -442,7 +439,7 @@ def create_pat_endpoint(
         )
 
     try:
-        return create_pat(
+        return pat_service.create(
             user_id=user.user_id,
             metadata=request.metadata,
             expires_in_days=request.expires_in_days,
@@ -482,7 +479,7 @@ def rotate_pat_endpoint(
         404 Not Found: If the target token does not exist.
     """
     try:
-        result = rotate_pat(user_id=user.user_id, pat_id=pat_id)
+        result = pat_service.rotate(user_id=user.user_id, pat_id=pat_id)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -541,7 +538,7 @@ def list_pat_endpoint(
     Retrieves a paginated list of PATs.
     """
     # Fetch data and total count from the service layer
-    result = list_pat(
+    result = pat_service.list_owned(
         user_id=user.user_id,
         query=query,
         start=pagination.get_simple_index(),
@@ -580,8 +577,7 @@ def get_pat_endpoint(
         400 bad request: If the token ID format is invalid.
         404 Not Found: If the token does not exist or belongs to another user.
     """
-
-    pat = get_pat(user_id=user.user_id, pat_id=pat_id)
+    pat = pat_service.get(user_id=user.user_id, pat_id=pat_id)
 
     if pat is None:
         raise HTTPException(
@@ -612,7 +608,7 @@ def revoke_pat_endpoint(
     Raises:
         404 Not Found: If the target token does not exist.
     """
-    success = revoke_pat(user_id=user.user_id, pat_id=pat_id)
+    success = pat_service.revoke(user_id=user.user_id, pat_id=pat_id)
 
     if not success:
         raise HTTPException(

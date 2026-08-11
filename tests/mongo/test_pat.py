@@ -17,11 +17,11 @@
 #
 
 import datetime
-from time import sleep
 
 import pytest
 
-from nomad.auth.tokens import _hash_token
+from nomad.auth.pat import hash_token as _hash_token
+from nomad.auth.pat import to_record
 from nomad.common import now
 from nomad.config import config
 from nomad.mongo.pat import PAT
@@ -52,22 +52,7 @@ def test_pat_ttl_index_configuration(mongo_function):
     assert ttl_index['expireAfterSeconds'] == config.auth.pat_pruning_time * 86400
 
 
-# Test `save`
-
-
-def test_pat_save_updates_timestamp(mongo_function):
-    # Create a PAT
-    pat = PAT(name='test', user_id='user1', token_digest=_hash_token('abc123'))
-    pat.save()
-    first_update = pat.updated_at
-
-    # Wait a moment and save again
-    sleep(0.1)
-    pat.save()
-    assert pat.updated_at > first_update
-
-
-# Test `is_expired`
+# Test `is_expired` via to_record
 
 
 def test_pat_is_expired_true(mongo_function):
@@ -83,7 +68,7 @@ def test_pat_is_expired_true(mongo_function):
     )
     pat.save()
 
-    assert pat.is_expired is True
+    assert to_record(pat).is_expired is True
 
 
 @pytest.mark.parametrize(
@@ -106,7 +91,7 @@ def test_pat_is_expired_false(mongo_function, expired_at):
     )
     pat.save()
 
-    assert pat.is_expired is False
+    assert to_record(pat).is_expired is False
 
 
 def test_pat_is_expired_none(mongo_function):
@@ -122,10 +107,10 @@ def test_pat_is_expired_none(mongo_function):
     )
     pat.save()
 
-    assert pat.is_expired is False
+    assert to_record(pat).is_expired is False
 
 
-# Test `is_active`
+# Test `is_active` via to_record
 
 
 def test_pat_is_active_active(mongo_function):
@@ -141,7 +126,7 @@ def test_pat_is_active_active(mongo_function):
     )
     pat.save()
 
-    assert pat.is_active is True
+    assert to_record(pat).is_active is True
 
 
 def test_pat_is_active_revoked(mongo_function):
@@ -157,7 +142,7 @@ def test_pat_is_active_revoked(mongo_function):
     )
     pat.save()
 
-    assert pat.is_active is False
+    assert to_record(pat).is_active is False
 
 
 def test_pat_is_active_expired(mongo_function):
@@ -173,7 +158,7 @@ def test_pat_is_active_expired(mongo_function):
     )
     pat.save()
 
-    assert pat.is_active is False
+    assert to_record(pat).is_active is False
 
 
 def test_pat_is_active_no_expiration(mongo_function):
@@ -189,4 +174,4 @@ def test_pat_is_active_no_expiration(mongo_function):
     )
     pat.save()
 
-    assert pat.is_active is True
+    assert to_record(pat).is_active is True

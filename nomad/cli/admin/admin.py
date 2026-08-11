@@ -191,7 +191,7 @@ def prune_pats(
     import warnings
 
     from nomad import infrastructure
-    from nomad.auth.tokens import prune_pat
+    from nomad.auth.pat import pat_service
     from nomad.common import parse_timedelta
 
     infrastructure.setup_mongo()
@@ -208,7 +208,7 @@ def prune_pats(
             raise click.ClickException(str(e)) from e
 
     try:
-        result = prune_pat(
+        result = pat_service.prune(
             dry_run=dry_run,
             inactive_for=parsed_inactive_for,
             inactive_before=inactive_before,
