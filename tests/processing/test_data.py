@@ -304,6 +304,7 @@ def assert_processing(
             for log_data in entry_archive['processing_logs']:
                 for key in ['event', 'entry_id', 'level']:
                     key in log_data
+                assert 'workflow_ids' in log_data
                 has_test_event = (
                     has_test_event or log_data['event'] == 'a test log entry'
                 )
