@@ -28,7 +28,7 @@ import pytest
 
 from nomad import files
 from nomad import processing as proc
-from nomad.auth.tokens import PATPruneResult
+from nomad.auth.pat import PATPruneResult, pat_service
 from nomad.cli import cli
 from nomad.cli.cli import POPO
 from nomad.common import now
@@ -72,7 +72,7 @@ def mock_prune_pat(monkeypatch):
             captured.update(kwargs)
             return result
 
-        monkeypatch.setattr('nomad.auth.tokens.prune_pat', _mock)
+        monkeypatch.setattr(pat_service, 'prune', _mock)
         return captured
 
     return _install

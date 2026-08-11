@@ -19,32 +19,107 @@
 
 import datetime
 import time
+from dataclasses import replace
 from unittest.mock import MagicMock
 
 import pytest
 from bson.objectid import ObjectId
 
-from nomad.auth.scopes import Scope
-from nomad.auth.tokens import (
+from nomad.auth.pat import (
     PAT_PREFIX,
-    PATMetadata,
+    PATCreationData,
+    PATCreationSpec,
     PATQuery,
-    _hash_token,
-    authenticate_pat,
-    create_pat,
-    get_pat,
-    list_pat,
-    prune_pat,
-    revoke_pat,
-    rotate_pat,
+    PATQuerySpec,
+    PATRecord,
+    PATRepository,
+    PATService,
+    PATSortOrder,
+    PATState,
+    PruneStats,
+    pat_service,
+    to_record,
 )
+from nomad.auth.pat import hash_token as _hash_token
+from nomad.auth.scopes import Scope
 from nomad.common import now
 from nomad.config import config
 from nomad.mongo.pat import PAT
 
+
+# Test wrappers delegating to composed pat_service
+def create_pat(*args, **kwargs):
+    return pat_service.create(*args, **kwargs)
+
+
+def rotate_pat(*args, **kwargs):
+    return pat_service.rotate(*args, **kwargs)
+
+
+def list_pat(*args, **kwargs):
+    return pat_service.list_owned(*args, **kwargs)
+
+
+def get_pat(*args, **kwargs):
+    return pat_service.get(*args, **kwargs)
+
+
+def revoke_pat(*args, **kwargs):
+    return pat_service.revoke(*args, **kwargs)
+
+
+def prune_pat(*args, **kwargs):
+    return pat_service.prune(*args, **kwargs)
+
+
+def authenticate_pat(*args, **kwargs):
+    return pat_service.authenticate(*args, **kwargs)
+
+
 DEFAULT_PAT_EXPIRES_IN_DAYS = 30
 DEFAULT_PAT_TEST_SCOPES = [Scope.UPLOADS_READ]
 DEFAULT_PAT_TEST_NAME = 'Test PAT'
+
+
+def test_domain_record_lifecycle_at_expiry_boundary():
+    expiry = now()
+    record = PATRecord(
+        id='pat-id',
+        user_id='user-id',
+        name='domain token',
+        description=None,
+        scopes=(Scope.UPLOADS_READ,),
+        token_digest=None,
+        created_at=expiry - datetime.timedelta(days=1),
+        expired_at=expiry,
+    )
+
+    # At exact expiry time, expired_at < time is False, so token is still active
+    assert record.is_expired_at(expiry) is False
+    assert record.state_at(expiry) is PATState.ACTIVE
+
+    # After expiry, token is expired
+    after_expiry = expiry + datetime.timedelta(microseconds=1)
+    assert record.is_expired_at(after_expiry) is True
+    assert record.state_at(after_expiry) is PATState.EXPIRED
+
+
+def test_domain_record_revocation_takes_precedence_over_expiry():
+    current_time = now()
+    record = PATRecord(
+        id='pat-id',
+        user_id='user-id',
+        name='revoked token',
+        description=None,
+        scopes=(Scope.UPLOADS_READ,),
+        token_digest=None,
+        created_at=current_time - datetime.timedelta(days=2),
+        expired_at=current_time - datetime.timedelta(days=1),
+        revoked=True,
+        revoked_at=current_time,
+    )
+
+    assert record.state_at(current_time) is PATState.REVOKED
 
 
 def create_test_pat(
@@ -65,10 +140,10 @@ def create_test_pat(
 
     result = create_pat(
         user_id=user_id,
-        metadata=PATMetadata(name=resolved_name, scopes=list(scopes)),
+        metadata=PATCreationSpec(name=resolved_name, scopes=list(scopes)),
         expires_in_days=expires_in_days,
     )
-    pat = result.pat
+    pat = PAT.objects.get(id=result.pat.id)
 
     if revoked:
         updates.setdefault('revoked', True)
@@ -103,7 +178,7 @@ def test_create_returns_correct_structure(mongo_function):
 
     # Check return type
     assert result.raw_token is not None
-    assert isinstance(result.pat, PAT)
+    assert isinstance(result.pat, PATRecord)
 
     # Check raw token format
     assert result.raw_token.startswith(PAT_PREFIX)
@@ -113,7 +188,8 @@ def test_create_returns_correct_structure(mongo_function):
     saved_pat = PAT.objects.get(id=result.pat.id)
     assert saved_pat.user_id == 'user_123'
     assert saved_pat.name == 'CI/CD Token'
-    assert saved_pat.scopes == DEFAULT_PAT_TEST_SCOPES
+    assert saved_pat.scopes == list(DEFAULT_PAT_TEST_SCOPES)
+    assert saved_pat.updated_at == saved_pat.created_at
 
 
 def test_create_hashing_security(mongo_function):
@@ -123,7 +199,7 @@ def test_create_hashing_security(mongo_function):
     result = create_test_pat(user_id='u1', expires_in_days=1)
 
     raw = result.raw_token
-    stored_digest = result.pat.token_digest
+    stored_digest = PAT.objects.get(id=result.pat.id).token_digest
 
     # Raw token should NOT be equal to stored digest
     assert raw != stored_digest
@@ -162,7 +238,7 @@ def test_create_requires_nonempty_scopes(mongo_function):
     with pytest.raises(ValueError, match='At least one scope must be selected'):
         create_pat(
             user_id='u_missing_scopes',
-            metadata=PATMetadata(name='missing scopes', scopes=[]),
+            metadata=PATCreationSpec(name='missing scopes', scopes=[]),
             expires_in_days=30,
         )
 
@@ -261,7 +337,7 @@ def test_create_rejects_token_invalid_scope(mongo_function):
         create_pat(
             user_id='user_123',
             expires_in_days=30,
-            metadata=PATMetadata(
+            metadata=PATCreationSpec(
                 name='Invalid Scope Token',
                 scopes=[
                     'invalid',
@@ -300,7 +376,7 @@ def test_rotate_basic_success(mongo_function):
     assert new_res.pat.id != original_id
     assert new_res.raw_token != original_secret
     assert new_res.pat.name == 'CI Token'
-    assert new_res.pat.scopes == DEFAULT_PAT_TEST_SCOPES
+    assert new_res.pat.scopes == tuple(DEFAULT_PAT_TEST_SCOPES)
     assert new_res.pat.is_active is True
 
 
@@ -323,12 +399,13 @@ def test_rotate_preserves_original_lifespan(mongo_function):
     # and was intended to expire 6 months from now.
     time_shift = datetime.timedelta(days=180)
 
-    original.created_at -= time_shift
-    original.expired_at -= time_shift
-    original.save()
+    original_db = PAT.objects.get(id=original.id)
+    original_db.created_at -= time_shift
+    original_db.expired_at -= time_shift
+    original_db.save()
 
     # Ensure the gap is still 365 days before we rotate
-    initial_duration = (original.expired_at - original.created_at).days
+    initial_duration = (original_db.expired_at - original_db.created_at).days
     assert abs(initial_duration - lifespan_days) <= 1
 
     # Rotate
@@ -354,8 +431,8 @@ def test_rotate_infinite_token(mongo_function, monkeypatch):
 
     new_res = rotate_pat(user_id=user_id, pat_id=str(original.id))
 
-    original.reload()
-    assert original.expired_at is None
+    original_db = PAT.objects.get(id=original.id)
+    assert original_db.expired_at is None
     assert new_res.pat.expired_at is None
 
 
@@ -375,8 +452,8 @@ def test_rotate_wrong_user(mongo_function):
     assert result is None
 
     # Original should NOT be revoked
-    original.reload()
-    assert original.revoked is False
+    original_db = PAT.objects.get(id=original.id)
+    assert original_db.revoked is False
 
 
 def test_rotate_non_existent_invalid(mongo_function):
@@ -412,7 +489,7 @@ def test_rotate_expired(mongo_function):
     PAT.objects(id=token_id).update(set__expired_at=expired_time)
 
     token = PAT.objects.get(id=token_id)
-    assert token.is_active is False
+    assert to_record(token).is_active is False
 
     current_time = now()
     if token.expired_at.tzinfo is None and current_time.tzinfo is not None:
@@ -500,6 +577,11 @@ def test_list_pagination(mongo_function):
     page_empty = list_pat(user_id=user_id, start=10, limit=2)
     assert page_empty.total == 5
     assert len(page_empty.data) == 0
+
+    # Page 5: limit=0 (count-only request)
+    page_count_only = list_pat(user_id=user_id, start=0, limit=0, order_by='name_asc')
+    assert page_count_only.total == 5
+    assert len(page_count_only.data) == 0
 
 
 def test_list_pat_filter_search(mongo_function):
@@ -864,8 +946,9 @@ def test_get_expired_token(mongo_function):
     pat = created.pat
 
     # Backdate the expiration date to simulate natural expiration
-    pat.expired_at = pat.created_at - datetime.timedelta(days=5)
-    pat.save()
+    pat_db = PAT.objects.get(id=pat.id)
+    pat_db.expired_at = pat_db.created_at - datetime.timedelta(days=5)
+    pat_db.save()
 
     pat_id = str(pat.id)
 
@@ -989,12 +1072,12 @@ def test_revoke_already_revoked(mongo_function, monkeypatch):
     # First revoke
     assert revoke_pat(user_id=user_id, pat_id=token_id) is True
 
-    result.pat.reload()
-    first_updated_at = result.pat.updated_at
-    first_revoked_at = result.pat.revoked_at
-    first_expired_at = result.pat.expired_at
+    persisted_pat = PAT.objects.get(id=token_id)
+    first_updated_at = persisted_pat.updated_at
+    first_revoked_at = persisted_pat.revoked_at
+    first_expired_at = persisted_pat.expired_at
 
-    assert result.pat.revoked is True
+    assert persisted_pat.revoked is True
     assert first_revoked_at is not None
 
     mock_save = MagicMock()
@@ -1005,12 +1088,12 @@ def test_revoke_already_revoked(mongo_function, monkeypatch):
 
     # Make sure DB state is not changed
     mock_save.assert_not_called()
-    result.pat.reload()
+    persisted_pat = PAT.objects.get(id=token_id)
 
-    assert result.pat.revoked is True
-    assert result.pat.updated_at == first_updated_at
-    assert result.pat.revoked_at == first_revoked_at
-    assert result.pat.expired_at == first_expired_at
+    assert persisted_pat.revoked is True
+    assert persisted_pat.updated_at == first_updated_at
+    assert persisted_pat.revoked_at == first_revoked_at
+    assert persisted_pat.expired_at == first_expired_at
 
 
 # Test `prune_pat`
@@ -1267,6 +1350,7 @@ def test_authenticate_updates_last_used(mongo_function):
 
     # Ensure usage is initially None
     assert result.pat.last_used_at is None
+    original_updated_at = PAT.objects.get(id=result.pat.id).updated_at
 
     # Sleep briefly to ensure the timestamp will be different
     time.sleep(0.01)
@@ -1275,8 +1359,9 @@ def test_authenticate_updates_last_used(mongo_function):
     authenticate_pat(result.raw_token)
 
     # Reload from DB
-    updated_pat = result.pat.reload()
+    updated_pat = PAT.objects.get(id=result.pat.id)
     assert updated_pat.last_used_at is not None
+    assert updated_pat.updated_at == original_updated_at
 
     current_time = now()
 
@@ -1324,3 +1409,335 @@ def test_authenticate_fails_expired(mongo_function):
     result = create_test_pat(user_id='u_expired', expired=True)
 
     assert authenticate_pat(result.raw_token) is None
+
+
+# ==============================================================================
+# Pure In-Memory Unit Tests (Hexagonal Architecture / Ports & Adapters)
+# ==============================================================================
+
+
+class InMemoryPATRepository(PATRepository):
+    def __init__(self):
+        self.tokens: dict[str, PATRecord] = {}
+
+    def save_new(self, new_pat: PATCreationData) -> PATRecord:
+        import uuid
+
+        pat_id = str(uuid.uuid4())
+        record = PATRecord(
+            id=pat_id,
+            user_id=new_pat.user_id,
+            name=new_pat.name,
+            description=new_pat.description,
+            scopes=tuple(new_pat.scopes),
+            token_digest=new_pat.token_digest,
+            created_at=new_pat.created_at,
+            expired_at=new_pat.expired_at,
+            revoked=False,
+            revoked_at=None,
+            updated_at=new_pat.created_at,
+            last_used_at=None,
+        )
+        self.tokens[pat_id] = record
+        return record
+
+    def get_owned(self, *, pat_id: str, user_id: str) -> PATRecord | None:
+        token = self.tokens.get(pat_id)
+        if token and token.user_id == user_id:
+            return token
+        return None
+
+    def count_active(self, *, user_id: str, time: datetime.datetime) -> int:
+        return sum(
+            1
+            for t in self.tokens.values()
+            if t.user_id == user_id and t.is_active_at(time)
+        )
+
+    def list_owned(
+        self,
+        *,
+        user_id: str,
+        spec: PATQuerySpec,
+        time: datetime.datetime,
+        start: int,
+        limit: int | None,
+        order_by: PATSortOrder,
+    ) -> tuple[list[PATRecord], int]:
+        matched = []
+        for t in self.tokens.values():
+            if t.user_id != user_id:
+                continue
+            if spec.search and spec.search.lower() not in t.name.lower():
+                continue
+            if spec.revoked is not None and t.revoked != spec.revoked:
+                continue
+            if spec.state == 'active' and not t.is_active_at(time):
+                continue
+            if spec.state == 'inactive' and t.is_active_at(time):
+                continue
+            if spec.created_after and t.created_at < spec.created_after:
+                continue
+            if spec.created_before and t.created_at > spec.created_before:
+                continue
+            if spec.last_used_after and (
+                t.last_used_at is None or t.last_used_at < spec.last_used_after
+            ):
+                continue
+            if spec.last_used_before and (
+                t.last_used_at is None or t.last_used_at > spec.last_used_before
+            ):
+                continue
+            if spec.expires_after and (
+                t.expired_at is None or t.expired_at < spec.expires_after
+            ):
+                continue
+            if spec.expires_before and (
+                t.expired_at is None or t.expired_at > spec.expires_before
+            ):
+                continue
+            matched.append(t)
+
+        sort_keys = {
+            'created_asc': (lambda t: (t.created_at is None, t.created_at), False),
+            'created_desc': (lambda t: (t.created_at is None, t.created_at), True),
+            'expires_asc': (lambda t: (t.expired_at is None, t.expired_at), False),
+            'expires_desc': (lambda t: (t.expired_at is not None, t.expired_at), True),
+            'last_used_asc': (
+                lambda t: (t.last_used_at is None, t.last_used_at),
+                False,
+            ),
+            'last_used_desc': (
+                lambda t: (t.last_used_at is not None, t.last_used_at),
+                True,
+            ),
+            'name_asc': (lambda t: t.name.lower(), False),
+            'name_desc': (lambda t: t.name.lower(), True),
+        }
+
+        key_fn, reverse = sort_keys.get(order_by, (lambda t: t.created_at, True))
+        matched.sort(key=key_fn, reverse=reverse)
+
+        total = len(matched)
+        if limit == 0:
+            return [], total
+
+        page = matched[start : (start + limit) if limit is not None else None]
+        return [replace(t, token_digest=None) for t in page], total
+
+    def revoke_owned(
+        self, *, user_id: str, pat_id: str, revoked_at: datetime.datetime
+    ) -> bool:
+        token = self.tokens.get(pat_id)
+        if token and token.user_id == user_id:
+            if token.revoked:
+                return True
+            updated = replace(
+                token, revoked=True, revoked_at=revoked_at, updated_at=revoked_at
+            )
+            self.tokens[pat_id] = updated
+            return True
+        return False
+
+    def claim_active_for_rotation(
+        self,
+        *,
+        user_id: str,
+        pat_id: str,
+        time: datetime.datetime,
+        revoked_at: datetime.datetime,
+    ) -> PATRecord | None:
+        token = self.tokens.get(pat_id)
+        if token and token.user_id == user_id and token.is_active_at(time):
+            updated = replace(
+                token, revoked=True, revoked_at=revoked_at, updated_at=revoked_at
+            )
+            self.tokens[pat_id] = updated
+            return token
+        return None
+
+    def find_by_digest(self, digest: str) -> PATRecord | None:
+        for t in self.tokens.values():
+            if t.token_digest == digest:
+                return t
+        return None
+
+    def mark_used(self, *, pat_id: str, used_at: datetime.datetime) -> None:
+        token = self.tokens.get(pat_id)
+        if token:
+            updated = replace(token, last_used_at=used_at)
+            self.tokens[pat_id] = updated
+
+    def prune(
+        self,
+        *,
+        cutoff: datetime.datetime,
+        expired: bool,
+        revoked: bool,
+        user_id: str | None,
+        dry_run: bool,
+    ) -> PruneStats:
+        matched = 0
+        deleted = 0
+        expired_matched = 0
+        revoked_matched = 0
+        to_delete = []
+
+        for pat_id, t in list(self.tokens.items()):
+            if user_id is not None and t.user_id != user_id:
+                continue
+            is_exp = t.expired_at is not None and t.expired_at <= cutoff
+            is_rev = t.revoked and t.revoked_at is not None and t.revoked_at <= cutoff
+
+            matches_expired = expired and is_exp
+            matches_revoked = revoked and is_rev
+
+            if matches_expired or matches_revoked:
+                matched += 1
+                if matches_expired:
+                    expired_matched += 1
+                if matches_revoked:
+                    revoked_matched += 1
+                if not dry_run:
+                    to_delete.append(pat_id)
+                    deleted += 1
+
+        for pat_id in to_delete:
+            del self.tokens[pat_id]
+
+        return PruneStats(
+            matched=matched,
+            deleted=deleted,
+            expired_matched=expired_matched,
+            revoked_matched=revoked_matched,
+        )
+
+
+def test_in_memory_create_enforces_max_active_tokens():
+    repo = InMemoryPATRepository()
+    fixed_time = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    service = PATService(repository=repo, clock=lambda: fixed_time)
+
+    user_id = 'user_in_memory'
+    metadata = PATCreationSpec(name='Token 1', scopes=[Scope.UPLOADS_READ])
+
+    # We can create up to config.auth.pat_max_active_per_user (default is 10)
+    for i in range(config.auth.pat_max_active_per_user):
+        service.create(
+            user_id=user_id,
+            metadata=PATCreationSpec(name=f'Token_{i}', scopes=[Scope.UPLOADS_READ]),
+            expires_in_days=10,
+        )
+
+    # Creating one more should raise ValueError
+    with pytest.raises(ValueError, match='Maximum number of active PAT'):
+        service.create(user_id=user_id, metadata=metadata, expires_in_days=10)
+
+
+def test_in_memory_rotate_concurrent_revocation_failure():
+    repo = InMemoryPATRepository()
+    fixed_time = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    service = PATService(repository=repo, clock=lambda: fixed_time)
+
+    user_id = 'user_in_memory'
+    result = service.create(
+        user_id=user_id,
+        metadata=PATCreationSpec(name='RotateMe', scopes=[Scope.UPLOADS_READ]),
+        expires_in_days=10,
+    )
+    token_id = result.pat.id
+
+    # Mock claim_active_for_rotation to return None (simulating concurrent rotation/revocation)
+    def mock_claim(*args, **kwargs):
+        return None
+
+    repo.claim_active_for_rotation = mock_claim
+
+    with pytest.raises(ValueError, match='Cannot rotate an expired/revoked token'):
+        service.rotate(user_id=user_id, pat_id=token_id)
+
+
+def test_in_memory_token_digest_redacted():
+    repo = InMemoryPATRepository()
+    fixed_time = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    service = PATService(repository=repo, clock=lambda: fixed_time)
+
+    user_id = 'user_in_memory'
+    result = service.create(
+        user_id=user_id,
+        metadata=PATCreationSpec(name='SecretToken', scopes=[Scope.UPLOADS_READ]),
+        expires_in_days=10,
+    )
+
+    # Assert public output redacts token_digest
+    assert result.pat.token_digest is None
+
+    # Assert repo actually stores token_digest
+    stored_token = repo.tokens[result.pat.id]
+    assert stored_token.token_digest is not None
+    assert stored_token.token_digest == _hash_token(result.raw_token)
+
+
+def test_in_memory_list_owned_filters_and_ordering():
+    repo = InMemoryPATRepository()
+    t0 = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    service = PATService(repository=repo, clock=lambda: t0)
+
+    user_id = 'user_search'
+    service.create(
+        user_id=user_id,
+        metadata=PATCreationSpec(name='Alpha Token', scopes=[Scope.UPLOADS_READ]),
+        expires_in_days=10,
+    )
+    res_beta = service.create(
+        user_id=user_id,
+        metadata=PATCreationSpec(name='Beta Token', scopes=[Scope.UPLOADS_READ]),
+        expires_in_days=20,
+    )
+    service.create(
+        user_id=user_id,
+        metadata=PATCreationSpec(name='Gamma Token', scopes=[Scope.UPLOADS_READ]),
+        expires_in_days=30,
+    )
+
+    # Revoke beta
+    service.revoke(user_id=user_id, pat_id=res_beta.pat.id)
+
+    # Test search filter
+    search_res = service.list_owned(
+        user_id=user_id,
+        query=PATQuery(search='alpha'),
+    )
+    assert search_res.total == 1
+    assert search_res.data[0].name == 'Alpha Token'
+
+    # Test state=active filter
+    active_res = service.list_owned(
+        user_id=user_id,
+        query=PATQuery(state='active'),
+    )
+    assert active_res.total == 2
+    assert {t.name for t in active_res.data} == {'Alpha Token', 'Gamma Token'}
+
+    # Test state=inactive filter
+    inactive_res = service.list_owned(
+        user_id=user_id,
+        query=PATQuery(state='inactive'),
+    )
+    assert inactive_res.total == 1
+    assert inactive_res.data[0].name == 'Beta Token'
+
+    # Test sorting by name asc / desc
+    name_asc = service.list_owned(user_id=user_id, order_by='name_asc')
+    assert [t.name for t in name_asc.data] == [
+        'Alpha Token',
+        'Beta Token',
+        'Gamma Token',
+    ]
+
+    name_desc = service.list_owned(user_id=user_id, order_by='name_desc')
+    assert [t.name for t in name_desc.data] == [
+        'Gamma Token',
+        'Beta Token',
+        'Alpha Token',
+    ]

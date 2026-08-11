@@ -60,29 +60,3 @@ class PAT(Document):
             },
         ],
     }
-
-    def save(self, *args, **kwargs) -> None:
-        self.updated_at = now()
-        return super().save(*args, **kwargs)
-
-    @property
-    def is_expired(self) -> bool:
-        """Checks if the token has passed its expiration date."""
-        if self.expired_at is None:
-            return False
-
-        current_time = now()
-
-        # If DB timestamp is naive (no timezone), force 'current_time' to be naive too
-        if self.expired_at.tzinfo is None:
-            current_time = current_time.replace(tzinfo=None)
-
-        return self.expired_at < current_time
-
-    @property
-    def is_active(self) -> bool:
-        """
-        Checks if the token is currently active.
-        Returns False if revoked or expired.
-        """
-        return not self.revoked and not self.is_expired
