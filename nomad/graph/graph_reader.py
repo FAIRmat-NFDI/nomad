@@ -25,7 +25,7 @@ import functools
 import os
 import re
 from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from threading import Lock
 from typing import Any, TypeAlias
 
@@ -61,7 +61,7 @@ from nomad.archive.storage_v2 import ArchiveList as ArchiveListNew
 from nomad.datamodel import Dataset, EntryArchive, ServerContext, User
 from nomad.datamodel.metainfo.plot import PlotlyFigure
 from nomad.datamodel.util import parse_path
-from nomad.files import RawPathInfo, UploadFiles
+from nomad.files import RawPathInfo, UploadFiles, measure_fs_reads
 from nomad.graph.lazy_wrapper import (
     CachedUpload,
     LazyUploadFailureCount,
@@ -1215,8 +1215,31 @@ class GeneralReader:
             self._reader_cache.server_contexts[upload_id] = ServerContext(upload)
 
         try:
-            with self.upload_pool[upload_id].read_archive(entry_id) as reader:
-                yield reader[entry_id]
+            with trace_span(
+                'graph.archive.load',
+                attributes={'upload_id': upload_id, 'entry_id': entry_id},
+            ) as span:
+                measurement = (
+                    measure_fs_reads()
+                    if span is not None and span.is_recording()
+                    else nullcontext(None)
+                )
+                with (
+                    measurement as stats,
+                    self.upload_pool[upload_id].read_archive(entry_id) as reader,
+                ):
+                    archive = reader[entry_id]
+                    try:
+                        # The caller walks the archive while this generator is
+                        # suspended, so lazy reads happen within this context.
+                        # Record the accumulated stats once the walk finishes.
+                        yield archive
+                    finally:
+                        if stats is not None and span is not None:
+                            span.set_attribute('fs.read_bytes', stats.read_bytes)
+                            span.set_attribute(
+                                'fs.read_time_ms', stats.read_time * 1000
+                            )
         except KeyError:
             raise ArchiveError(
                 f'Archive {entry_id} does not exist in upload {entry_id}.'
