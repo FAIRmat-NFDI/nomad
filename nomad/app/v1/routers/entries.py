@@ -65,6 +65,7 @@ from nomad.search import (
     PermissionDeniedError,
     QueryValidationError,
     SearchError,
+    normalize_api_query,
     search,
 )
 from nomad.search import update_metadata as es_update_metadata
@@ -767,6 +768,91 @@ def perform_search(*args, **kwargs):
             )
 
 
+def _is_upload_visible_for_owner(
+    upload: Upload, owner: Owner, user: User | None
+) -> bool:
+    """Return whether an upload belongs to the requested search owner scope."""
+    user_id = user.user_id if user is not None else None
+    group_ids = MongoUserGroup.get_ids_by_user_id(user_id)
+    is_viewer = (user_id is not None and user_id in upload.viewers) or not set(
+        group_ids
+    ).isdisjoint(upload.viewer_groups)
+    is_public = upload.published and not upload.with_embargo
+
+    if owner == Owner.public:
+        return is_public
+    if owner == Owner.all_:
+        return upload.published or is_viewer
+    if owner == Owner.visible:
+        return is_public or is_viewer
+
+    if user is None:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail=f'Authentication required for owner={owner!r}.',
+        )
+
+    if owner == Owner.shared:
+        return is_viewer
+    if owner == Owner.user:
+        return upload.main_author == user_id
+    if owner == Owner.staging:
+        return not upload.published and is_viewer
+    if owner == Owner.admin:
+        if not user.is_admin:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                detail='This can only be used by the admin user.',
+            )
+        return True
+
+    return False
+
+
+def _resolve_entry_metadata_from_mongo(
+    query: Any, user: User | None, owner: Owner = Owner.visible
+) -> dict | None:
+    """Resolve core metadata for a visible exact-ID entry directly from MongoDB."""
+    if (
+        isinstance(query, dict)
+        and len(query) == 1
+        and 'entry_id' in query
+        and isinstance(query['entry_id'], str)
+    ):
+        entry = proc.Entry.objects(entry_id=query['entry_id']).first()
+        if entry is not None:
+            upload = Upload.objects(upload_id=entry.upload_id).first()
+            if upload is not None and _is_upload_visible_for_owner(upload, owner, user):
+                return {
+                    'entry_id': entry.entry_id,
+                    'upload_id': entry.upload_id,
+                    'mainfile': entry.mainfile,
+                    'mainfile_key': entry.mainfile_key,
+                    'parser_name': entry.parser_name,
+                }
+    return None
+
+
+def _single_entry_pagination(
+    pagination: MetadataPagination,
+) -> tuple[bool, PaginationResponse] | None:
+    """Build pagination for one result, or defer unsupported cases to search."""
+    if pagination.page_after_value is not None or pagination.order_by not in {
+        None,
+        'entry_id',
+    }:
+        return None
+
+    page_size = pagination.page_size if pagination.page_size is not None else 10
+    page = pagination.page if pagination.page is not None else 1
+    page_offset = pagination.page_offset or 0
+    include_entry = page_size > 0 and page == 1 and page_offset == 0
+    response_data = pagination.model_dump(exclude_none=True)
+    response_data['order_by'] = pagination.order_by or 'entry_id'
+
+    return include_entry, PaginationResponse(total=1, **response_data)
+
+
 @router.post(
     '/query',
     tags=[APITag.METADATA],
@@ -956,29 +1042,49 @@ def _answer_entries_rawdir_request(
             ),
         )
 
-    search_response = perform_search(
-        owner=owner,
-        query=query,
-        pagination=pagination,
-        required=MetadataRequired(include=['entry_id', 'upload_id', 'mainfile']),
-        user_id=user.user_id if user is not None else None,
+    single_metadata = _resolve_entry_metadata_from_mongo(query, user, owner)
+    single_pagination = (
+        _single_entry_pagination(pagination) if single_metadata is not None else None
     )
+    if single_metadata is not None and single_pagination is not None:
+        include_entry, response_pagination = single_pagination
+        entries_metadata = [single_metadata] if include_entry else []
+        response_owner = owner
+        response_query = normalize_api_query(query, doc_type=entry_type)
+    else:
+        search_response = perform_search(
+            owner=owner,
+            query=query,
+            pagination=pagination,
+            required=MetadataRequired(include=['entry_id', 'upload_id', 'mainfile']),
+            user_id=user.user_id if user is not None else None,
+        )
+        entries_metadata = search_response.data
+        response_owner = search_response.owner
+        response_query = search_response.query
+        response_pagination = search_response.pagination
 
     with _Uploads() as uploads:
         response_data = [
             _create_entry_rawdir(entry_metadata, uploads)
-            for entry_metadata in search_response.data
+            for entry_metadata in entries_metadata
         ]
 
     return EntriesRawDirResponse(
-        owner=search_response.owner,
-        query=search_response.query,
-        pagination=search_response.pagination,
+        owner=response_owner,
+        query=response_query,
+        pagination=response_pagination,
         data=response_data,
     )
 
 
-def _answer_entries_raw_request(owner: Owner, query: Query, files: Files, user: User):
+def _answer_entries_raw_request(
+    owner: Owner,
+    query: Query,
+    files: Files,
+    user: User,
+    entry_metadata: dict[str, Any] | None = None,
+):
     if owner == Owner.all_:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
@@ -990,20 +1096,27 @@ def _answer_entries_raw_request(owner: Owner, query: Query, files: Files, user: 
             ),
         )
 
-    response = perform_search(
-        owner=owner,
-        query=query,
-        pagination=MetadataPagination(page_size=0),
-        required=MetadataRequired(include=[]),
-        user_id=user.user_id if user is not None else None,
-    )
+    if entry_metadata is None:
+        response = perform_search(
+            owner=owner,
+            query=query,
+            pagination=MetadataPagination(page_size=0),
+            required=MetadataRequired(include=[]),
+            user_id=user.user_id if user is not None else None,
+        )
+        total = response.pagination.total
+    else:
+        entry_metadata = {
+            key: entry_metadata[key] for key in ('entry_id', 'upload_id', 'mainfile')
+        }
+        total = 1
 
-    if response.pagination.total > config.services.max_entry_download:
+    if total > config.services.max_entry_download:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             detail=(
                 f'The limit of maximum number of entries in a single download '
-                f'({config.services.max_entry_download}) has been exceeded ({response.pagination.total}).'
+                f'({config.services.max_entry_download}) has been exceeded ({total}).'
             ),
         )
 
@@ -1014,22 +1127,28 @@ def _answer_entries_raw_request(owner: Owner, query: Query, files: Files, user: 
         # a generator of File objects to create the streamed zip from
         def download_items_generator():
             # go through all entries that match the query
-            for entry_metadata in _do_exhaustive_search(
-                owner,
-                query,
-                required=MetadataRequired(include=search_includes),
-                user=user,
-            ):
-                upload_id = entry_metadata['upload_id']
-                mainfile = entry_metadata['mainfile']
-                entry_metadata['mainfile'] = os.path.join(upload_id, mainfile)
+            entries_metadata = (
+                [entry_metadata]
+                if entry_metadata is not None
+                else _do_exhaustive_search(
+                    owner,
+                    query,
+                    required=MetadataRequired(include=search_includes),
+                    user=user,
+                )
+            )
+            for current_entry_metadata in entries_metadata:
+                current_entry_metadata = dict(current_entry_metadata)
+                upload_id = current_entry_metadata['upload_id']
+                mainfile = current_entry_metadata['mainfile']
+                current_entry_metadata['mainfile'] = os.path.join(upload_id, mainfile)
 
                 mainfile_dir = os.path.dirname(mainfile)
                 yield DownloadItem(
                     upload_id=upload_id,
                     raw_path=mainfile_dir,
                     zip_path=os.path.join(upload_id, mainfile_dir),
-                    entry_metadata=entry_metadata,
+                    entry_metadata=current_entry_metadata,
                 )
 
         return StreamingResponse(
@@ -1379,22 +1498,44 @@ def _answer_entries_archive_request(
     if required is None:
         required = '*'
 
-    search_response = perform_search(
-        owner=owner,
-        query=query,
-        pagination=pagination,
-        required=MetadataRequired(include=['entry_id', 'upload_id', 'parser_name']),
-        user_id=user.user_id if user is not None else None,
+    single_metadata = _resolve_entry_metadata_from_mongo(query, user, owner)
+    single_pagination = (
+        _single_entry_pagination(pagination) if single_metadata is not None else None
     )
-
-    entries: list = [
-        {
-            'entry_id': entry['entry_id'],
-            'upload_id': entry['upload_id'],
-            'parser_name': entry['parser_name'],
-        }
-        for entry in search_response.data
-    ]
+    if single_metadata is not None and single_pagination is not None:
+        include_entry, response_pagination = single_pagination
+        entries: list = (
+            [
+                {
+                    'entry_id': single_metadata['entry_id'],
+                    'upload_id': single_metadata['upload_id'],
+                    'parser_name': single_metadata['parser_name'],
+                }
+            ]
+            if include_entry
+            else []
+        )
+        response_owner = owner
+        response_query = normalize_api_query(query, doc_type=entry_type)
+    else:
+        search_response = perform_search(
+            owner=owner,
+            query=query,
+            pagination=pagination,
+            required=MetadataRequired(include=['entry_id', 'upload_id', 'parser_name']),
+            user_id=user.user_id if user is not None else None,
+        )
+        entries = [
+            {
+                'entry_id': entry['entry_id'],
+                'upload_id': entry['upload_id'],
+                'parser_name': entry['parser_name'],
+            }
+            for entry in search_response.data
+        ]
+        response_owner = search_response.owner
+        response_query = search_response.query
+        response_pagination = search_response.pagination
 
     required_reader = _validate_required(required, user)
     response_data = []
@@ -1414,9 +1555,9 @@ def _answer_entries_archive_request(
         logger.info('read all archives', endpoint='entries/archive')
 
     response = EntriesArchiveResponse(
-        owner=search_response.owner,
-        query=search_response.query,
-        pagination=search_response.pagination,
+        owner=response_owner,
+        query=response_query,
+        pagination=response_pagination,
         required=required,
     )
     if populate_url:
@@ -1728,22 +1869,24 @@ def get_entry_rawdir(
     of the given `entry_id`. The first file will be the *mainfile*.
     """
     query = dict(entry_id=entry_id)
-    response = perform_search(
-        owner=Owner.visible,
-        query=query,
-        required=MetadataRequired(include=['entry_id', 'upload_id', 'mainfile']),
-        user_id=user.user_id if user is not None else None,
-    )
-
-    if response.pagination.total == 0:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            detail='The entry with the given id does not exist or is not visible to you.',
+    entry_metadata = _resolve_entry_metadata_from_mongo(query, user)
+    if entry_metadata is None:
+        response = perform_search(
+            owner=Owner.visible,
+            query=query,
+            required=MetadataRequired(include=['entry_id', 'upload_id', 'mainfile']),
+            user_id=user.user_id if user is not None else None,
         )
+        if response.pagination.total == 0:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                detail='The entry with the given id does not exist or is not visible to you.',
+            )
+        entry_metadata = response.data[0]
 
     with _Uploads() as uploads:
         return EntryRawDirResponse(
-            entry_id=entry_id, data=_create_entry_rawdir(response.data[0], uploads)
+            entry_id=entry_id, data=_create_entry_rawdir(entry_metadata, uploads)
         )
 
 
@@ -1769,21 +1912,26 @@ def get_entry_raw(
     Streams a .zip file with the raw files from the requested entry.
     """
     query = dict(entry_id=entry_id)
-    response = perform_search(
-        owner=Owner.visible,
-        query=query,
-        required=MetadataRequired(include=['entry_id']),
-        user_id=user.user_id if user is not None else None,
-    )
-
-    if response.pagination.total == 0:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            detail='The entry with the given id does not exist or is not visible to you.',
+    entry_metadata = _resolve_entry_metadata_from_mongo(query, user)
+    if entry_metadata is None:
+        response = perform_search(
+            owner=Owner.visible,
+            query=query,
+            required=MetadataRequired(include=['entry_id']),
+            user_id=user.user_id if user is not None else None,
         )
+        if response.pagination.total == 0:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                detail='The entry with the given id does not exist or is not visible to you.',
+            )
 
     return _answer_entries_raw_request(
-        owner=Owner.visible, query=query, files=files, user=user
+        owner=Owner.visible,
+        query=query,
+        files=files,
+        user=user,
+        entry_metadata=entry_metadata,
     )
 
 
@@ -1847,20 +1995,21 @@ def get_entry_raw_file(
     Streams the contents of an individual file from the requested entry.
     """
     query = dict(entry_id=entry_id)
-    response = perform_search(
-        owner=Owner.visible,
-        query=query,
-        required=MetadataRequired(include=['entry_id', 'upload_id', 'mainfile']),
-        user_id=user.user_id if user is not None else None,
-    )
-
-    if response.pagination.total == 0:
-        raise HTTPException(
-            status.HTTP_404_NOT_FOUND,
-            detail='The entry with the given id does not exist or is not visible to you.',
+    entry_metadata = _resolve_entry_metadata_from_mongo(query, user)
+    if entry_metadata is None:
+        response = perform_search(
+            owner=Owner.visible,
+            query=query,
+            required=MetadataRequired(include=['entry_id', 'upload_id', 'mainfile']),
+            user_id=user.user_id if user is not None else None,
         )
+        if response.pagination.total == 0:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND,
+                detail='The entry with the given id does not exist or is not visible to you.',
+            )
+        entry_metadata = response.data[0]
 
-    entry_metadata = response.data[0]
     upload_id, mainfile = entry_metadata['upload_id'], entry_metadata['mainfile']
     # The user is allowed to access all files, because the entry is in the "visible" scope
     upload_files = files.UploadFiles.get(upload_id)
@@ -1901,6 +2050,9 @@ def answer_entry_archive_request(
     query: dict, required: ArchiveRequired, user: User, entry_metadata=None
 ):
     required_reader = _validate_required(required, user)
+
+    if not entry_metadata:
+        entry_metadata = _resolve_entry_metadata_from_mongo(query, user)
 
     if not entry_metadata:
         response = perform_search(
