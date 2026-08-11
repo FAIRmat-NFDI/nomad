@@ -1306,6 +1306,7 @@ class Entry(Proc):
             mainfile=self.mainfile,
             entry_id=self.entry_id,
             parser=self.parser_name,
+            workflow_ids=self.upload.workflow_ids or [],
             **kwargs,
         )
 
@@ -1930,6 +1931,7 @@ class Upload(Proc):
             upload_name=self.upload_name,
             main_author_name=main_author_name,
             main_author=self.main_author,
+            workflow_ids=self.workflow_ids or [],
             **kwargs,
         )
         return logger
