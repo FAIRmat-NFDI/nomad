@@ -180,7 +180,12 @@ async def oasis_publishable_upload(
         old_bundle_import_files(self, *args, **kwargs)
         # Overwrite the archive files with files containing the updated IDs
         archive_path = self.upload_files.os_path
-        for file_name in os.listdir(archive_path):
+        archive_upath = FSUtility.upath(archive_path)
+        file_names = [
+            os.path.basename(entry)
+            for entry in archive_upath.fs.ls(archive_upath.path, detail=False)
+        ]
+        for file_name in file_names:
             if file_name.endswith('.msg'):
                 full_path = os.path.join(archive_path, file_name)
                 new_data: dict = {}
