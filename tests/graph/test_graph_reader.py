@@ -243,6 +243,33 @@ async def test_definition_resolution_is_cached_per_graph_request(monkeypatch):
     assert fetch_calls == [('First', 'first-id'), ('Second', 'second-id')]
 
 
+def test_duplicate_graph_errors_are_not_logged_repeatedly(monkeypatch):
+    from types import SimpleNamespace
+
+    debug_messages = []
+    monkeypatch.setattr(
+        'nomad.graph.graph_reader.logger',
+        SimpleNamespace(debug=debug_messages.append),
+    )
+
+    with ArchiveReader({}) as reader:
+        reader._log('Definition value is not found.')
+        reader._log('Definition value is not found.')
+        reader._log('Definition other is not found.')
+
+        assert reader.errors == {
+            'GENERAL': {
+                'Definition value is not found.',
+                'Definition other is not found.',
+            }
+        }
+
+    assert debug_messages == [
+        'Definition value is not found.',
+        'Definition other is not found.',
+    ]
+
+
 counter = increment()
 
 

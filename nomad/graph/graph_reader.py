@@ -482,6 +482,38 @@ def _to_response_config(config: RequestConfig, exclude: list | None = None, **kw
     return response_config
 
 
+def _merge_result_list(target: list, source: list):
+    for index, value in enumerate(source):
+        if index >= len(target):
+            target.append(value)
+        elif isinstance(target[index], dict) and isinstance(value, dict):
+            _merge_result_dict(target[index], value)
+        elif isinstance(target[index], list) and isinstance(value, list):
+            _merge_result_list(target[index], value)
+        elif target[index] is None:
+            target[index] = value
+        elif value is not None and target[index] != value:
+            logger.warning(
+                f'Cannot merge {target[index]} and {value}, potential conflicts.'
+            )
+
+
+def _merge_result_dict(target: dict, source: dict):
+    for key, value in source.items():
+        if key not in target or target[key] is None:
+            target[key] = value
+        elif isinstance(target[key], set) and isinstance(value, set):
+            target[key].update(value)
+        elif isinstance(target[key], dict) and isinstance(value, dict):
+            _merge_result_dict(target[key], value)
+        elif isinstance(target[key], list) and isinstance(value, list):
+            _merge_result_list(target[key], value)
+        elif value is not None and target[key] != value:
+            logger.warning(
+                f'Cannot merge {target[key]} and {value}, potential conflicts.'
+            )
+
+
 async def _populate_result(
     container_root: dict,
     path: list,
@@ -497,32 +529,6 @@ async def _populate_result(
     the path will be treated as a true file system path such that
     numerical values are not interpreted as list indices.
     """
-
-    def _merge_list(a: list, b: list):
-        for i, v in enumerate(b):
-            if i >= len(a):
-                a.append(v)
-            elif isinstance(a[i], dict) and isinstance(v, dict):
-                _merge_dict(a[i], v)
-            elif isinstance(a[i], list) and isinstance(v, list):
-                _merge_list(a[i], v)
-            elif a[i] is None:
-                a[i] = v
-            elif v is not None and a[i] != v:
-                logger.warning(f'Cannot merge {a[i]} and {v}, potential conflicts.')
-
-    def _merge_dict(a: dict, b: dict):
-        for k, v in b.items():
-            if k not in a or a[k] is None:
-                a[k] = v
-            elif isinstance(a[k], set) and isinstance(v, set):
-                a[k].update(v)
-            elif isinstance(a[k], dict) and isinstance(v, dict):
-                _merge_dict(a[k], v)
-            elif isinstance(a[k], list) and isinstance(v, list):
-                _merge_list(a[k], v)
-            elif v is not None and a[k] != v:
-                logger.warning(f'Cannot merge {a[k]} and {v}, potential conflicts.')
 
     def _set_default(
         container: dict | list, k_or_i: str | int, value_type: type
@@ -549,7 +555,7 @@ async def _populate_result(
         assert isinstance(container_root, dict) and isinstance(
             new_value := to_json(value), dict
         )
-        _merge_dict(container_root, new_value)
+        _merge_result_dict(container_root, new_value)
         return
 
     target_container: dict | list = container_root
@@ -580,9 +586,9 @@ async def _populate_result(
         elif isinstance(target_container[key_or_index], str) and overwrite_existing_str:
             target_container[key_or_index] = new_value
         elif isinstance(new_value, dict):
-            _merge_dict(target_container[key_or_index], new_value)
+            _merge_result_dict(target_container[key_or_index], new_value)
         elif isinstance(new_value, list):
-            _merge_list(target_container[key_or_index], new_value)
+            _merge_result_list(target_container[key_or_index], new_value)
         else:
             target_container[key_or_index] = new_value
     elif isinstance(target_container, dict):
@@ -594,10 +600,10 @@ async def _populate_result(
             target_container[key_or_index] = new_value
         elif isinstance(new_value, dict):
             target_container.setdefault(key_or_index, {})
-            _merge_dict(target_container[key_or_index], new_value)
+            _merge_result_dict(target_container[key_or_index], new_value)
         elif isinstance(new_value, list):
             target_container.setdefault(key_or_index, [])
-            _merge_list(target_container[key_or_index], new_value)
+            _merge_result_list(target_container[key_or_index], new_value)
         else:
             target_container[key_or_index] = new_value
 
@@ -987,9 +993,12 @@ class GeneralReader:
         error_type: str = QueryError.GENERAL,
         to_response: bool = True,
     ):
-        logger.debug(message)
         if to_response:
-            self.errors.setdefault(error_type, set()).add(message)
+            error_set = self.errors.setdefault(error_type, set())
+            if message in error_set:
+                return
+            error_set.add(message)
+        logger.debug(message)
 
     def _check_cache(self, path: str | list, config_hash=None) -> bool:
         """
