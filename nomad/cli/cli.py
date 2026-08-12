@@ -49,6 +49,27 @@ class POPO(dict):
             raise AttributeError('No such attribute: ' + name)
 
 
+def config_file_option(command):
+    """
+    Adds the `-f/--config-file` option to a command. The value is not used here: the
+    files are already applied by `nomad.cli.config_files` before any nomad module is
+    imported. This declaration documents the option in `--help` and validates that the
+    given files exist. Commands carrying it must be accepted by
+    `nomad.cli.config_files._accepts_config_file`.
+    """
+    return click.option(
+        '-f',
+        '--config-file',
+        type=click.Path(exists=True, dir_okay=False),
+        multiple=True,
+        expose_value=False,
+        help=(
+            'Specify one or more NOMAD config yaml files. Can be repeated, later '
+            'files overwrite earlier ones.'
+        ),
+    )(command)
+
+
 @click.group(
     help=(
         "This is the entry point to nomad's command line interface CLI. "
@@ -58,6 +79,7 @@ class POPO(dict):
 @click.option('-v', '--verbose', help='sets log level to info', is_flag=True)
 @click.option('--debug', help='sets log level to debug', is_flag=True)
 @click.option('--log-label', type=str, help='Label applied to logg entries.')
+@config_file_option
 @click.pass_context
 def cli(ctx, verbose: bool, debug: bool, log_label: str):
     config.meta.service = os.environ.get('NOMAD_SERVICE', 'cli')

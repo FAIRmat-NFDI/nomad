@@ -23,8 +23,9 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+import nomad.config
 from nomad.auth.scopes import _resolve_scopes
-from nomad.config import load_config
+from nomad.config import CONFIG_ENV, load_config
 from nomad.config.models import config as config_module
 from nomad.config.models.config import Auth, Config, Services
 from nomad.config.models.plugins import ParserEntryPoint, SchemaPackageEntryPoint
@@ -86,6 +87,64 @@ def test_config_file_change(mockopen, monkeypatch):
     conf_env = {'NOMAD_CONFIG': 'test.yaml'}
     config = load_test_config(conf_yaml, conf_env, mockopen, monkeypatch)
     assert_config(config, conf_yaml)
+
+
+def _write_config(path, config_dict):
+    with open(path, 'w') as file:
+        file.write(yaml.dump(config_dict))
+    return str(path)
+
+
+@pytest.mark.parametrize('source', ['env', 'files'])
+def test_config_multiple_files(source, tmp_path, monkeypatch):
+    """
+    Tests that several config files are merged in order, with later files overwriting
+    earlier ones. They can be given through the environment or directly.
+    """
+    first = _write_config(
+        tmp_path / 'nomad.yaml', {'fs': {'public': 'first', 'staging': 'first'}}
+    )
+    second = _write_config(tmp_path / 'nomad-dev.yaml', {'fs': {'public': 'second'}})
+
+    if source == 'env':
+        monkeypatch.setenv(CONFIG_ENV, os.pathsep.join([first, second]))
+        config = load_config()
+    else:
+        monkeypatch.delenv(CONFIG_ENV, raising=False)
+        config = load_config(files=[first, second])
+
+    assert config.fs.public == 'second'
+    assert config.fs.staging == 'first'
+
+
+def test_config_missing_file_warns(tmp_path, monkeypatch):
+    """A config file that does not exist is reported instead of silently ignored."""
+    existing = _write_config(tmp_path / 'nomad.yaml', {'fs': {'public': 'ok'}})
+    missing = str(tmp_path / 'does-not-exist.yaml')
+    monkeypatch.setenv(CONFIG_ENV, os.pathsep.join([existing, missing]))
+
+    warnings: list[str] = []
+    monkeypatch.setattr(nomad.config.logger, 'warning', warnings.append)
+
+    config = load_config()
+
+    assert config.fs.public == 'ok'
+    assert any(missing in warning for warning in warnings)
+
+
+def test_config_section_is_not_a_mapping(tmp_path, monkeypatch):
+    """
+    A scalar given for a whole config section must produce a validation error that
+    names the offending field, not an AttributeError from the extra field validator.
+    """
+    monkeypatch.setenv(
+        'NOMAD_CONFIG', _write_config(tmp_path / 'nomad.yaml', {'north': 'not a dict'})
+    )
+
+    with pytest.raises(ValidationError) as exc_info:
+        load_config()
+
+    assert 'north' in str(exc_info.value)
 
 
 @pytest.mark.parametrize(

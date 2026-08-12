@@ -22,6 +22,7 @@ from typing import Any
 
 import click
 
+from nomad.cli.cli import config_file_option
 from nomad.config import config
 from nomad.config.models.config import WorkerConfig
 
@@ -29,21 +30,15 @@ from .admin import admin
 
 
 @admin.group(help='Run a nomad service locally (outside docker).')
-@click.option(
-    '-f',
-    '--config-file',
-    type=click.Path(exists=True, dir_okay=False, resolve_path=True),
-    multiple=True,
-    help='Specify one or more NOMAD config yaml files. Can be repeated. Later files overwrite earlier ones.',
-)
-def run(config_file: tuple[str, ...]):
-    if config_file:
-        from nomad.config import load_and_set_config
-
-        load_and_set_config(files=list(config_file))
+@config_file_option
+def run():
+    # The config files are applied by `nomad.cli.config_files` before any nomad module
+    # is imported, they cannot be applied from here.
+    pass
 
 
 @run.command(help='Run the jupyter hub.')
+@config_file_option
 def hub():
     run_hub()
 
@@ -52,6 +47,7 @@ def hub():
 @click.option(
     '--pool-size', '--workers', type=int, default=None, help='Number of workers.'
 )
+@config_file_option
 def action_cpu_worker(pool_size: int | None):
     import asyncio
 
@@ -70,6 +66,7 @@ def action_cpu_worker(pool_size: int | None):
 @click.option(
     '--pool-size', '--workers', type=int, default=None, help='Number of workers.'
 )
+@config_file_option
 def action_gpu_worker(pool_size: int | None):
     import asyncio
 
@@ -100,6 +97,7 @@ def action_gpu_worker(pool_size: int | None):
     default=None,
     help='Maximum number of concurrent activities for the internal worker.',
 )
+@config_file_option
 def action_internal_worker(
     pool_size: int | None,
     max_tasks_per_child: int | None,
@@ -128,6 +126,7 @@ def action_internal_worker(
     default=None,
     help='Maximum number of concurrent activities for the internal worker.',
 )
+@config_file_option
 def worker(
     pool_size: int | None,
     max_tasks_per_child: int | None,
@@ -156,6 +155,7 @@ def worker(
     help='Run app with gunicorn instead of uvicorn.',
 )
 @click.option('--workers', type=int, help='Passed to uvicorn workers parameter.')
+@config_file_option
 def app(with_gui: bool, **kwargs):
     run_app(with_gui=with_gui, **kwargs)
 
@@ -405,5 +405,6 @@ def run_appworker(
 @click.option(
     '--dev', is_flag=True, default=False, help='Use one worker (for dev. env.).'
 )
+@config_file_option
 def appworker(**kwargs):
     run_appworker(**kwargs)

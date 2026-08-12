@@ -24,5 +24,9 @@ Use it from the command line with ``nomad --help`` or ``python -m nomad.cli --he
 more.
 """
 
-from . import dev, parse, client, admin, clean
-from .cli import run_cli, cli
+from .config_files import apply_config_files_from_argv
+
+apply_config_files_from_argv()
+
+from . import dev, parse, client, admin, clean  # noqa: E402
+from .cli import run_cli, cli  # noqa: E402

@@ -30,12 +30,44 @@ from pint.errors import UndefinedUnitError
 from nomad.config import config
 from nomad.metainfo.elasticsearch_extension import schema_separator
 
-from .cli import cli
+from .cli import cli, config_file_option
 
 
 @cli.group(help='Commands related to the nomad source code.')
+@config_file_option
 def dev():
     pass
+
+
+@dev.command(
+    'config',
+    help='Prints the effective NOMAD configuration, i.e. the result of merging the '
+    'built-in defaults, the config files and the NOMAD_* environment variables. '
+    'Optionally limited to a section, e.g. `nomad dev config auth`.',
+)
+@click.argument('section', required=False)
+@config_file_option
+def show_config(section: str | None):
+    import yaml
+
+    from nomad.config import _resolve_config_files
+
+    files = _resolve_config_files()
+    print(f'# config files: {", ".join(files) or "<none>"}', file=sys.stderr)
+
+    data: Any = config.model_dump(mode='json')
+    if section:
+        for part in section.split('.'):
+            try:
+                data = data[part]
+            except (KeyError, TypeError):
+                raise click.BadParameter(f'No such config section: {section}')
+
+    if isinstance(data, dict | list):
+        print(yaml.dump(data, default_flow_style=False, sort_keys=False))
+    else:
+        # Keep scalars valid yaml too, `yaml.dump` would add a document end marker.
+        print('null' if data is None else data)
 
 
 @dev.command(
