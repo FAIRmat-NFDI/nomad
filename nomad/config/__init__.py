@@ -46,19 +46,49 @@ from nomad.config.models.config import Config
 logger = logging.getLogger(__name__)
 
 
+#: Environment variable naming the config files to load, separated by ``os.pathsep``.
+#: Defaults to ``nomad.yaml`` in the working directory. The CLI's ``-f/--config-file``
+#: overwrites it, see :mod:`nomad.cli.config_files`.
+CONFIG_ENV = 'NOMAD_CONFIG'
+
+
+def _resolve_config_files() -> list[str]:
+    """
+    The config files to load, in merge order.
+
+    They are read from ``NOMAD_CONFIG``, which may name several files separated by
+    ``os.pathsep`` (``:`` on Linux/macOS), and defaults to ``nomad.yaml`` from the
+    working directory. The CLI's ``-f/--config-file`` replaces its content rather than
+    adding to it, which follows ``docker compose -f`` overriding ``COMPOSE_FILE``. To
+    build on the default file, name it explicitly:
+    ``nomad admin run appworker -f nomad.yaml -f nomad-dev.yaml``.
+    """
+    files_to_load: list[str] = []
+    is_explicit = CONFIG_ENV in os.environ
+
+    for config_file in os.environ.get(CONFIG_ENV, 'nomad.yaml').split(os.pathsep):
+        config_file = config_file.strip()
+        if not config_file:
+            continue
+        if os.path.exists(config_file):
+            files_to_load.append(config_file)
+        elif is_explicit:
+            # Only complain about files that were explicitly asked for, a missing
+            # default `nomad.yaml` is not an error.
+            logger.warning(f'Cannot find nomad config file {config_file}')
+
+    return files_to_load
+
+
 def _load_config_yaml(files: list[str] | None = None) -> dict[str, Any]:
     """
     Loads the configuration from one or more YAML files. Files are merged in order,
     with later files overwriting values from earlier ones.
+
+    The given files are used as they are. If none are given, they are determined from
+    the environment, see :func:`_resolve_config_files`.
     """
-    if not files:
-        config_file = os.environ.get('NOMAD_CONFIG', 'nomad.yaml')
-        if os.path.exists(config_file):
-            files_to_load = [config_file]
-        else:
-            files_to_load = []
-    else:
-        files_to_load = files
+    files_to_load = files if files else _resolve_config_files()
 
     final_config_data: dict[str, Any] = {}
     for config_file in files_to_load:
@@ -99,7 +129,7 @@ def _load_config_env() -> dict[str, Any]:
     config_data: dict[str, Any] = {}
     prefix = 'NOMAD_'
     for key, value in os.environ.items():
-        if key == 'NOMAD_CONFIG' or not key.startswith(prefix):
+        if key == CONFIG_ENV or not key.startswith(prefix):
             continue
 
         key = key[len(prefix) :].lower()
@@ -176,11 +206,16 @@ def load_config(files: list[str] | None = None) -> Config:
 
 def load_and_set_config(files: list[str] | None = None) -> Config:
     """
-    Loads the configuration from the specified files and updates the global 'config'
-    object and module-level attributes.
+    Loads the configuration from the specified files and rebinds the global 'config'
+    object and the module-level attributes.
 
-    This function is necessary for runtime configuration changes, e.g., via CLI flags,
-    as it ensures all parts of the application see the updated configuration.
+    NOTE: This only rebinds the name in this module. Modules that already ran
+    `from nomad.config import config` keep a reference to the *previous* object, and
+    plugins/metainfo/search mappings derived from it are not rebuilt. It is therefore
+    only safe to call this before any other nomad module has been imported. To select
+    config files for a running service, set `NOMAD_CONFIG` before importing nomad, or
+    use the CLI's `-f/--config-file` option, which does exactly that; see
+    :mod:`nomad.cli.config_files`.
     """
     new_config = load_config(files=files)
     globals()['config'] = new_config

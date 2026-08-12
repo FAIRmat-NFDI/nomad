@@ -60,6 +60,11 @@ class ConfigBaseModel(BaseModel):
     @model_validator(mode='before')
     @classmethod
     def __print_extra_field__(cls, values):  # pylint: disable=no-self-argument
+        if not isinstance(values, dict):
+            # Not a mapping, e.g. a scalar given for a whole config section. Leave it
+            # to pydantic to report a proper validation error that names the field.
+            return values
+
         extra_fields = values.keys() - cls.model_fields.keys()
 
         def list_items(items):
