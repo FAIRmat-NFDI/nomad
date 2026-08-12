@@ -18,7 +18,9 @@
 
 import os
 import time
+from collections.abc import Callable
 
+import anyio
 from fastapi import FastAPI, Response
 from starlette.routing import Mount
 
@@ -40,6 +42,65 @@ from prometheus_client import (
     multiprocess,
 )
 
+REQUEST_LATENCY_BUCKETS = (
+    0.005,
+    0.01,
+    0.025,
+    0.05,
+    0.075,
+    0.1,
+    0.25,
+    0.5,
+    0.75,
+    1.0,
+    2.5,
+    5.0,
+    7.5,
+    10.0,
+    15.0,
+    30.0,
+    60.0,
+    120.0,
+    300.0,
+    600.0,
+    float('inf'),
+)
+
+PAYLOAD_SIZE_BUCKETS = (
+    128,
+    512,
+    2048,
+    8192,
+    32768,
+    131072,
+    524288,
+    2097152,
+    8388608,
+    33554432,
+    134217728,
+    536870912,
+    2147483648,
+    float('inf'),
+)
+
+EVENT_LOOP_LAG_BUCKETS = (
+    0.001,
+    0.005,
+    0.01,
+    0.025,
+    0.05,
+    0.1,
+    0.25,
+    0.5,
+    1.0,
+    2.5,
+    5.0,
+    10.0,
+    float('inf'),
+)
+
+RUNTIME_METRICS_SAMPLE_INTERVAL_SECONDS = 1.0
+
 REQUEST_COUNT = Counter(
     'nomad_fastapi_requests_total',
     'Total count of FastAPI requests.',
@@ -50,59 +111,28 @@ REQUEST_LATENCY = Histogram(
     'nomad_fastapi_request_duration_seconds',
     'Request latency in seconds.',
     ['method', 'path'],
-    buckets=(
-        0.005,
-        0.01,
-        0.025,
-        0.05,
-        0.075,
-        0.1,
-        0.25,
-        0.5,
-        0.75,
-        1.0,
-        2.5,
-        5.0,
-        7.5,
-        10.0,
-        float('inf'),
-    ),
+    buckets=REQUEST_LATENCY_BUCKETS,
+)
+
+TIME_TO_FIRST_BYTE = Histogram(
+    'nomad_fastapi_time_to_first_byte_seconds',
+    'Time from receiving a request until the first response body chunk is ready.',
+    ['method', 'path'],
+    buckets=REQUEST_LATENCY_BUCKETS,
 )
 
 REQUEST_SIZE = Histogram(
     'nomad_fastapi_request_size_bytes',
     'Size of incoming FastAPI request bodies in bytes.',
     ['method', 'path'],
-    buckets=(
-        128,
-        512,
-        2048,
-        8192,
-        32768,
-        131072,
-        524288,
-        2097152,
-        8388608,
-        float('inf'),
-    ),
+    buckets=PAYLOAD_SIZE_BUCKETS,
 )
 
 RESPONSE_SIZE = Histogram(
     'nomad_fastapi_response_size_bytes',
     'Size of outgoing FastAPI response bodies in bytes.',
     ['method', 'path'],
-    buckets=(
-        128,
-        512,
-        2048,
-        8192,
-        32768,
-        131072,
-        524288,
-        2097152,
-        8388608,
-        float('inf'),
-    ),
+    buckets=PAYLOAD_SIZE_BUCKETS,
 )
 
 REQUESTS_IN_PROGRESS = Gauge(
@@ -111,6 +141,63 @@ REQUESTS_IN_PROGRESS = Gauge(
     ['method'],
     multiprocess_mode='livesum',
 )
+
+# These gauges are process-local because each Uvicorn worker has its own AnyIO
+# limiter and event loop. ``liveall`` preserves that distinction in Prometheus'
+# multiprocess mode, allowing dashboards to show both the sum and the worst worker.
+ANYIO_THREADPOOL_BORROWED_TOKENS = Gauge(
+    'nomad_anyio_threadpool_borrowed_tokens',
+    'Number of AnyIO worker-thread tokens currently borrowed by this process.',
+    multiprocess_mode='liveall',
+)
+
+ANYIO_THREADPOOL_TOTAL_TOKENS = Gauge(
+    'nomad_anyio_threadpool_total_tokens',
+    'Total AnyIO worker-thread tokens available to this process.',
+    multiprocess_mode='liveall',
+)
+
+ANYIO_THREADPOOL_TASKS_WAITING = Gauge(
+    'nomad_anyio_threadpool_tasks_waiting',
+    'Number of tasks waiting for an AnyIO worker-thread token in this process.',
+    multiprocess_mode='liveall',
+)
+
+EVENT_LOOP_LAG = Gauge(
+    'nomad_event_loop_lag_seconds',
+    'Delay beyond the runtime metrics sampling interval in this process.',
+    multiprocess_mode='liveall',
+)
+
+EVENT_LOOP_LAG_OBSERVATIONS = Histogram(
+    'nomad_event_loop_lag_observation_seconds',
+    'Distribution of delay beyond the runtime metrics sampling interval.',
+    buckets=EVENT_LOOP_LAG_BUCKETS,
+)
+
+
+def _sample_anyio_threadpool_metrics() -> None:
+    statistics = anyio.to_thread.current_default_thread_limiter().statistics()
+    ANYIO_THREADPOOL_BORROWED_TOKENS.set(statistics.borrowed_tokens)
+    ANYIO_THREADPOOL_TOTAL_TOKENS.set(statistics.total_tokens)
+    ANYIO_THREADPOOL_TASKS_WAITING.set(statistics.tasks_waiting)
+
+
+async def _monitor_runtime_metrics(
+    *,
+    sample_interval: float = RUNTIME_METRICS_SAMPLE_INTERVAL_SECONDS,
+    clock: Callable[[], float] = time.perf_counter,
+) -> None:
+    """Continuously sample process-local AnyIO and event-loop saturation."""
+    _sample_anyio_threadpool_metrics()
+
+    while True:
+        before_sleep = clock()
+        await anyio.sleep(sample_interval)
+        lag = max(0.0, clock() - before_sleep - sample_interval)
+        EVENT_LOOP_LAG.set(lag)
+        EVENT_LOOP_LAG_OBSERVATIONS.observe(lag)
+        _sample_anyio_threadpool_metrics()
 
 
 class PrometheusASGIMiddleware:
@@ -144,6 +231,15 @@ class PrometheusASGIMiddleware:
         return '/unmatched'
 
     async def __call__(self, scope, receive, send):
+        if scope['type'] == 'lifespan':
+            async with anyio.create_task_group() as task_group:
+                task_group.start_soon(_monitor_runtime_metrics)
+                try:
+                    await self.app(scope, receive, send)
+                finally:
+                    task_group.cancel_scope.cancel()
+            return
+
         if scope['type'] != 'http':
             await self.app(scope, receive, send)
             return
@@ -183,6 +279,14 @@ class PrometheusASGIMiddleware:
             if message['type'] == 'http.response.start':
                 status_code[0] = message['status']
             elif message['type'] == 'http.response.body':
+                if not scope.get('_nomad_ttfb_recorded'):
+                    templated_path = self._resolve_templated_path(scope)
+                    if templated_path is not None:
+                        TIME_TO_FIRST_BYTE.labels(
+                            method=method, path=templated_path
+                        ).observe(time.perf_counter() - start_time)
+                        scope['_nomad_ttfb_recorded'] = True
+
                 body_chunk = message.get('body', b'')
                 response_size[0] += len(body_chunk)
             await send(message)
