@@ -186,6 +186,73 @@ def test_load_archive_measures_reads_only_for_recording_spans(
     assert len(measurements) == expected_measurements
 
 
+@pytest.mark.parametrize('span', [None, SimpleNamespace(is_recording=lambda: False)])
+def test_archive_walk_metrics_skip_non_recording_spans(monkeypatch, span):
+    @contextmanager
+    def fake_trace_span(*args, **kwargs):
+        yield span
+
+    def unexpected_clock_read():
+        pytest.fail('non-recording graph walks must not read the diagnostics clock')
+
+    monkeypatch.setattr('nomad.graph.graph_reader.trace_span', fake_trace_span)
+    monkeypatch.setattr(
+        'nomad.graph.graph_reader.time.perf_counter_ns', unexpected_clock_read
+    )
+    monkeypatch.setattr(
+        'nomad.graph.graph_reader.time.thread_time_ns', unexpected_clock_read
+    )
+
+    with ArchiveReader({'metadata': '*'}) as reader:
+        result = reader.sync_read(
+            {'metadata': {'upload_id': 'upload-id', 'entry_id': 'entry-id'}}
+        )
+
+    assert result['metadata']['upload_id'] == 'upload-id'
+
+
+def test_archive_walk_metrics_are_aggregated_on_recording_span(monkeypatch):
+    class RecordingSpan:
+        def __init__(self):
+            self.attributes = {}
+
+        def is_recording(self):
+            return True
+
+        def set_attribute(self, name, value):
+            self.attributes[name] = value
+
+    span = RecordingSpan()
+
+    @contextmanager
+    def fake_trace_span(*args, **kwargs):
+        yield span
+
+    monkeypatch.setattr('nomad.graph.graph_reader.trace_span', fake_trace_span)
+
+    with ArchiveReader({'metadata': '*'}) as reader:
+        reader.sync_read(
+            {'metadata': {'upload_id': 'upload-id', 'entry_id': 'entry-id'}}
+        )
+
+    assert span.attributes['graph.node.walk_count'] > 0
+    assert span.attributes['graph.node.resolve_count'] > 0
+    assert span.attributes['graph.archive.walk.thread_cpu_time_ms'] >= 0
+    assert span.attributes['graph.result.populate_count'] > 0
+    assert span.attributes['graph.result.populate_time_ms'] >= 0
+    assert span.attributes['graph.archive.lazy_access_time_ms'] >= 0
+    assert span.attributes['graph.config.clone_time_ms'] >= 0
+    assert span.attributes['graph.definition.check_count'] > 0
+    assert span.attributes['graph.definition.check_time_ms'] >= 0
+    assert span.attributes['graph.definition.property_lookup_count'] > 0
+    assert span.attributes['graph.definition.property_lookup_time_ms'] >= 0
+    assert span.attributes['graph.definition.retrieve_count'] == 0
+    assert span.attributes['graph.reference.check_count'] > 0
+    assert span.attributes['graph.reference.check_time_ms'] >= 0
+    assert span.attributes['graph.reference.count'] == 0
+    assert span.attributes['graph.reference.time_ms'] == 0
+
+
 @pytest.mark.asyncio
 async def test_definition_resolution_is_cached_per_graph_request(monkeypatch):
     upload_calls = []
@@ -268,6 +335,63 @@ def test_duplicate_graph_errors_are_not_logged_repeatedly(monkeypatch):
         'Definition value is not found.',
         'Definition other is not found.',
     ]
+
+
+def test_short_definition_references_are_cached_per_graph_request():
+    from nomad.graph.graph_reader import _get_short_definition_reference
+
+    class RuntimeDefinition:
+        definition_id = 'definition-id'
+        qualified_name_calls = 0
+
+        def qualified_name(self):
+            self.qualified_name_calls += 1
+            return 'package.Section'
+
+    definition = RuntimeDefinition()
+    with ArchiveReader({}) as reader:
+        cache = reader._reader_cache
+        expected = 'package.Section@definition-id'
+
+        assert _get_short_definition_reference(cache, definition) == expected
+        assert _get_short_definition_reference(cache, definition) == expected
+        assert definition.qualified_name_calls == 1
+
+
+def test_metainfo_property_definitions_are_cached_per_graph_request():
+    from types import SimpleNamespace
+
+    from nomad.graph.graph_reader import _get_property_definition
+
+    child_definition = object()
+
+    class RuntimeDefinition:
+        all_properties = {'child': child_definition}
+        resolve_calls = 0
+
+        def m_resolved(self):
+            self.resolve_calls += 1
+            return self
+
+    definition = RuntimeDefinition()
+    with ArchiveReader({}) as reader:
+        node = GraphNode(
+            upload_id='upload-id',
+            entry_id='entry-id',
+            current_path=[],
+            result_root={},
+            ref_result_root={},
+            archive=SimpleNamespace(m_def=None),
+            archive_root={},
+            definition=definition,
+            visited_path=set(),
+            current_depth=0,
+            reader=reader,
+        )
+
+        assert _get_property_definition(node, 'child') is child_definition
+        assert _get_property_definition(node, 'child') is child_definition
+        assert definition.resolve_calls == 1
 
 
 counter = increment()

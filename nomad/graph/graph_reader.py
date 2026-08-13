@@ -24,8 +24,10 @@ import dataclasses
 import functools
 import os
 import re
+import time
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from threading import Lock
 from typing import Any, TypeAlias
 
@@ -127,6 +129,91 @@ class _EntryLayoutReadPlan:
 
 
 @dataclasses.dataclass
+class _GraphWalkStats:
+    """Low-cardinality aggregate diagnostics for one archive walk."""
+
+    walk_thread_cpu_time_ns: int = 0
+    reference_count: int = 0
+    reference_time_ns: int = 0
+    reference_check_count: int = 0
+    reference_check_time_ns: int = 0
+    result_populate_count: int = 0
+    result_populate_time_ns: int = 0
+    lazy_access_count: int = 0
+    lazy_access_time_ns: int = 0
+    walk_node_count: int = 0
+    resolve_node_count: int = 0
+    config_clone_count: int = 0
+    config_clone_time_ns: int = 0
+    definition_cache_hits: int = 0
+    definition_cache_misses: int = 0
+    definition_retrieve_count: int = 0
+    definition_retrieve_time_ns: int = 0
+    definition_check_count: int = 0
+    definition_check_time_ns: int = 0
+    property_definition_lookups: int = 0
+    property_definition_lookup_time_ns: int = 0
+    short_definition_references: int = 0
+    resolver_count: int = 0
+    resolver_time_ns: int = 0
+
+    def set_span_attributes(self, span) -> None:
+        attributes = {
+            'graph.archive.walk.thread_cpu_time_ms': self.walk_thread_cpu_time_ns
+            / 1_000_000,
+            'graph.reference.count': self.reference_count,
+            'graph.reference.time_ms': self.reference_time_ns / 1_000_000,
+            'graph.reference.check_count': self.reference_check_count,
+            'graph.reference.check_time_ms': self.reference_check_time_ns / 1_000_000,
+            'graph.result.populate_count': self.result_populate_count,
+            'graph.result.populate_time_ms': self.result_populate_time_ns / 1_000_000,
+            'graph.archive.lazy_access_count': self.lazy_access_count,
+            'graph.archive.lazy_access_time_ms': self.lazy_access_time_ns / 1_000_000,
+            'graph.node.walk_count': self.walk_node_count,
+            'graph.node.resolve_count': self.resolve_node_count,
+            'graph.config.clone_count': self.config_clone_count,
+            'graph.config.clone_time_ms': self.config_clone_time_ns / 1_000_000,
+            'graph.definition.retrieve_cache_hits': self.definition_cache_hits,
+            'graph.definition.retrieve_cache_misses': self.definition_cache_misses,
+            'graph.definition.retrieve_count': self.definition_retrieve_count,
+            'graph.definition.retrieve_time_ms': self.definition_retrieve_time_ns
+            / 1_000_000,
+            'graph.definition.check_count': self.definition_check_count,
+            'graph.definition.check_time_ms': self.definition_check_time_ns / 1_000_000,
+            'graph.definition.property_lookup_count': self.property_definition_lookups,
+            'graph.definition.property_lookup_time_ms': self.property_definition_lookup_time_ns
+            / 1_000_000,
+            'graph.definition.short_reference_count': self.short_definition_references,
+            'graph.value.resolver_count': self.resolver_count,
+            'graph.value.resolver_time_ms': self.resolver_time_ns / 1_000_000,
+        }
+        for name, value in attributes.items():
+            span.set_attribute(name, value)
+
+
+_current_graph_walk_stats: ContextVar[_GraphWalkStats | None] = ContextVar(
+    'nomad_graph_walk_stats', default=None
+)
+
+
+def _clone_config(
+    config: RequestConfig, values: dict, *, retain_pattern: bool = False
+) -> RequestConfig:
+    """Clone a request configuration and time it when a graph walk is recorded."""
+
+    stats = _current_graph_walk_stats.get()
+    if stats is None:
+        return config.new(values, retain_pattern=retain_pattern)
+
+    stats.config_clone_count += 1
+    start = time.perf_counter_ns()
+    try:
+        return config.new(values, retain_pattern=retain_pattern)
+    finally:
+        stats.config_clone_time_ns += time.perf_counter_ns() - start
+
+
+@dataclasses.dataclass
 class _ReaderCache:
     """State shared by readers participating in one graph request."""
 
@@ -135,6 +222,12 @@ class _ReaderCache:
     )
     definitions: dict[tuple[str | None, str | None, str | None, str | None], Any] = (
         dataclasses.field(default_factory=dict)
+    )
+    short_definition_references: dict[int, tuple[Any, str]] = dataclasses.field(
+        default_factory=dict
+    )
+    property_definitions: dict[tuple[int, str], tuple[Any, Any]] = dataclasses.field(
+        default_factory=dict
     )
 
 
@@ -217,7 +310,16 @@ class ConfigError(Exception):
 
 async def goto_child(container, key: str | int | list):
     if not isinstance(key, list):
-        return container[key]
+        stats = _current_graph_walk_stats.get()
+        if stats is None or not isinstance(container, LazyDict | LazyList | LazyReader):
+            return container[key]
+
+        stats.lazy_access_count += 1
+        start = time.perf_counter_ns()
+        try:
+            return container[key]
+        finally:
+            stats.lazy_access_time_ns += time.perf_counter_ns() - start
 
     target = container
     for v in key:
@@ -226,6 +328,14 @@ async def goto_child(container, key: str | int | list):
 
 
 async def async_get(container, key, default=None):
+    stats = _current_graph_walk_stats.get()
+    if stats is not None and isinstance(container, LazyDict | LazyList | LazyReader):
+        stats.lazy_access_count += 1
+        start = time.perf_counter_ns()
+        try:
+            return container.get(key, default)
+        finally:
+            stats.lazy_access_time_ns += time.perf_counter_ns() - start
     return container.get(key, default)
 
     # if isinstance(container, dict):
@@ -514,7 +624,7 @@ def _merge_result_dict(target: dict, source: dict):
             )
 
 
-async def _populate_result(
+async def _populate_result_impl(
     container_root: dict,
     path: list,
     value,
@@ -606,6 +716,38 @@ async def _populate_result(
             _merge_result_list(target_container[key_or_index], new_value)
         else:
             target_container[key_or_index] = new_value
+
+
+async def _populate_result(
+    container_root: dict,
+    path: list,
+    value,
+    *,
+    path_like=False,
+    overwrite_existing_str=False,
+):
+    stats = _current_graph_walk_stats.get()
+    if stats is None:
+        return await _populate_result_impl(
+            container_root,
+            path,
+            value,
+            path_like=path_like,
+            overwrite_existing_str=overwrite_existing_str,
+        )
+
+    stats.result_populate_count += 1
+    start = time.perf_counter_ns()
+    try:
+        return await _populate_result_impl(
+            container_root,
+            path,
+            value,
+            path_like=path_like,
+            overwrite_existing_str=overwrite_existing_str,
+        )
+    finally:
+        stats.result_populate_time_ns += time.perf_counter_ns() - start
 
 
 @functools.lru_cache(maxsize=1024)
@@ -830,34 +972,69 @@ def _unwrap_subsection(target):
 
 
 def _get_property_definition(node: GraphNode, name: str):
+    stats = _current_graph_walk_stats.get()
+    if stats is None:
+        return _get_property_definition_impl(node, name)
+
+    stats.property_definition_lookups += 1
+    start = time.perf_counter_ns()
+    try:
+        return _get_property_definition_impl(node, name)
+    finally:
+        stats.property_definition_lookup_time_ns += time.perf_counter_ns() - start
+
+
+def _get_property_definition_impl(node: GraphNode, name: str):
     """
     Resolve a property definition for the current node, falling back to the
     archive object's runtime definition when the carried graph definition is
     missing inherited properties.
     """
 
-    candidates = [
+    for candidate in (
         getattr(node, 'definition', None),
         getattr(node.archive, 'm_def', None),
-    ]
-
-    for candidate in candidates:
+    ):
         if candidate is None:
             continue
-        if isinstance(candidate, SubSection):
-            candidate = candidate.sub_section
-        if hasattr(candidate, 'm_resolved'):
-            candidate = candidate.m_resolved()
 
-        all_properties = getattr(candidate, 'all_properties', None)
-        if all_properties is None:
-            continue
+        cache = node.reader._reader_cache.property_definitions
+        cache_key = (id(candidate), name)
+        cached = cache.get(cache_key)
+        if cached is not None and cached[0] is candidate:
+            child_definition = cached[1]
+        else:
+            resolved = (
+                candidate.sub_section
+                if isinstance(candidate, SubSection)
+                else candidate
+            )
+            if hasattr(resolved, 'm_resolved'):
+                resolved = resolved.m_resolved()
 
-        child_definition = all_properties.get(name, None)
+            all_properties = getattr(resolved, 'all_properties', None)
+            child_definition = (
+                all_properties.get(name, None) if all_properties is not None else None
+            )
+            # Retain the candidate alongside the result so object IDs cannot be
+            # accidentally reused during a long graph request.
+            cache[cache_key] = (candidate, child_definition)
+
         if child_definition is not None:
             return child_definition
 
     return None
+
+
+def _get_short_definition_reference(cache: _ReaderCache, definition: Any) -> str:
+    cache_key = id(definition)
+    cached = cache.short_definition_references.get(cache_key)
+    if cached is not None and cached[0] is definition:
+        return cached[1]
+
+    reference = f'{definition.qualified_name()}@{definition.definition_id}'
+    cache.short_definition_references[cache_key] = (definition, reference)
+    return reference
 
 
 class GeneralReader:
@@ -1255,6 +1432,18 @@ class GeneralReader:
             )
 
     async def _apply_resolver(self, node: GraphNode, config: RequestConfig):
+        stats = _current_graph_walk_stats.get()
+        if stats is None:
+            return await self._apply_resolver_impl(node, config)
+
+        stats.resolver_count += 1
+        start = time.perf_counter_ns()
+        try:
+            return await self._apply_resolver_impl(node, config)
+        finally:
+            stats.resolver_time_ns += time.perf_counter_ns() - start
+
+    async def _apply_resolver_impl(self, node: GraphNode, config: RequestConfig):
         if_skip: bool = config.property_name not in GeneralReader.__UPLOAD_ID__
         if_skip &= config.property_name not in GeneralReader.__USER_ID__
         if_skip &= config.property_name not in GeneralReader.__DATASET_ID__
@@ -1292,7 +1481,7 @@ class GeneralReader:
         # the original archive may be an empty list
         # populate an empty list to keep the structure
         await _populate_result(node.result_root, node.current_path, [])
-        new_config: RequestConfig = config.new({'index': None}, retain_pattern=True)
+        new_config = _clone_config(config, {'index': None}, retain_pattern=True)
         for i in _normalise_index(config.index, len(node.archive)):
             await self._resolve(
                 node.replace(
@@ -1383,6 +1572,23 @@ class ArchiveLikeReader(GeneralReader):
         m_def_id: str | None = None,
         node: GraphNode | None = None,
     ):
+        stats = _current_graph_walk_stats.get()
+        if stats is None:
+            return await self._retrieve_definition_impl(m_def, m_def_id, node)
+
+        stats.definition_retrieve_count += 1
+        start = time.perf_counter_ns()
+        try:
+            return await self._retrieve_definition_impl(m_def, m_def_id, node)
+        finally:
+            stats.definition_retrieve_time_ns += time.perf_counter_ns() - start
+
+    async def _retrieve_definition_impl(
+        self,
+        m_def: str | None,
+        m_def_id: str | None = None,
+        node: GraphNode | None = None,
+    ):
         """
         Retrieve a definition from an archive.
         The definition is identified by `m_def` and/or `m_def_id`.
@@ -1401,8 +1607,13 @@ class ArchiveLikeReader(GeneralReader):
             m_def,
             m_def_id,
         )
+        stats = _current_graph_walk_stats.get()
         if cache_key in self._reader_cache.definitions:
+            if stats is not None:
+                stats.definition_cache_hits += 1
             return self._reader_cache.definitions[cache_key]
+        if stats is not None:
+            stats.definition_cache_misses += 1
 
         def cache(definition):
             self._reader_cache.definitions[cache_key] = definition
@@ -2942,24 +3153,47 @@ class ArchiveReader(ArchiveLikeReader):
             metadata = await goto_child(_archive, 'metadata')
 
             with self._prepare_reading() as response:
-                with trace_span('graph.archive.walk'):
-                    await self._walk(
-                        GraphNode(
-                            upload_id=await goto_child(metadata, 'upload_id'),
-                            entry_id=await goto_child(metadata, 'entry_id'),
-                            current_path=[],
-                            result_root=response,
-                            ref_result_root=self.global_root,
-                            archive=_archive,
-                            archive_root=_archive,
-                            definition=EntryArchive.m_def,
-                            visited_path=set(),
-                            current_depth=0,
-                            reader=self,
-                        ),
-                        self.required_query,
-                        self.global_config,
+                with trace_span('graph.archive.walk') as span:
+                    stats = (
+                        _GraphWalkStats()
+                        if span is not None and span.is_recording()
+                        else None
                     )
+                    token = (
+                        _current_graph_walk_stats.set(stats)
+                        if stats is not None
+                        else None
+                    )
+                    thread_cpu_start = (
+                        time.thread_time_ns() if stats is not None else None
+                    )
+                    try:
+                        await self._walk(
+                            GraphNode(
+                                upload_id=await goto_child(metadata, 'upload_id'),
+                                entry_id=await goto_child(metadata, 'entry_id'),
+                                current_path=[],
+                                result_root=response,
+                                ref_result_root=self.global_root,
+                                archive=_archive,
+                                archive_root=_archive,
+                                definition=EntryArchive.m_def,
+                                visited_path=set(),
+                                current_depth=0,
+                                reader=self,
+                            ),
+                            self.required_query,
+                            self.global_config,
+                        )
+                    finally:
+                        if stats is not None and thread_cpu_start is not None:
+                            stats.walk_thread_cpu_time_ns += (
+                                time.thread_time_ns() - thread_cpu_start
+                            )
+                        if stats is not None and span is not None:
+                            stats.set_span_attributes(span)
+                        if token is not None:
+                            _current_graph_walk_stats.reset(token)
 
                 return response
 
@@ -2979,6 +3213,9 @@ class ArchiveReader(ArchiveLikeReader):
         Walk through the archive according to the required query.
         The parent config is passed down to the children in case there is no config in any subtree.
         """
+        if (stats := _current_graph_walk_stats.get()) is not None:
+            stats.walk_node_count += 1
+
         if isinstance(required, RequestConfig):
             return await self._resolve(node, required)
 
@@ -3170,6 +3407,9 @@ class ArchiveReader(ArchiveLikeReader):
         Those come from explicitly given fields in the required query.
         They are handled by the caller.
         """
+        if (stats := _current_graph_walk_stats.get()) is not None:
+            stats.resolve_node_count += 1
+
         if isinstance(node.archive, GenericList):  # type: ignore
             if (
                 isinstance(node.definition, Quantity)
@@ -3269,13 +3509,14 @@ class ArchiveReader(ArchiveLikeReader):
                     )
                     continue
 
-                child_config = config.new(
+                child_config = _clone_config(
+                    config,
                     {
                         'property_name': key,  # set the proper quantity name
                         'include': ['*'],  # ignore the pattern for children
                         'exclude': None,
                         'index': None,  # ignore index requirements for children
-                    }
+                    },
                 )
 
                 if child_config.is_plain():
@@ -3287,6 +3528,20 @@ class ArchiveReader(ArchiveLikeReader):
                     await self._resolve(child_node, child_config)
 
     async def _check_definition(
+        self, node: GraphNode, config: RequestConfig
+    ) -> GraphNode:
+        stats = _current_graph_walk_stats.get()
+        if stats is None:
+            return await self._check_definition_impl(node, config)
+
+        stats.definition_check_count += 1
+        start = time.perf_counter_ns()
+        try:
+            return await self._check_definition_impl(node, config)
+        finally:
+            stats.definition_check_time_ns += time.perf_counter_ns() - start
+
+    async def _check_definition_impl(
         self, node: GraphNode, config: RequestConfig
     ) -> GraphNode:
         """
@@ -3308,10 +3563,12 @@ class ArchiveReader(ArchiveLikeReader):
                 if isinstance(definition, SubSection):
                     definition = definition.sub_section.m_resolved()
                 if use_qualified:
+                    if (stats := _current_graph_walk_stats.get()) is not None:
+                        stats.short_definition_references += 1
                     await _populate_result(
                         node.result_root,
                         node.current_path + [Token.DEF],
-                        f'{definition.qualified_name()}@{definition.definition_id}',
+                        _get_short_definition_reference(self._reader_cache, definition),
                     )
                 else:
                     with DefinitionReader(
@@ -3341,10 +3598,12 @@ class ArchiveReader(ArchiveLikeReader):
             return node
 
         if use_qualified:
+            if (stats := _current_graph_walk_stats.get()) is not None:
+                stats.short_definition_references += 1
             await _populate_result(
                 node.result_root,
                 node.current_path + [Token.DEF],
-                f'{new_def.qualified_name()}@{new_def.definition_id}',
+                _get_short_definition_reference(self._reader_cache, new_def),
             )
         elif config.include_definition is not DefinitionType.none:
             with DefinitionReader(
@@ -3367,6 +3626,24 @@ class ArchiveReader(ArchiveLikeReader):
         return node.replace(definition=new_def)
 
     async def _check_reference(
+        self, node: GraphNode, config: RequestConfig, *, implicit_resolve: bool = False
+    ) -> GraphNode:
+        stats = _current_graph_walk_stats.get()
+        if stats is None:
+            return await self._check_reference_impl(
+                node, config, implicit_resolve=implicit_resolve
+            )
+
+        stats.reference_check_count += 1
+        start = time.perf_counter_ns()
+        try:
+            return await self._check_reference_impl(
+                node, config, implicit_resolve=implicit_resolve
+            )
+        finally:
+            stats.reference_check_time_ns += time.perf_counter_ns() - start
+
+    async def _check_reference_impl(
         self, node: GraphNode, config: RequestConfig, *, implicit_resolve: bool = False
     ) -> GraphNode:
         """
@@ -3397,7 +3674,18 @@ class ArchiveReader(ArchiveLikeReader):
             return node
 
         try:
-            resolved_node = await node.goto(node.archive, config.resolve_inplace)
+            stats = _current_graph_walk_stats.get()
+            if stats is None:
+                resolved_node = await node.goto(node.archive, config.resolve_inplace)
+            else:
+                stats.reference_count += 1
+                start = time.perf_counter_ns()
+                try:
+                    resolved_node = await node.goto(
+                        node.archive, config.resolve_inplace
+                    )
+                finally:
+                    stats.reference_time_ns += time.perf_counter_ns() - start
         except ArchiveError as e:
             # cannot resolve somehow
             # treat it as a normal string
