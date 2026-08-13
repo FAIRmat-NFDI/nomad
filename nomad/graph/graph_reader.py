@@ -136,6 +136,12 @@ class _ReaderCache:
     definitions: dict[tuple[str | None, str | None, str | None, str | None], Any] = (
         dataclasses.field(default_factory=dict)
     )
+    short_definition_references: dict[int, tuple[Any, str]] = dataclasses.field(
+        default_factory=dict
+    )
+    property_definitions: dict[tuple[int, str], tuple[Any, Any]] = dataclasses.field(
+        default_factory=dict
+    )
 
 
 def _normalize_layout_archive_request(
@@ -836,28 +842,50 @@ def _get_property_definition(node: GraphNode, name: str):
     missing inherited properties.
     """
 
-    candidates = [
+    for candidate in (
         getattr(node, 'definition', None),
         getattr(node.archive, 'm_def', None),
-    ]
-
-    for candidate in candidates:
+    ):
         if candidate is None:
             continue
-        if isinstance(candidate, SubSection):
-            candidate = candidate.sub_section
-        if hasattr(candidate, 'm_resolved'):
-            candidate = candidate.m_resolved()
 
-        all_properties = getattr(candidate, 'all_properties', None)
-        if all_properties is None:
-            continue
+        cache = node.reader._reader_cache.property_definitions
+        cache_key = (id(candidate), name)
+        cached = cache.get(cache_key)
+        if cached is not None and cached[0] is candidate:
+            child_definition = cached[1]
+        else:
+            resolved = (
+                candidate.sub_section
+                if isinstance(candidate, SubSection)
+                else candidate
+            )
+            if hasattr(resolved, 'm_resolved'):
+                resolved = resolved.m_resolved()
 
-        child_definition = all_properties.get(name, None)
+            all_properties = getattr(resolved, 'all_properties', None)
+            child_definition = (
+                all_properties.get(name, None) if all_properties is not None else None
+            )
+            # Retain the candidate alongside the result so object IDs cannot be
+            # accidentally reused during a long graph request.
+            cache[cache_key] = (candidate, child_definition)
+
         if child_definition is not None:
             return child_definition
 
     return None
+
+
+def _get_short_definition_reference(cache: _ReaderCache, definition: Any) -> str:
+    cache_key = id(definition)
+    cached = cache.short_definition_references.get(cache_key)
+    if cached is not None and cached[0] is definition:
+        return cached[1]
+
+    reference = f'{definition.qualified_name()}@{definition.definition_id}'
+    cache.short_definition_references[cache_key] = (definition, reference)
+    return reference
 
 
 class GeneralReader:
@@ -3311,7 +3339,7 @@ class ArchiveReader(ArchiveLikeReader):
                     await _populate_result(
                         node.result_root,
                         node.current_path + [Token.DEF],
-                        f'{definition.qualified_name()}@{definition.definition_id}',
+                        _get_short_definition_reference(self._reader_cache, definition),
                     )
                 else:
                     with DefinitionReader(
@@ -3344,7 +3372,7 @@ class ArchiveReader(ArchiveLikeReader):
             await _populate_result(
                 node.result_root,
                 node.current_path + [Token.DEF],
-                f'{new_def.qualified_name()}@{new_def.definition_id}',
+                _get_short_definition_reference(self._reader_cache, new_def),
             )
         elif config.include_definition is not DefinitionType.none:
             with DefinitionReader(

@@ -270,6 +270,63 @@ def test_duplicate_graph_errors_are_not_logged_repeatedly(monkeypatch):
     ]
 
 
+def test_short_definition_references_are_cached_per_graph_request():
+    from nomad.graph.graph_reader import _get_short_definition_reference
+
+    class RuntimeDefinition:
+        definition_id = 'definition-id'
+        qualified_name_calls = 0
+
+        def qualified_name(self):
+            self.qualified_name_calls += 1
+            return 'package.Section'
+
+    definition = RuntimeDefinition()
+    with ArchiveReader({}) as reader:
+        cache = reader._reader_cache
+        expected = 'package.Section@definition-id'
+
+        assert _get_short_definition_reference(cache, definition) == expected
+        assert _get_short_definition_reference(cache, definition) == expected
+        assert definition.qualified_name_calls == 1
+
+
+def test_metainfo_property_definitions_are_cached_per_graph_request():
+    from types import SimpleNamespace
+
+    from nomad.graph.graph_reader import _get_property_definition
+
+    child_definition = object()
+
+    class RuntimeDefinition:
+        all_properties = {'child': child_definition}
+        resolve_calls = 0
+
+        def m_resolved(self):
+            self.resolve_calls += 1
+            return self
+
+    definition = RuntimeDefinition()
+    with ArchiveReader({}) as reader:
+        node = GraphNode(
+            upload_id='upload-id',
+            entry_id='entry-id',
+            current_path=[],
+            result_root={},
+            ref_result_root={},
+            archive=SimpleNamespace(m_def=None),
+            archive_root={},
+            definition=definition,
+            visited_path=set(),
+            current_depth=0,
+            reader=reader,
+        )
+
+        assert _get_property_definition(node, 'child') is child_definition
+        assert _get_property_definition(node, 'child') is child_definition
+        assert definition.resolve_calls == 1
+
+
 counter = increment()
 
 
