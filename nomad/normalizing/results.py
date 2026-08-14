@@ -112,6 +112,12 @@ def isint(value: Any) -> bool:
         return False
 
 
+def is_valid_workflow(workflow: Workflow) -> bool:
+    if not workflow:
+        return False
+    return 'nomad_simulation' not in workflow.m_def.qualified_name()
+
+
 class ResultsNormalizer(Normalizer):
     domain = None
     normalizer_level = 3
@@ -898,6 +904,9 @@ class ResultsNormalizer(Normalizer):
         for workflow in traverse_reversed(self.entry_archive, path):
             # Check validity
             if workflow.m_def.name == 'GeometryOptimization':
+                if not is_valid_workflow(workflow):
+                    continue
+
                 geo_opt = GeometryOptimization()
                 if workflow.results:
                     geo_opt.trajectory = workflow.results.calculations_ref
@@ -944,6 +953,9 @@ class ResultsNormalizer(Normalizer):
         for workflow in traverse_reversed(self.entry_archive, path):
             # Check validity
             if workflow.m_def.name == 'MolecularDynamics':
+                if not is_valid_workflow(workflow):
+                    continue
+
                 traj = Trajectory()
                 md = self.get_md_provenance(workflow)
                 if md:
@@ -1008,6 +1020,9 @@ class ResultsNormalizer(Normalizer):
     def rdf(self) -> list[RadialDistributionFunction]:
         """Returns a list of radial distribution functions."""
         workflow = self.entry_archive.workflow2
+        if not is_valid_workflow(workflow):
+            return []
+
         if workflow is None or workflow.m_def.name != 'MolecularDynamics':
             return None
 
@@ -1046,6 +1061,8 @@ class ResultsNormalizer(Normalizer):
         rgs: list[RadiusOfGyration] = []
         for workflow in traverse_reversed(self.entry_archive, path_workflow):
             # Check validity
+            if not is_valid_workflow(workflow):
+                continue
             if workflow.m_def.name == 'MolecularDynamics' and workflow.results:
                 results = workflow.results
                 md = self.get_md_provenance(workflow)
@@ -1089,6 +1106,9 @@ class ResultsNormalizer(Normalizer):
     def msd(self) -> list[MeanSquaredDisplacement]:
         """Returns a list of mean squared displacements."""
         workflow = self.entry_archive.workflow2
+        if not is_valid_workflow(workflow):
+            return []
+
         if workflow is None or workflow.m_def.name != 'MolecularDynamics':
             return None
 
@@ -1175,7 +1195,7 @@ class ResultsNormalizer(Normalizer):
         spectra = self.resolve_spectra(['run', 'calculation', 'spectra'])
         # Resolving GW, XS workflow properties
         workflow = self.entry_archive.workflow2
-        if workflow:
+        if workflow and is_valid_workflow(workflow):
             workflow_name = workflow.name if workflow.name else workflow.m_def.name
             if workflow_name == 'DFT+GW':
                 self.get_gw_workflow_properties()
@@ -1395,6 +1415,9 @@ class ResultsNormalizer(Normalizer):
         """Returns a list containing the found EnergyVolumeCurves."""
         workflow = self.entry_archive.workflow2
         ev_curves: list[EnergyVolumeCurve] = []
+        if not is_valid_workflow(workflow):
+            return ev_curves
+
         # workflow must be equation of state
         if (
             workflow is None
@@ -1444,6 +1467,9 @@ class ResultsNormalizer(Normalizer):
         """Returns a list containing the found BulkModulus."""
         workflow = self.entry_archive.workflow2
         bulk_modulus: list[BulkModulus] = []
+        if not is_valid_workflow(workflow):
+            return bulk_modulus
+
         if (
             workflow is None
             or not hasattr(workflow, 'results')
@@ -1503,6 +1529,9 @@ class ResultsNormalizer(Normalizer):
         """Returns a list containing the found ShearModulus."""
         workflow = self.entry_archive.workflow2
         shear_modulus: list[ShearModulus] = []
+        if not is_valid_workflow(workflow):
+            return shear_modulus
+
         if (
             workflow is None
             or not hasattr(workflow, 'results')
