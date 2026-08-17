@@ -16,6 +16,8 @@
 # limitations under the License.
 #
 
+import asyncio
+
 import pytest
 from aiohttp import ClientSession
 
@@ -38,6 +40,31 @@ async def test_start_health_server_serves_health(unused_tcp_port):
             ) as response:
                 assert response.status == 200
                 assert await response.text() == 'OK'
+    finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_start_health_server_returns_503_when_worker_task_done(
+    unused_tcp_port,
+):
+    async def dummy_worker():
+        return
+
+    worker_task = asyncio.create_task(dummy_worker())
+    await worker_task
+
+    runner = await start_health_server(
+        '127.0.0.1', unused_tcp_port, worker_task=worker_task
+    )
+
+    try:
+        async with ClientSession() as session:
+            async with session.get(
+                f'http://127.0.0.1:{unused_tcp_port}/health'
+            ) as response:
+                assert response.status == 503
+                assert await response.text() == 'UNHEALTHY'
     finally:
         await runner.cleanup()
 

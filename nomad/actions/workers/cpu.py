@@ -113,18 +113,27 @@ async def run_worker(worker_config: WorkerConfig):
         worker = Worker(**worker_kwargs)
         health_runner = None
 
+        logger.info('Starting CPU worker.')
+        worker_task = asyncio.create_task(worker.run())
+
         if should_start_health_server(worker_config):
             health_runner = await start_health_server(
                 host=worker_config.healthcheck_host,
                 port=worker_config.healthcheck_port,
+                worker_task=worker_task,
             )
-        # Run the worker until SIGTERM
-        logger.info('Starting CPU worker.')
-        worker_task = asyncio.create_task(worker.run())
 
+        stop_task = asyncio.create_task(stop_event.wait())
         try:
-            await stop_event.wait()
+            done, pending = await asyncio.wait(
+                [stop_task, worker_task],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if worker_task in done:
+                logger.error('Worker task exited unexpectedly.')
+                await worker_task
         finally:
+            stop_task.cancel()
             if health_runner is not None:
                 await health_runner.cleanup()
 
