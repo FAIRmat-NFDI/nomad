@@ -46,6 +46,11 @@ class SectionA(MSection):
             Attribute(name='aka', type=str, shape=['1..3']),
         ],
     )
+    VARIABLE_measurement = Quantity(
+        type=float,
+        unit='m',
+        variable=True,
+    )
     a_attribute = Attribute(type=str)
 
 
@@ -126,3 +131,30 @@ def test_full_storage_quantity():
 
     json = b_section.m_def.m_to_dict(with_out_meta=True)
     assert json == Section.m_from_dict(json).m_to_dict(with_out_meta=True)
+
+
+def test_full_storage_quantity_with_unit_generic_access():
+    """A variable=True quantity that also declares a unit must not crash when
+    accessed via its definition without naming a specific stored instance --
+    the access pattern used by definition-driven code such as
+    create_searchable_quantity, which walks quantity definitions rather than
+    known runtime instance names.
+    """
+    a_section = SectionA()
+    a_section.VARIABLE_measurement = MQuantity.wrap(
+        ureg.Quantity('2*cm'), 'width_measurement'
+    )
+    a_section.VARIABLE_measurement = MQuantity.wrap(
+        ureg.Quantity('3*cm'), 'height_measurement'
+    )
+
+    # resolved access via the real instance name still attaches the unit
+    assert a_section.width_measurement == ureg.Quantity('0.02*m')
+    assert a_section.height_measurement == ureg.Quantity('0.03*m')
+
+    # generic access via the definition (no known instance name) must return
+    # the raw {name: MQuantity} dict rather than crash trying to build a
+    # pint Quantity out of it
+    value = a_section.m_get(SectionA.VARIABLE_measurement)
+    assert isinstance(value, dict)
+    assert set(value.keys()) == {'width_measurement', 'height_measurement'}
