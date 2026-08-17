@@ -16,21 +16,25 @@
  * limitations under the License.
  */
 
-import React from 'react'
+import React, { useMemo } from 'react'
 import PropTypes from 'prop-types'
 import {
   AppBar as MuiAppBar,
   Toolbar,
   Link,
+  Button,
+  Tooltip,
   LinearProgress,
   makeStyles
 } from '@material-ui/core'
 import LoginLogout from '../LoginLogout'
 import UnitMenu from '../units/UnitMenu'
 import MainMenu from './MainMenu'
-import { useLoading } from '../api'
-import { guiBase, oasis } from '../../config'
+import { useInfo, useLoading } from '../api'
+import { guiBase, oasis, urlAbs } from '../../config'
 import Breadcrumbs from './Breadcrumbs'
+
+const newGuiPluginPackage = 'nomad_gui'
 
 export const appBarHeight = 10
 
@@ -44,6 +48,25 @@ function LoadingIndicator({className}) {
 
 LoadingIndicator.propTypes = {
   className: PropTypes.string
+}
+
+function useNewGuiUrl() {
+  const info = useInfo()
+
+  return useMemo(() => {
+    const isInstalled = info?.plugin_packages
+      ?.some(pluginPackage => pluginPackage.name === newGuiPluginPackage)
+    if (!isInstalled) return undefined
+
+    const prefix = info?.plugin_entry_points
+      ?.find(entryPoint => entryPoint.plugin_package === newGuiPluginPackage && entryPoint.prefix)
+      ?.prefix
+    if (!prefix) return undefined
+
+    const path = `${prefix}/select-gui`
+
+    return urlAbs(path)
+  }, [info])
 }
 
 const useStyles = makeStyles(theme => ({
@@ -99,6 +122,12 @@ const useStyles = makeStyles(theme => ({
   },
   crumbs: {
     padding: '9px 0px 9px 5px'
+  },
+  newGuiButton: {
+    alignSelf: 'center',
+    marginRight: theme.spacing(2),
+    whiteSpace: 'nowrap',
+    width: 150
   }
 }))
 
@@ -107,6 +136,7 @@ const useStyles = makeStyles(theme => ({
  */
 export default function AppBar() {
   const styles = useStyles()
+  const newGuiUrl = useNewGuiUrl()
 
   return <MuiAppBar position="fixed" className={styles.root}>
     <Toolbar className={styles.toolbar} disableGutters>
@@ -116,7 +146,18 @@ export default function AppBar() {
         </Link>
       </div>
       <div className={styles.navigation}>
-        <MainMenu />
+        <div style={{display: 'flex'}}>
+          <MainMenu />
+          {newGuiUrl && <Tooltip title="Press here to open the new graphical user interface of NOMAD">
+            <Button
+              size="small"
+              variant="outlined"
+              color="primary"
+              href={newGuiUrl}
+              className={styles.newGuiButton}
+            >Open new GUI</Button>
+          </Tooltip>}
+        </div>
         <Breadcrumbs className={styles.crumbs}/>
       </div>
       <div className={styles.actions}>
