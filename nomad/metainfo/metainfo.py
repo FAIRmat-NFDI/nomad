@@ -3228,7 +3228,14 @@ class Quantity(Property):
         if isinstance(value, units.Quantity):
             return value
 
-        if self.unit is not None and isinstance(self.type, Number):
+        # value is still the raw {name: MQuantity} dict when the caller didn't
+        # request one specific stored instance (no actual_name kwarg) -- there
+        # is no single magnitude here to attach a unit to.
+        if (
+            self.unit is not None
+            and isinstance(self.type, Number)
+            and not isinstance(value, dict)
+        ):
             # Note that we cannot do simple multiplication here as Pint units
             # with offsets do not support multiplication:
             # https://pint.readthedocs.io/en/stable/user/nonmult.html
