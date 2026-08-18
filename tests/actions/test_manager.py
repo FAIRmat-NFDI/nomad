@@ -22,7 +22,7 @@ from importlib.metadata import EntryPoint
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, SecretBytes, SecretStr, field_serializer
 from temporalio import workflow
 from temporalio.client import WorkflowExecutionStatus
 from temporalio.common import Priority
@@ -120,20 +120,32 @@ def test_validate_with_pydantic():
 
 
 def test_to_dict():
-    from pydantic import SecretStr
-
     class NestedModel(BaseModel):
         secret_val: SecretStr
-        normal_val: str
+        normal_val: str = Field(serialization_alias='normalValue')
+
+        @field_serializer('secret_val')
+        def serialize_secret(self, value: SecretStr) -> str:
+            return value.get_secret_value()
+
+        @field_serializer('normal_val')
+        def serialize_normal(self, value: str) -> str:
+            return value.upper()
 
     class TestModel(BaseModel):
         direct_secret: SecretStr
+        secret_bytes: SecretBytes
         nested_model: NestedModel
         list_secrets: list[SecretStr]
         list_models: list[NestedModel]
 
+        @field_serializer('direct_secret')
+        def serialize_secret(self, value: SecretStr) -> str:
+            return value.get_secret_value()
+
     data = TestModel(
         direct_secret=SecretStr('secret1'),
+        secret_bytes=SecretBytes(b'secret-bytes'),
         nested_model=NestedModel(secret_val=SecretStr('secret2'), normal_val='normal'),
         list_secrets=[SecretStr('secret3'), SecretStr('secret4')],
         list_models=[
@@ -143,11 +155,12 @@ def test_to_dict():
 
     serialized = _to_dict(data)
     assert 'direct_secret' not in serialized
+    assert 'secret_bytes' not in serialized
     assert 'secret_val' not in serialized['nested_model']
-    assert serialized['nested_model']['normal_val'] == 'normal'
+    assert serialized['nested_model']['normalValue'] == 'NORMAL'
     assert serialized['list_secrets'] == []
     assert 'secret_val' not in serialized['list_models'][0]
-    assert serialized['list_models'][0]['normal_val'] == 'normal2'
+    assert serialized['list_models'][0]['normalValue'] == 'NORMAL2'
 
 
 def test_get_param_schema():
@@ -673,6 +686,14 @@ async def test_stop_action_async_cancels_workflow(
 def test_get_action_result_sync_facade_returns_value(
     monkeypatch, mongo_function, user1
 ):
+    class WorkflowResult(BaseModel):
+        result: str
+        secret: SecretStr
+
+        @field_serializer('secret')
+        def serialize_secret(self, value: SecretStr) -> str:
+            return value.get_secret_value()
+
     (
         infrastructure.mongo_client.get_database(config.mongo.db_name)
         .get_collection('action_document')
@@ -691,7 +712,7 @@ def test_get_action_result_sync_facade_returns_value(
 
     async def mock_get_workflow_result_safe(action_instance_id):
         assert action_instance_id == 'workflow-1'
-        return {'result': 'success'}
+        return WorkflowResult(result='success', secret=SecretStr('secret'))
 
     monkeypatch.setattr(
         'nomad.actions.manager._get_workflow_result_safe',
