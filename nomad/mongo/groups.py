@@ -70,6 +70,7 @@ class MongoUserGroup(Document):
 
     group_id = StringField(primary_key=True)
     group_name = StringField()
+    description = StringField()
 
     # .members_info supersedes .members and .owner, they are kept for compatibility.
     # .owner was previously not in members, now it should be; but for filtering it must
@@ -234,7 +235,11 @@ def create_mongo_user_group(data: UserGroupEdit) -> MongoUserGroup:
     """Create a new user group with validation.
 
     Deprecated field 'members' will be overridden on creation."""
-    user_group = MongoUserGroup(group_id=create_uuid(), group_name=data.group_name)
+    user_group = MongoUserGroup(
+        group_id=create_uuid(),
+        group_name=data.group_name,
+        description=data.description,
+    )
     if user_group.group_name is None:
         user_group.group_name = user_group.group_id
     user_group.members_info = [

@@ -61,6 +61,10 @@ class UserGroupEdit(BaseModel):
         default=None,
         description='Displayed name of the group.',
     )
+    description: str | None = Field(
+        default=None,
+        description='Description of the group.',
+    )
     members_info: list[UserGroupMember] | None = Field(
         default=None,
         description='Group members with user_id and role.',
@@ -79,6 +83,10 @@ class UserGroup(BaseModel):
     group_id: str = Field(description='Unique id of the group.')
     group_name: str = Field(
         default='Default Group Name', description='Displayed name of the group.'
+    )
+    description: str | None = Field(
+        default=None,
+        description='Description of the group.',
     )
     owner: str = Field(
         description="User id of the group owner. Mirrored from 'members_info'."
