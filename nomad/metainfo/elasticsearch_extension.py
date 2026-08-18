@@ -575,10 +575,13 @@ class DocumentType:
                     if schema_name.startswith('pynxtools'):
                         # Allow App searches for specific AppDefs:
                         selected_path = [
+                            # TODO: remove 'Root' once the new pynxtools schema is used
                             'Root',
+                            'Entry',
                             'Mpes',
                             'Mpes_arpes',
                             'Xps',
+                            'Spm',
                             'Apm',
                             'Em',
                             'Optical_spectroscopy',
