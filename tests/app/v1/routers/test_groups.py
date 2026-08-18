@@ -368,6 +368,42 @@ def test_create_group(
     assert_group(group, ref_group, ref_group.keys())
 
 
+def test_group_description_create_and_edit(
+    auth_headers,
+    client,
+    group_molds,
+    mongo_function,
+):
+    """Group descriptions are persisted and returned on create and edit."""
+    group_data = group_molds['group1'].copy()
+    group_data.pop('members', None)
+    group_data.update(
+        group_name='Description group',
+        description='Initial group description',
+    )
+
+    response = perform_post(client, base_url, auth_headers['user1'], json=group_data)
+    assert_response(response, 201)
+
+    created_group = UserGroup.model_validate_json(response.content)
+    stored_group = get_mongo_user_group(created_group.group_id)
+    assert stored_group.description == 'Initial group description'
+    assert created_group.description == 'Initial group description'
+
+    response = perform_post(
+        client,
+        f'{base_url}/{created_group.group_id}/edit',
+        auth_headers['user1'],
+        json={'description': 'Updated group description'},
+    )
+    assert_response(response, 200)
+
+    edited_group = UserGroup.model_validate_json(response.content)
+    stored_group = get_mongo_user_group(created_group.group_id)
+    assert stored_group.description == 'Updated group description'
+    assert edited_group.description == 'Updated group description'
+
+
 @pytest.mark.parametrize(
     'user_label, group_target_label, group_edit_label, ref_group_label, expected_status_code',
     [
