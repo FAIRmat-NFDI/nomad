@@ -270,13 +270,14 @@ def _to_dict(data: Any) -> dict:
     raise TypeError(f'Unsupported type: {type(data)}')
 
 
-def _validate_with_pydantic(func: Callable, arg):
+def _validate_with_pydantic(func: Callable, arg, entry_point: Any = None):
     """
     Validate the single argument of a function against its type hint using Pydantic.
 
     Args:
         func: The function with the argument to validate.
         arg: The argument to validate.
+        entry_point: Optional action entry point containing active configuration.
 
     Returns:
         The validated argument.
@@ -285,6 +286,9 @@ def _validate_with_pydantic(func: Callable, arg):
 
     # get the single non-return annotation
     [(_, param_type)] = [(n, t) for n, t in hints.items() if n != 'return']
+
+    if entry_point is not None and hasattr(param_type, 'get_schema_for_entry_point'):
+        param_type = param_type.get_schema_for_entry_point(entry_point)
 
     adapter = TypeAdapter(param_type)
     return adapter.validate_python(arg)
@@ -297,7 +301,7 @@ def _get_non_self_params(func: Callable) -> list[inspect.Parameter]:
     return [param for param in sig.parameters.values() if param.name != 'self']
 
 
-def _get_param_schema(func: Callable) -> dict[str, Any]:
+def _get_param_schema(func: Callable, entry_point: Any = None) -> dict[str, Any]:
     """
     Generate a JSON Schema for the single argument of a function.
 
@@ -305,6 +309,7 @@ def _get_param_schema(func: Callable) -> dict[str, Any]:
 
     Args:
         func: The function with the argument to generate the schema for.
+        entry_point: Optional action entry point containing active configuration.
 
     Returns:
         The JSON schema for the argument.
@@ -315,6 +320,10 @@ def _get_param_schema(func: Callable) -> dict[str, Any]:
     [(_, param_type)] = [(n, t) for n, t in hints.items() if n != 'return']
 
     if isinstance(param_type, type) and issubclass(param_type, BaseModel):
+        if entry_point is not None and hasattr(
+            param_type, 'get_schema_for_entry_point'
+        ):
+            param_type = param_type.get_schema_for_entry_point(entry_point)
         schema = param_type.model_json_schema(by_alias=True)
     else:
         adapter = TypeAdapter(param_type)
@@ -364,7 +373,7 @@ def validate_action_arg(action_id: str, arg: Any):
     action = get_actions().get(action_id)
     if not action:
         raise ValueError('Action not found')
-    return _validate_with_pydantic(action.load().workflow.run, arg)
+    return _validate_with_pydantic(action.load().workflow.run, arg, entry_point=action)
 
 
 def get_all_action_schemas() -> list[ActionSchemaInfo]:
@@ -395,7 +404,7 @@ def get_all_action_schemas() -> list[ActionSchemaInfo]:
         data.append(
             ActionSchemaInfo(
                 action_id=action_id,
-                json_schema=_get_param_schema(workflow_cls.run),
+                json_schema=_get_param_schema(workflow_cls.run, entry_point=action),
                 description=action.description,
                 task_queue=action.task_queue,
                 groups=action.groups,

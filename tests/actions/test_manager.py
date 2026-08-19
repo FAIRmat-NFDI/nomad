@@ -22,7 +22,14 @@ from importlib.metadata import EntryPoint
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from pydantic import BaseModel, Field, SecretBytes, SecretStr, field_serializer
+from pydantic import (
+    BaseModel,
+    Field,
+    SecretBytes,
+    SecretStr,
+    field_serializer,
+    field_validator,
+)
 from temporalio import workflow
 from temporalio.client import WorkflowExecutionStatus
 from temporalio.common import Priority
@@ -63,6 +70,29 @@ class MyActionArgs(BaseModel):
 class MyActionArgsWithAsset(BaseModel):
     user_id: str
     recording: ActionAssetRef
+
+
+class MyActionArgsWithDynamicSchema(BaseModel):
+    selected_option: str
+    user_id: str | None = None
+
+    @classmethod
+    def get_schema_for_entry_point(cls, entry_point_config):
+        allowed = getattr(entry_point_config, 'allowed_options', ['default_opt'])
+
+        class DynamicArgs(cls):
+            selected_option: str = Field(
+                default=allowed[0], json_schema_extra={'enum': allowed}
+            )
+
+            @field_validator('selected_option')
+            @classmethod
+            def check_option(cls, v: str) -> str:
+                if v not in allowed:
+                    raise ValueError(f'{v} not in {allowed}')
+                return v
+
+        return DynamicArgs
 
 
 def _recording_asset_ref() -> ActionAssetRef:
@@ -210,6 +240,78 @@ def test_get_param_schema_uses_alias_for_action_asset_refs():
         asset_ref_schema['properties']['_nomad_type']['const'] == ACTION_ASSET_REF_TYPE
     )
     assert '_nomad_type' in asset_ref_schema['required']
+
+
+def test_get_param_schema_with_dynamic_entry_point():
+    def my_func(args: MyActionArgsWithDynamicSchema):
+        pass
+
+    class DummyEntryPoint:
+        allowed_options = ['endpoint_a', 'endpoint_b']
+
+    schema = _get_param_schema(my_func, entry_point=DummyEntryPoint())
+    assert schema['properties']['selected_option']['enum'] == [
+        'endpoint_a',
+        'endpoint_b',
+    ]
+
+
+def test_get_all_action_schemas_with_dynamic_entry_point(monkeypatch):
+    class DynamicWorkflow:
+        async def run(self, args: MyActionArgsWithDynamicSchema):
+            pass
+
+    mock_action = MagicMock(spec=Action)
+    mock_action.workflow = DynamicWorkflow
+
+    mock_entry_point = MagicMock(spec=EntryPoint)
+    mock_entry_point.load.return_value = mock_action
+    mock_entry_point.name = 'Dynamic Action'
+    mock_entry_point.description = 'Dynamic action desc'
+    mock_entry_point.task_queue = 'queue'
+    mock_entry_point.groups = None
+    mock_entry_point.users = None
+    mock_entry_point.plugin_package = 'plugin'
+    mock_entry_point.allowed_options = ['remote_oasis_1', 'remote_oasis_2']
+
+    monkeypatch.setattr(
+        'nomad.actions.manager.get_actions',
+        lambda: {'dynamic-action': mock_entry_point},
+    )
+
+    schemas = get_all_action_schemas()
+    assert len(schemas) == 1
+    assert schemas[0].action_id == 'dynamic-action'
+    assert schemas[0].json_schema['properties']['selected_option']['enum'] == [
+        'remote_oasis_1',
+        'remote_oasis_2',
+    ]
+
+
+def test_validate_action_arg_with_dynamic_entry_point(monkeypatch):
+    class DynamicWorkflow:
+        async def run(self, args: MyActionArgsWithDynamicSchema):
+            pass
+
+    mock_action = MagicMock(spec=Action)
+    mock_action.workflow = DynamicWorkflow
+
+    mock_entry_point = MagicMock(spec=EntryPoint)
+    mock_entry_point.load.return_value = mock_action
+    mock_entry_point.allowed_options = ['valid_endpoint']
+
+    monkeypatch.setattr(
+        'nomad.actions.manager.get_actions',
+        lambda: {'dynamic-action': mock_entry_point},
+    )
+
+    validated = validate_action_arg(
+        'dynamic-action', {'selected_option': 'valid_endpoint'}
+    )
+    assert validated.selected_option == 'valid_endpoint'
+
+    with pytest.raises(Exception):
+        validate_action_arg('dynamic-action', {'selected_option': 'invalid_endpoint'})
 
 
 @workflow.defn
