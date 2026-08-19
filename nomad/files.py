@@ -74,6 +74,7 @@ from fsspec.implementations.local import LocalFileSystem
 from fsspec.implementations.tar import TarFileSystem
 from fsspec.implementations.zip import ZipFileSystem
 from h5py import File
+from msglc.reader import LazyItem
 from pathvalidate import sanitize_filename, sanitize_filepath
 from pydantic import BaseModel
 from upath import UPath
@@ -2191,9 +2192,8 @@ class PublicUploadFiles(UploadFiles):
             with suppress(FileNotFoundError):
                 with self._open_msg_file() as archive:
                     for entry_id, data in archive.items():
-                        staging_upload_files.write_archive(
-                            entry_id.strip(), to_json(data)
-                        )
+                        target = data if isinstance(data, LazyItem) else to_json(data)
+                        staging_upload_files.write_archive(entry_id.strip(), target)
 
                 with FSUtility.open_h5(
                     self.archive_hdf5_location(''), fs=self.storage_fs

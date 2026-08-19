@@ -2021,14 +2021,14 @@ class MSection(metaclass=MObjectMeta):
                             yield name, serialised_dict
                         elif return_as_generator:
 
-                            def _subsection_gen():
-                                for item in subsections:
+                            def _subsection_gen(_subsections):
+                                for item in _subsections:
                                     if item is None:
                                         yield None
                                     else:
                                         yield item.m_to_dict(**kwargs)
 
-                            yield name, streamable_list(_subsection_gen())
+                            yield name, streamable_list(_subsection_gen(subsections))
                         else:
                             serialised_list: list = [
                                 None if item is None else item.m_to_dict(**kwargs)
