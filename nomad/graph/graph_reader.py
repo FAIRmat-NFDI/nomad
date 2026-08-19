@@ -350,8 +350,10 @@ async def async_to_json(data):
     # return await asyncio.to_thread(to_json, data)
 
 
-# todo: set slots=True when 3.10 is the minimum version
-@dataclasses.dataclass(frozen=True)
+_NODE_SENTINEL = object()
+
+
+@dataclasses.dataclass(slots=True)
 class GraphNode:
     upload_id: str  # the upload id of the current node
     entry_id: str  # the entry id of the current node
@@ -365,26 +367,56 @@ class GraphNode:
     current_depth: int  # current depth, for tracking depth limit
     reader: Any  # the reader used to read the archive # pylint: disable=E0601
 
-    @functools.cached_property
-    def _prefix_to_remove(self):
-        """Duplicated prefix to remove."""
-        return f'uploads/{self.upload_id}/entries/{self.entry_id}/archive/'
-
-    def replace(self, **kwargs):
+    def replace(
+        self,
+        upload_id: Any = _NODE_SENTINEL,
+        entry_id: Any = _NODE_SENTINEL,
+        current_path: Any = _NODE_SENTINEL,
+        result_root: Any = _NODE_SENTINEL,
+        ref_result_root: Any = _NODE_SENTINEL,
+        archive: Any = _NODE_SENTINEL,
+        archive_root: Any = _NODE_SENTINEL,
+        definition: Any = _NODE_SENTINEL,
+        visited_path: Any = _NODE_SENTINEL,
+        current_depth: Any = _NODE_SENTINEL,
+        reader: Any = _NODE_SENTINEL,
+    ):
         """
         Create a new `ArchiveNode` instance with the attributes of the current instance replaced.
-        The `ArchiveNode` class is deliberately designed to be immutable.
         """
-        return dataclasses.replace(self, **kwargs)
+        return GraphNode(
+            self.upload_id if upload_id is _NODE_SENTINEL else upload_id,
+            self.entry_id if entry_id is _NODE_SENTINEL else entry_id,
+            self.current_path if current_path is _NODE_SENTINEL else current_path,
+            self.result_root if result_root is _NODE_SENTINEL else result_root,
+            self.ref_result_root
+            if ref_result_root is _NODE_SENTINEL
+            else ref_result_root,
+            self.archive if archive is _NODE_SENTINEL else archive,
+            self.archive_root if archive_root is _NODE_SENTINEL else archive_root,
+            self.definition if definition is _NODE_SENTINEL else definition,
+            self.visited_path if visited_path is _NODE_SENTINEL else visited_path,
+            self.current_depth if current_depth is _NODE_SENTINEL else current_depth,
+            self.reader if reader is _NODE_SENTINEL else reader,
+        )
+
+    @property
+    def _prefix_to_remove(self) -> str:
+        """Duplicated prefix to remove."""
+        return f'uploads/{self.upload_id}/entries/{self.entry_id}/archive/'
 
     def generate_reference(self, path: list | None = None) -> str:
         """
         Generate a reference string using a given path or the current path.
         """
         actual_path: list = path if path is not None else self.current_path
-        actual_ref: str = '/'.join(str(v) for v in actual_path).removeprefix(
-            self._prefix_to_remove
+        actual_ref: str = (
+            '/'.join(actual_path)
+            if actual_path and isinstance(actual_path[0], str)
+            else '/'.join(str(v) for v in actual_path)
         )
+        if self.upload_id and self.entry_id:
+            actual_ref = actual_ref.removeprefix(self._prefix_to_remove)
         return f'{self._generate_prefix()}#/{actual_ref}'
 
     def _generate_prefix(self) -> str:
