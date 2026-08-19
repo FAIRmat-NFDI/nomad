@@ -24,6 +24,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import unidecode
+from httpx2 import AsyncClient
 from keycloak import KeycloakAdmin
 from keycloak.exceptions import KeycloakGetError
 
@@ -34,6 +35,7 @@ from nomad.utils.structlogging import get_logger
 
 if TYPE_CHECKING:
     from nomad.datamodel import User
+
 logger = get_logger(__name__)
 
 
@@ -66,6 +68,15 @@ class UserManagement(ABC):
         incomplete.
         """
         ...
+
+    @abstractmethod
+    async def a_get_user(
+        self,
+        *,
+        user_id: str | None = None,
+        username: str | None = None,
+        email: str | None = None,
+    ): ...
 
 
 class CentralUserManagement(UserManagement):
@@ -131,6 +142,35 @@ class CentralUserManagement(UserManagement):
             return None
 
         response = requests.get(self._users_api_url, params=kwargs)
+        if response.status_code != 200:
+            raise KeycloakError("Could not request central nomad's user management.")
+
+        data = response.json()
+        if len(data['data']) == 0:
+            return None
+
+        return self.__user_from_api_user(data['data'][0])
+
+    async def a_get_user(
+        self,
+        *,
+        user_id: str | None = None,
+        username: str | None = None,
+        email: str | None = None,
+    ) -> 'User | None':
+        kwargs = {}
+        if user_id:
+            kwargs['user_id'] = user_id
+        elif username:
+            kwargs['username'] = username
+        elif email:
+            kwargs['email'] = email
+        else:
+            return None
+
+        async with AsyncClient() as client:
+            response = await client.get(self._users_api_url, params=kwargs)
+
         if response.status_code != 200:
             raise KeycloakError("Could not request central nomad's user management.")
 
@@ -340,6 +380,46 @@ class KeycloakUserManagement(UserManagement):
 
         try:
             keycloak_user = self._admin_client.get_user(user_id)
+
+        except Exception as e:
+            if str(getattr(e, 'response_code', 404)) == '404':
+                raise KeyError('User does not exist')
+
+            # logger.error('Could not retrieve user from keycloak', exc_info=e)
+            raise e
+
+        return self.__user_from_keycloak_user(keycloak_user)
+
+    async def a_get_user(
+        self,
+        *,
+        user_id: str | None = None,
+        username: str | None = None,
+        email: str | None = None,
+    ) -> 'User':
+        """Async version of `get_user`."""
+        if username is not None and user_id is None:
+            with utils.lnr(logger, 'Could not use keycloak admin client'):
+                user_id = await self._admin_client.a_get_user_id(username)
+
+            if user_id is None:
+                raise KeyError(f'User with username {username} does not exist')
+
+        if email is not None and user_id is None:
+            with utils.lnr(logger, 'Could not use keycloak admin client'):
+                users = await self._admin_client.a_get_users(query=dict(email=email))
+
+            if len(users) > 0:
+                user_id = users[0]['id']
+
+            if user_id is None:
+                raise KeyError(f'User with email {email} does not exist')
+
+        if user_id is None:
+            raise KeycloakError('Could not determine user from given kwargs')
+
+        try:
+            keycloak_user = await self._admin_client.a_get_user(user_id)
 
         except Exception as e:
             if str(getattr(e, 'response_code', 404)) == '404':

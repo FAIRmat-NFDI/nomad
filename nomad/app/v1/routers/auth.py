@@ -22,6 +22,7 @@ from enum import Enum
 from inspect import Parameter, Signature
 from typing import Annotated
 
+import anyio
 import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from fastapi import Query as FastApiQuery
@@ -75,7 +76,7 @@ oauth2_scheme = OAuth2PasswordBearer(
 
 
 @traced(span_name='graph.auth.resolve_user')
-def _resolve_user_with_scopes(
+async def _resolve_user_with_scopes(
     *,
     required_scopes: set[str],
     allow_anonymous: bool,
@@ -102,7 +103,7 @@ def _resolve_user_with_scopes(
             # simple token only has `user/exp` in payload,
             # while the keycloak has much more (RFC 7519)
             if unverified_payload.keys() == {'user', 'exp'}:
-                auth_result = get_user_from_simple_token(simple_token)
+                auth_result = await get_user_from_simple_token(simple_token)
         except jwt.DecodeError as e:  # token could be non-JWT (for testing)
             logger.error('Failed to decode simple token', exc_info=e)
 
@@ -120,10 +121,13 @@ def _resolve_user_with_scopes(
 
     # Resolve user from personal access token
     if auth_result is None and personal_access_token:
-        pat = pat_service.authenticate(personal_access_token)
+        # TODO: migrate to `beanie`
+        pat = await anyio.to_thread.run_sync(
+            pat_service.authenticate, personal_access_token
+        )
 
         if pat is not None:
-            user = datamodel.User.get(user_id=pat.user_id)
+            user = await datamodel.User.a_get(user_id=pat.user_id)
             if user:
                 auth_result = AuthResult(user=user, scopes=set(pat.scopes))
             else:
@@ -132,7 +136,7 @@ def _resolve_user_with_scopes(
 
     # Resolve user from upload token
     if auth_result is None and upload_token:
-        auth_result = get_user_from_upload_token(upload_token)
+        auth_result = await get_user_from_upload_token(upload_token)
 
     if auth_result is None:  # user resolving failed: anonymous user
         user = None
@@ -146,7 +150,9 @@ def _resolve_user_with_scopes(
         if config.services.mode != ModeEnum.DEVELOPMENT:
             raise ValueError('assume_auth_for_username is development-only')
 
-        user = datamodel.User.get(username=config.tests.assume_auth_for_username)
+        user = await datamodel.User.a_get(
+            username=config.tests.assume_auth_for_username
+        )
         scopes = Scope.all_values()  # full permission for tester
 
     # Anonymous users
@@ -162,7 +168,7 @@ def _resolve_user_with_scopes(
     else:
         # Validate user against Keycloak
         try:
-            existing_user = datamodel.User.get(user_id=user.user_id)
+            existing_user = await datamodel.User.a_get(user_id=user.user_id)
         except Exception as e:
             logger.error(
                 'Failed to lookup authenticated user in Keycloak.',
@@ -234,8 +240,8 @@ def get_current_user(
     else:
         required_scopes = set(required_scopes)
 
-    def current_user(**kwargs) -> User | None:
-        return _resolve_user_with_scopes(
+    async def current_user(**kwargs) -> User | None:
+        return await _resolve_user_with_scopes(
             required_scopes=required_scopes,
             allow_anonymous=allow_anonymous,
             request=kwargs.get('request'),

@@ -16,11 +16,9 @@
 # limitations under the License.
 #
 
-import functools
 import os
 from contextlib import asynccontextmanager
 
-import anyio
 from fastapi import FastAPI, Request, Response, status
 from fastapi.exception_handlers import (
     http_exception_handler as default_http_exception_handler,
@@ -188,15 +186,12 @@ if config.services.optimade_enabled:
                 bearer_token = auth.split(' ', 1)[1]
 
             try:
-                await anyio.to_thread.run_sync(
-                    functools.partial(
-                        _resolve_user_with_scopes,
-                        required_scopes=self.required_scopes,
-                        allow_anonymous=True,
-                        request=request,
-                        keycloak_token=bearer_token,
-                        simple_token=bearer_token,
-                    )
+                await _resolve_user_with_scopes(
+                    required_scopes=self.required_scopes,
+                    allow_anonymous=True,
+                    request=request,
+                    keycloak_token=bearer_token,
+                    simple_token=bearer_token,
                 )
 
             except StarletteHTTPException as exc:
