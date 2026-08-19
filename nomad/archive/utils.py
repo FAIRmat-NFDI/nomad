@@ -73,7 +73,7 @@ def combine_archive(target_fp, data: Iterable[tuple]):
                     FSUtility.open(msg_path) as file_obj,
                     LazyReader(file_obj, cached=False) as reader,
                 ):
-                    yield FileInfo(None, uuid, obj=to_json(reader[uuid]))
+                    yield FileInfo(None, uuid, obj=reader[uuid])
             else:
                 with read_archive(msg_path, detected_version=msg_version) as reader:
                     yield FileInfo(None, uuid, obj=to_json(reader[uuid]))

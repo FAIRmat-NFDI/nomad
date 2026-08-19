@@ -1461,9 +1461,10 @@ class Entry(Proc):
             try:
                 upload_files = PublicUploadFiles(self.upload_id)
                 with upload_files.read_archive(self.entry_id) as archive:
-                    self.upload_files.write_archive(
-                        self.entry_id, to_json(archive[self.entry_id])
-                    )
+                    target = archive[self.entry_id]
+                    if not isinstance(target, LazyItem):
+                        target = to_json(target)
+                    self.upload_files.write_archive(self.entry_id, target)
 
             except Exception as e:
                 logger.error(
@@ -1743,7 +1744,8 @@ class Entry(Proc):
         # save the archive msg-pack
         try:
             return self.upload_files.write_archive(
-                self.entry_id, archive.m_to_dict(with_def_id=True)
+                self.entry_id,
+                archive.m_to_dict(with_def_id=True, return_as_generator=True),
             )
         except Exception:
             # most likely failed due to domain data, try to write metadata and processing logs

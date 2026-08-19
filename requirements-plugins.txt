@@ -6,10 +6,10 @@ aiohappyeyeballs==2.7.1   # via aiohttp, -c requirements-dev.txt
 aiohttp==3.14.3           # via aiobotocore, s3fs, -c requirements-dev.txt
 aioitertools==0.13.0      # via aiobotocore, -c requirements-dev.txt
 aiosignal==1.4.0          # via aiohttp, -c requirements-dev.txt
-alembic==1.18.5           # via jupyterhub, -c requirements-dev.txt
+alembic==1.19.1           # via jupyterhub, -c requirements-dev.txt
 annotated-doc==0.0.5      # via fastapi, -c requirements-dev.txt
 annotated-types==0.8.0    # via pydantic, -c requirements-dev.txt
-anyio==4.14.2             # via httpx, starlette, watchfiles, -c requirements-dev.txt
+anyio==4.14.2             # via httpx, httpx2, starlette, watchfiles, -c requirements-dev.txt
 appdirs==1.4.4            # via molid, -c requirements-dev.txt
 ase==3.29.0               # via asr, matid, molid, nomad-lab, nomad-parser-plugins-atomistic, -c requirements-dev.txt
 asgiref==3.12.1           # via opentelemetry-instrumentation-asgi, -c requirements-dev.txt
@@ -17,19 +17,19 @@ asr==0.4.1                # via nomad-parser-plugins-workflow
 async-generator==1.10     # via jupyterhub, -c requirements-dev.txt
 async-timeout==5.0.1 ; python_full_version < '3.11'  # via aiohttp, -c requirements-dev.txt
 attrs==26.1.0             # via aiohttp, jsonschema, referencing, -c requirements-dev.txt
-beanie==2.1.0             # via nomad-lab, -c requirements-dev.txt
+beanie==2.2.0             # via nomad-lab, -c requirements-dev.txt
 beautifulsoup4==4.12.3    # via nomad-lab, -c requirements-dev.txt
 bibtexparser==1.4.4       # via pymatgen, pymatgen-core, -c requirements-dev.txt
-bitarray==3.10.0          # via msglc, nomad-lab, -c requirements-dev.txt
+bitarray==3.10.1          # via msglc, nomad-lab, -c requirements-dev.txt
 blinker==1.9.0            # via flask, nomad-lab, -c requirements-dev.txt
 botocore==1.43.56         # via aiobotocore, -c requirements-dev.txt
 cachetools==7.1.7         # via nomad-lab, -c requirements-dev.txt
 cbor2==6.1.4              # via msglc, -c requirements-dev.txt
 certifi==2026.7.22        # via elasticsearch, httpcore, httpx, netcdf4, requests, -c requirements-dev.txt
 certipy==0.2.3            # via jupyterhub, -c requirements-dev.txt
-cffi==2.1.0 ; platform_python_implementation != 'PyPy'  # via cryptography, -c requirements-dev.txt
+cffi==2.1.1 ; platform_python_implementation != 'PyPy'  # via cryptography, -c requirements-dev.txt
 cftime==1.6.4.post1       # via netcdf4
-charset-normalizer==3.4.9  # via requests, -c requirements-dev.txt
+charset-normalizer==3.5.1  # via requests, -c requirements-dev.txt
 click==8.4.2              # via asr, beanie, flask, molid, nomad-lab, uvicorn, -c requirements-dev.txt
 colorama==0.4.6 ; sys_platform == 'win32'  # via click, tqdm, -c requirements-dev.txt
 contourpy==1.3.2 ; python_full_version < '3.11'  # via matplotlib, -c requirements-dev.txt
@@ -49,32 +49,35 @@ et-xmlfile==2.0.0         # via openpyxl, -c requirements-dev.txt
 exceptiongroup==1.3.1 ; python_full_version < '3.11'  # via anyio, -c requirements-dev.txt
 fastapi==0.136.3          # via fastapi-cache2, h5grove, nomad-lab, -c requirements-dev.txt
 fastapi-cache2==0.2.2     # via nomad-lab, -c requirements-dev.txt
-filelock==3.32.2          # via mdanalysis, -c requirements-dev.txt
+filelock==3.32.3          # via mdanalysis, -c requirements-dev.txt
 flask==3.1.2              # via asr
 flexcache==0.3            # via pint, -c requirements-dev.txt
 flexparser==0.4           # via pint, -c requirements-dev.txt
 fonttools==4.63.0         # via matplotlib, -c requirements-dev.txt
 frozenlist==1.8.0         # via aiohttp, aiosignal, -c requirements-dev.txt
 fsspec==2026.7.0          # via nomad-lab, s3fs, universal-pathlib, -c requirements-dev.txt
-googleapis-common-protos==1.75.0  # via opentelemetry-exporter-otlp-proto-grpc, opentelemetry-exporter-otlp-proto-http, -c requirements-dev.txt
-greenlet==3.5.4 ; platform_machine == 'AMD64' or platform_machine == 'WIN32' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'ppc64le' or platform_machine == 'win32' or platform_machine == 'x86_64'  # via sqlalchemy, -c requirements-dev.txt
+googleapis-common-protos==1.75.1  # via opentelemetry-exporter-otlp-proto-grpc, opentelemetry-exporter-otlp-proto-http, -c requirements-dev.txt
+greenlet==3.5.5 ; platform_machine == 'AMD64' or platform_machine == 'WIN32' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'ppc64le' or platform_machine == 'win32' or platform_machine == 'x86_64'  # via sqlalchemy, -c requirements-dev.txt
 griddataformats==1.0.2    # via mdanalysis
 grpcio==1.83.0            # via opentelemetry-exporter-otlp-proto-grpc, -c requirements-dev.txt
-gunicorn==26.0.0          # via nomad-lab, -c requirements-dev.txt
-h11==0.16.0               # via httpcore, uvicorn, -c requirements-dev.txt
+gunicorn==26.1.0          # via nomad-lab, -c requirements-dev.txt
+h11==0.16.0               # via httpcore, httpcore2, uvicorn, -c requirements-dev.txt
 h5grove==4.0.0            # via nomad-lab, -c requirements-dev.txt
 h5py==3.16.0              # via h5grove, nomad-lab, nomad-parser-plugins-atomistic, nomad-parser-plugins-electronic, nomad-parser-plugins-workflow, phonopy, -c requirements-dev.txt
 httpcore==1.0.9           # via httpx, -c requirements-dev.txt
+httpcore2==2.12.0 ; sys_platform != 'emscripten'  # via httpx2, -c requirements-dev.txt
 httptools==0.8.0          # via uvicorn, -c requirements-dev.txt
-httpx==0.28.1             # via nomad-lab, python-keycloak, -c requirements-dev.txt
-idna==3.18                # via anyio, email-validator, httpx, requests, yarl, -c requirements-dev.txt
+httpx==0.28.1             # via python-keycloak, -c requirements-dev.txt
+httpx2==2.12.0            # via nomad-lab, -c requirements-dev.txt
+httpx2-jsfetch==1.0 ; python_full_version >= '3.12' and sys_platform == 'emscripten'  # via httpx2, -c requirements-dev.txt
+idna==3.19                # via anyio, email-validator, httpx, httpx2, requests, yarl, -c requirements-dev.txt
 isodate==0.7.2            # via rdflib, -c requirements-dev.txt
 itsdangerous==2.2.0       # via flask
 jinja2==3.1.6             # via flask, jupyterhub, -c requirements-dev.txt
 jmespath==1.1.0           # via aiobotocore, botocore, nomad-lab, -c requirements-dev.txt
 joblib==1.5.3             # via mdanalysis, pymatgen, pymatgen-core, -c requirements-dev.txt
 json-stream==2.5.1        # via nomad-lab, -c requirements-dev.txt
-json-stream-rs-tokenizer==0.5.1  # via json-stream, -c requirements-dev.txt
+json-stream-rs-tokenizer==0.5.3  # via json-stream, -c requirements-dev.txt
 jsonpath-ng==1.8.0        # via nomad-lab, -c requirements-dev.txt
 jsonschema==4.26.0        # via jupyter-telemetry, oauthenticator, -c requirements-dev.txt
 jsonschema-specifications==2025.9.1  # via jsonschema, -c requirements-dev.txt
@@ -85,8 +88,8 @@ kaleido==0.2.1            # via nomad-lab, -c requirements-dev.txt
 kiwisolver==1.5.0         # via matplotlib, -c requirements-dev.txt
 lark==1.3.1               # via optimade, -c requirements-dev.txt
 lazy-model==0.4.0         # via beanie, -c requirements-dev.txt
-lxml==6.1.1               # via nomad-lab, nomad-parser-plugins-atomistic, nomad-parser-plugins-electronic, nomad-parser-plugins-workflow, pymatgen-core, -c requirements-dev.txt
-mako==1.3.12              # via alembic, -c requirements-dev.txt
+lxml==6.1.2               # via nomad-lab, nomad-parser-plugins-atomistic, nomad-parser-plugins-electronic, nomad-parser-plugins-workflow, pymatgen-core, -c requirements-dev.txt
+mako==1.4.1               # via alembic, -c requirements-dev.txt
 markupsafe==3.0.3         # via flask, jinja2, mako, werkzeug, -c requirements-dev.txt
 matid==2.2.0              # via nomad-lab, -c requirements-dev.txt
 matplotlib==3.10.9 ; python_full_version < '3.11'  # via ase, asr, mdanalysis, phonopy, pymatgen, -c requirements-dev.txt
@@ -101,7 +104,7 @@ monty==2025.3.3 ; python_full_version < '3.11'  # via pymatgen, -c requirements-
 monty==2026.7.16 ; python_full_version >= '3.11'  # via pymatgen-core, -c requirements-dev.txt
 mpmath==1.3.0             # via sympy, -c requirements-dev.txt
 mrcfile==1.5.4            # via griddataformats
-msglc==260423             # via nomad-lab, -c requirements-dev.txt
+msglc==260821             # via nomad-lab, -c requirements-dev.txt
 msgpack==1.2.1            # via mmtf-python, msglc, -c requirements-dev.txt
 msgspec==0.21.1           # via msglc, -c requirements-dev.txt
 multidict==6.7.1          # via aiobotocore, aiohttp, yarl, -c requirements-dev.txt
@@ -125,7 +128,7 @@ nomad-schema-plugin-run==1.0.4  # via nomad-parser-plugins-atomistic, nomad-pars
 nomad-schema-plugin-simulation-workflow==1.0.10  # via nomad-normalizer-plugin-simulation-workflow, nomad-parser-plugins-atomistic, nomad-parser-plugins-database, nomad-parser-plugins-electronic, nomad-parser-plugins-workflow, -r test_plugins.txt
 numpy==2.2.6 ; python_full_version < '3.11'  # via ase, cftime, contourpy, griddataformats, h5grove, h5py, matid, matplotlib, mdanalysis, monty, mrcfile, netcdf4, nomad-lab, nomad-parser-plugins-atomistic, nomad-parser-plugins-electronic, pandas, phonopy, pyedr, pymatgen, scipy, spglib, symfc, tifffile, xarray, -c requirements-dev.txt
 numpy==2.4.6 ; python_full_version == '3.11.*'  # via ase, cftime, contourpy, griddataformats, h5grove, h5py, matid, matplotlib, mdanalysis, monty, mrcfile, netcdf4, nomad-lab, nomad-parser-plugins-atomistic, nomad-parser-plugins-electronic, pandas, phonopy, pyedr, pymatgen-core, scipy, spglib, symfc, tifffile, xarray, -c requirements-dev.txt
-numpy==2.5.1 ; python_full_version >= '3.12'  # via ase, cftime, contourpy, griddataformats, h5grove, h5py, matid, matplotlib, mdanalysis, monty, mrcfile, netcdf4, nomad-lab, nomad-parser-plugins-atomistic, nomad-parser-plugins-electronic, pandas, phonopy, pyedr, pymatgen-core, scipy, spglib, symfc, tifffile, xarray, -c requirements-dev.txt
+numpy==2.5.2 ; python_full_version >= '3.12'  # via ase, cftime, contourpy, griddataformats, h5grove, h5py, matid, matplotlib, mdanalysis, monty, mrcfile, netcdf4, nomad-lab, nomad-parser-plugins-atomistic, nomad-parser-plugins-electronic, pandas, phonopy, pyedr, pymatgen-core, scipy, spglib, symfc, tifffile, xarray, -c requirements-dev.txt
 oauthenticator==17.4.0    # via nomad-lab, -c requirements-dev.txt
 oauthlib==3.3.1           # via jupyterhub, -c requirements-dev.txt
 openpyxl==3.1.5           # via nomad-lab, -c requirements-dev.txt
@@ -144,8 +147,8 @@ opentelemetry-sdk==1.42.1  # via nomad-lab, opentelemetry-exporter-otlp-proto-gr
 opentelemetry-semantic-conventions==0.63b1  # via opentelemetry-instrumentation, opentelemetry-instrumentation-asgi, opentelemetry-instrumentation-elasticsearch, opentelemetry-instrumentation-fastapi, opentelemetry-instrumentation-pymongo, opentelemetry-sdk, -c requirements-dev.txt
 opentelemetry-util-http==0.63b1  # via opentelemetry-instrumentation-asgi, opentelemetry-instrumentation-fastapi, -c requirements-dev.txt
 optimade==1.3.1           # via nomad-lab, -c requirements-dev.txt
-orjson==3.11.9            # via h5grove, nomad-lab, pymatgen, pymatgen-core, -c requirements-dev.txt
-packaging==26.2           # via deprecation, gunicorn, jupyterhub, matplotlib, mdanalysis, mongomock, opentelemetry-instrumentation, plotly, xarray, -c requirements-dev.txt
+orjson==3.12.0            # via h5grove, nomad-lab, pymatgen, pymatgen-core, -c requirements-dev.txt
+packaging==26.3           # via deprecation, jupyterhub, matplotlib, mdanalysis, mongomock, opentelemetry-instrumentation, plotly, xarray, -c requirements-dev.txt
 palettable==3.3.3         # via pymatgen, pymatgen-core, -c requirements-dev.txt
 pamela==1.2.0 ; sys_platform != 'win32'  # via jupyterhub, -c requirements-dev.txt
 pandas==2.3.3 ; python_full_version < '3.11'  # via nomad-lab, panedr, pymatgen, xarray, -c requirements-dev.txt
@@ -158,7 +161,7 @@ phonopy==2.38.0           # via asr, nomad-parser-plugins-workflow
 pillow==12.3.0            # via matplotlib, -c requirements-dev.txt
 pint==0.24.4 ; python_full_version < '3.11'  # via nomad-lab, -c requirements-dev.txt
 pint==0.25.3 ; python_full_version >= '3.11'  # via nomad-lab, -c requirements-dev.txt
-platformdirs==4.11.0      # via pint, -c requirements-dev.txt
+platformdirs==4.11.3      # via pint, -c requirements-dev.txt
 plotly==5.24.1            # via asr, nomad-lab, pymatgen, pymatgen-core, -c requirements-dev.txt
 prometheus-client==0.26.0  # via jupyterhub, nomad-lab, -c requirements-dev.txt
 propcache==0.5.2          # via aiohttp, yarl, -c requirements-dev.txt
@@ -170,18 +173,18 @@ pyasn1-modules==0.4.2     # via rfc3161ng, -c requirements-dev.txt
 pycparser==3.0 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'  # via cffi, -c requirements-dev.txt
 pydantic==2.13.4          # via beanie, fastapi, h5grove, lazy-model, molid, nomad-lab, nomad-parser-plugins-atomistic, nomad-parser-plugins-database, nomad-parser-plugins-electronic, nomad-parser-plugins-workflow, optimade, pydantic-settings, -c requirements-dev.txt
 pydantic-core==2.46.4     # via pydantic, -c requirements-dev.txt
-pydantic-settings==2.14.2  # via h5grove, molid, optimade, -c requirements-dev.txt
+pydantic-settings==2.15.0  # via h5grove, molid, optimade, -c requirements-dev.txt
 pyedr==0.8.0              # via panedr
 pyinstrument==5.1.3       # via nomad-lab, -c requirements-dev.txt
 pyjwt==2.13.0             # via nomad-lab, oauthenticator, -c requirements-dev.txt
 pymatgen==2025.10.7 ; python_full_version < '3.11'  # via asr, nomad-lab, -c requirements-dev.txt
 pymatgen==2026.5.4 ; python_full_version >= '3.11'  # via asr, nomad-lab, -c requirements-dev.txt
-pymatgen-core==2026.7.31 ; python_full_version >= '3.11'  # via pymatgen, -c requirements-dev.txt
+pymatgen-core==2026.8.13 ; python_full_version >= '3.11'  # via pymatgen, -c requirements-dev.txt
 pymongo==4.17.0           # via beanie, mongoengine, optimade, -c requirements-dev.txt
 pyparsing==3.3.2          # via bibtexparser, matplotlib, rdflib, -c requirements-dev.txt
 python-dateutil==2.9.0.post0  # via aiobotocore, botocore, elasticsearch-dsl, jupyterhub, matplotlib, pandas, pendulum, rfc3161ng, temporalio, -c requirements-dev.txt
-python-dotenv==1.2.2      # via pydantic-settings, uvicorn, -c requirements-dev.txt
-python-json-logger==4.1.0  # via jupyter-telemetry, -c requirements-dev.txt
+python-dotenv==1.2.3      # via pydantic-settings, uvicorn, -c requirements-dev.txt
+python-json-logger==4.2.0  # via jupyter-telemetry, -c requirements-dev.txt
 python-keycloak==7.1.1    # via nomad-lab, -c requirements-dev.txt
 python-logstash==0.4.8    # via nomad-lab, -c requirements-dev.txt
 python-magic==0.4.27 ; sys_platform != 'win32'  # via nomad-lab, -c requirements-dev.txt
@@ -204,10 +207,10 @@ scipy==1.17.1 ; python_full_version == '3.11.*'  # via ase, griddataformats, mda
 scipy==1.18.0 ; python_full_version >= '3.12'  # via ase, griddataformats, mdanalysis, nomad-lab, nomad-parser-plugins-atomistic, nomad-schema-plugin-simulation-workflow, pymatgen-core, symfc, -c requirements-dev.txt
 sentinels==1.1.1          # via mongomock, -c requirements-dev.txt
 six==1.17.0               # via elasticsearch-dsl, python-dateutil, rdflib, -c requirements-dev.txt
-soupsieve==2.9.1          # via beautifulsoup4, -c requirements-dev.txt
+soupsieve==2.9.2          # via beautifulsoup4, -c requirements-dev.txt
 spglib==2.7.0             # via asr, matid, phonopy, pymatgen, pymatgen-core, symfc, -c requirements-dev.txt
-sqlalchemy==2.0.51        # via alembic, jupyterhub, -c requirements-dev.txt
-starlette==1.3.1          # via fastapi, nomad-lab, -c requirements-dev.txt
+sqlalchemy==2.0.52        # via alembic, jupyterhub, -c requirements-dev.txt
+starlette==1.6.0          # via fastapi, nomad-lab, -c requirements-dev.txt
 structlog==26.1.0         # via nomad-lab, -c requirements-dev.txt
 symfc==1.5.4              # via phonopy
 sympy==1.14.0             # via pymatgen, pymatgen-core, -c requirements-dev.txt
@@ -217,20 +220,21 @@ tenacity==9.1.4           # via plotly, -c requirements-dev.txt
 threadpoolctl==3.6.0      # via mdanalysis
 tifffile==2025.5.10 ; python_full_version < '3.11'  # via h5grove, -c requirements-dev.txt
 tifffile==2026.3.3 ; python_full_version == '3.11.*'  # via h5grove, -c requirements-dev.txt
-tifffile==2026.7.31 ; python_full_version >= '3.12'  # via h5grove, -c requirements-dev.txt
+tifffile==2026.8.16 ; python_full_version >= '3.12'  # via h5grove, -c requirements-dev.txt
 tomli==2.4.1 ; python_full_version < '3.11'  # via alembic, -c requirements-dev.txt
-tornado==6.5.7            # via jupyterhub, oauthenticator, -c requirements-dev.txt
+tornado==6.5.8            # via jupyterhub, oauthenticator, -c requirements-dev.txt
 tqdm==4.70.0              # via mdanalysis, molid, pyedr, pymatgen, pymatgen-core, -c requirements-dev.txt
 traitlets==5.16.1         # via jupyter-telemetry, jupyterhub, oauthenticator, -c requirements-dev.txt
-types-protobuf==7.34.1.20260518  # via temporalio, -c requirements-dev.txt
-typing-extensions==4.16.0  # via aiobotocore, aiohttp, aiosignal, alembic, anyio, ase, asgiref, beanie, cryptography, exceptiongroup, fastapi, fastapi-cache2, flexcache, flexparser, grpcio, h5grove, jwcrypto, multidict, nexus-rpc, opentelemetry-api, opentelemetry-exporter-otlp-proto-grpc, opentelemetry-exporter-otlp-proto-http, opentelemetry-sdk, opentelemetry-semantic-conventions, pint, pydantic, pydantic-core, pyjwt, referencing, spglib, sqlalchemy, starlette, structlog, temporalio, typing-inspection, uvicorn, -c requirements-dev.txt
-typing-inspection==0.4.2  # via fastapi, pydantic, pydantic-settings, -c requirements-dev.txt
+truststore==0.10.4 ; sys_platform != 'emscripten'  # via httpcore2, httpx2, -c requirements-dev.txt
+types-protobuf==7.34.1.20260816  # via temporalio, -c requirements-dev.txt
+typing-extensions==4.16.0  # via aiobotocore, aiohttp, aiosignal, alembic, anyio, ase, asgiref, beanie, cryptography, exceptiongroup, fastapi, fastapi-cache2, flexcache, flexparser, grpcio, h5grove, httpx2, jwcrypto, multidict, nexus-rpc, opentelemetry-api, opentelemetry-exporter-otlp-proto-grpc, opentelemetry-exporter-otlp-proto-http, opentelemetry-sdk, opentelemetry-semantic-conventions, pint, pydantic, pydantic-core, pyjwt, referencing, spglib, sqlalchemy, starlette, structlog, temporalio, typing-inspection, uvicorn, -c requirements-dev.txt
+typing-inspection==0.4.4  # via fastapi, pydantic, pydantic-settings, -c requirements-dev.txt
 tzdata==2026.3            # via pandas, pendulum, -c requirements-dev.txt
 uncertainties==3.2.3      # via pymatgen, pymatgen-core, -c requirements-dev.txt
 unidecode==1.4.0          # via nomad-lab, -c requirements-dev.txt
 universal-pathlib==0.3.10  # via msglc, -c requirements-dev.txt
 urllib3==2.7.0            # via botocore, docker, elasticsearch, requests, -c requirements-dev.txt
-uvicorn==0.52.1           # via fastapi-cache2, h5grove, nomad-lab, -c requirements-dev.txt
+uvicorn==0.52.4           # via fastapi-cache2, h5grove, nomad-lab, -c requirements-dev.txt
 uvloop==0.22.1 ; platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32'  # via uvicorn, -c requirements-dev.txt
 validators==0.35.0        # via nomad-lab, -c requirements-dev.txt
 watchfiles==1.2.0         # via uvicorn, -c requirements-dev.txt
