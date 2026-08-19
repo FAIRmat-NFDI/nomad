@@ -166,6 +166,9 @@ class KeycloakMock:
         else:
             assert False, 'no token based get_user during tests'
 
+    async def a_get_user(self, *, user_id=None, username=None, email=None):
+        return self.get_user(user_id=user_id, username=username, email=email)
+
     def search_user(self, query):
         return [
             User(**user)

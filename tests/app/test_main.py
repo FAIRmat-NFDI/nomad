@@ -77,7 +77,7 @@ def allowed_user() -> User:
 @pytest.fixture
 def patch_user_get(monkeypatch):
     """
-    Patch nomad.app.v1.routers.auth.datamodel.User.get to return the given user.
+    Patch nomad.app.v1.routers.auth.datamodel.User.get and User.a_get.
     """
 
     def _apply(user: User | None) -> None:
@@ -85,6 +85,11 @@ def patch_user_get(monkeypatch):
             'nomad.app.v1.routers.auth.datamodel.User.get',
             lambda *args, **kwargs: user,
         )
+
+        async def a_get(*args, **kwargs):
+            return user
+
+        monkeypatch.setattr('nomad.app.v1.routers.auth.datamodel.User.a_get', a_get)
 
     return _apply
 
@@ -112,9 +117,13 @@ def force_keycloak_path(monkeypatch):
     Both simple_token and keycloak_token can read from the same Authorization header.
     The resolver checks simple-token first, so we force that branch to return None.
     """
+
+    async def get_user_from_simple_token(_token):
+        return None
+
     monkeypatch.setattr(
         'nomad.app.v1.routers.auth.get_user_from_simple_token',
-        lambda _token: None,
+        get_user_from_simple_token,
     )
 
 

@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from nomad import datamodel, utils
-from nomad.auth import keycloak, user_management
+from nomad.auth import keycloak
 from nomad.auth.keycloak import KeycloakError
 from nomad.auth.pat import PAT_PREFIX
 from nomad.auth.scopes import _resolve_scopes
@@ -104,7 +104,7 @@ def generate_simple_token(user_id: str, expires_in: float) -> str:
     )
 
 
-def get_user_from_simple_token(simple_token: str | None) -> AuthResult | None:
+async def get_user_from_simple_token(simple_token: str | None) -> AuthResult | None:
     """
     Verifies a simple token (throwing HTTPException if illegal value provided).
 
@@ -124,7 +124,7 @@ def get_user_from_simple_token(simple_token: str | None) -> AuthResult | None:
         decoded = jwt.decode(
             simple_token, config.services.api_secret, algorithms=[JWT_ALGORITHM]
         )
-        user = User.get(user_id=decoded['user'])
+        user = await User.a_get(user_id=decoded['user'])
         scopes = _resolve_scopes(['*:*']) - _resolve_scopes(['tokens:*'])
         return AuthResult(user, scopes)
 
@@ -161,7 +161,7 @@ def generate_upload_token(user: User) -> str:
     return f'{utils.base64_encode(payload)}.{utils.base64_encode(signature.digest())}'
 
 
-def get_user_from_upload_token(upload_token: str | None) -> AuthResult | None:
+async def get_user_from_upload_token(upload_token: str | None) -> AuthResult | None:
     """
     Verifies the upload token (throwing HTTPException if illegal value provided).
 
@@ -191,9 +191,7 @@ def get_user_from_upload_token(upload_token: str | None) -> AuthResult | None:
             raise ValueError('Invalid HMAC signature')
 
         user_id = str(uuid.UUID(bytes=payload_bytes))
-        user = cast(
-            datamodel.User, user_management.user_management.get_user(user_id=user_id)
-        )
+        user = await User.a_get(user_id=user_id)
         return AuthResult(user, _resolve_scopes(['uploads:*']))
 
     except Exception:
