@@ -30,7 +30,8 @@ const useNexusCardStyles = makeStyles(theme => ({
 
 const VALID_NEXUS_PARSERS = [
   'pynxtools.nomad.entrypoints:nexus_parser',
-  'pynxtools.nomad.parsers:nexus_parser'
+  'pynxtools.nomad.parsers:nexus_parser',
+  'pynxtools.nomad.parsers:nexus_parser_v2'
 ]
 
 const NexusCard = React.memo(function NexusCard({index}) {

@@ -1,0 +1,87 @@
+{
+  "id": "nexus_v2_root",
+  "label": "NeXus",
+  "priority": 30,
+  "query": {
+    "section_defs[].definition_qualified_name:any": [
+      "pynxtools.nomad.metainfo.base_classes.Root"
+    ]
+  },
+  "overview": {
+    "type": "container",
+    "editable": false,
+    "children": [
+      {
+        "type": "container",
+        "title": "NeXus File",
+        "md": 12,
+        "children": [
+          {
+            "type": "quantity",
+            "property": "data/file_name",
+            "md": 6
+          },
+          {
+            "type": "quantity",
+            "property": "data/file_time",
+            "md": 6
+          },
+          {
+            "type": "quantity",
+            "property": "data/file_update_time",
+            "md": 6
+          },
+          {
+            "type": "quantity",
+            "property": "data/NeXus_version",
+            "md": 6
+          },
+          {
+            "type": "quantity",
+            "property": "data/NeXus_release",
+            "md": 6
+          },
+          {
+            "type": "quantity",
+            "property": "data/NeXus_repository",
+            "md": 6
+          },
+          {
+            "type": "quantity",
+            "property": "data/creator",
+            "md": 6
+          },
+          {
+            "type": "quantity",
+            "property": "data/creator_version",
+            "md": 6
+          }
+        ]
+      },
+      {
+        "type": "table",
+        "title": "NeXus Entries",
+        "property": "data/steps",
+        "columns": [
+          {
+            "type": "quantity",
+            "property": "name"
+          },
+          {
+            "type": "quantity",
+            "property": "activity",
+            "label": "Entry"
+          }
+        ],
+        "md": 12
+      },
+      {
+        "type": "hdf5",
+        "property": "metadata/mainfile",
+        "title": "NeXus HDF5",
+        "md": 12,
+        "sx": {"height": "700px"}
+      }
+    ]
+  }
+}

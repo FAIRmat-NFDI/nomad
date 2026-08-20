@@ -1,9 +1,11 @@
 {
-  "id": "nexus",
+  "id": "nexus_v2",
   "label": "NeXus",
   "priority": 30,
   "query": {
-    "sections:any": ["pynxtools.nomad.schema.Root"]
+    "section_defs[].definition_qualified_name:any": [
+      "pynxtools.nomad.metainfo.base_classes.Entry"
+    ]
   },
   "overview": {
     "type": "container",
@@ -16,31 +18,31 @@
         "children": [
           {
             "type": "quantity",
-            "property": "data/ENTRY/0/definition__field",
+            "property": "data/definition",
             "md": 6
           },
           {
             "type": "quantity",
-            "property": "data/ENTRY/0/definition___version",
+            "property": "data/definition__version",
             "md": 6
           },
           {
             "type": "quantity",
-            "property": "data/ENTRY/0/title__field",
+            "property": "data/title",
             "md": 12
           },
           {
             "type": "quantity",
-            "property": "data/ENTRY/0/start_time__field",
+            "property": "data/start_time",
             "md": 6
           },
           {
             "type": "quantity",
-            "property": "data/ENTRY/0/end_time__field",
+            "property": "data/end_time",
             "md": 6
           }
         ]
-      },
+      },      
       {
         "type": "container",
         "title": "Material",
