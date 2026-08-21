@@ -143,8 +143,6 @@ class _GraphWalkStats:
     lazy_access_time_ns: int = 0
     walk_node_count: int = 0
     resolve_node_count: int = 0
-    config_clone_count: int = 0
-    config_clone_time_ns: int = 0
     definition_cache_hits: int = 0
     definition_cache_misses: int = 0
     definition_retrieve_count: int = 0
@@ -171,8 +169,6 @@ class _GraphWalkStats:
             'graph.archive.lazy_access_time_ms': self.lazy_access_time_ns / 1_000_000,
             'graph.node.walk_count': self.walk_node_count,
             'graph.node.resolve_count': self.resolve_node_count,
-            'graph.config.clone_count': self.config_clone_count,
-            'graph.config.clone_time_ms': self.config_clone_time_ns / 1_000_000,
             'graph.definition.retrieve_cache_hits': self.definition_cache_hits,
             'graph.definition.retrieve_cache_misses': self.definition_cache_misses,
             'graph.definition.retrieve_count': self.definition_retrieve_count,
@@ -196,21 +192,15 @@ _current_graph_walk_stats: ContextVar[_GraphWalkStats | None] = ContextVar(
 )
 
 
-def _clone_config(
-    config: RequestConfig, values: dict, *, retain_pattern: bool = False
-) -> RequestConfig:
-    """Clone a request configuration and time it when a graph walk is recorded."""
+def _copy_request_config(config: RequestConfig, **updates: Any) -> RequestConfig:
+    """Copy an already validated config."""
 
-    stats = _current_graph_walk_stats.get()
-    if stats is None:
-        return config.new(values, retain_pattern=retain_pattern)
+    copied = config.model_copy(update=updates)
 
-    stats.config_clone_count += 1
-    start = time.perf_counter_ns()
-    try:
-        return config.new(values, retain_pattern=retain_pattern)
-    finally:
-        stats.config_clone_time_ns += time.perf_counter_ns() - start
+    # Pydantic copies cached-property values from ``__dict__``. Keeping the
+    # parent's hash would make distinct child requests collide in graph caches.
+    copied.__dict__.pop('hash', None)
+    return copied
 
 
 @dataclasses.dataclass
@@ -1513,7 +1503,9 @@ class GeneralReader:
         # the original archive may be an empty list
         # populate an empty list to keep the structure
         await _populate_result(node.result_root, node.current_path, [])
-        new_config = _clone_config(config, {'index': None}, retain_pattern=True)
+        # The update is internal and already typed, so full Pydantic
+        # re-validation for every list is unnecessary.
+        new_config = _copy_request_config(config, index=None)
         for i in _normalise_index(config.index, len(node.archive)):
             await self._resolve(
                 node.replace(
@@ -3541,14 +3533,12 @@ class ArchiveReader(ArchiveLikeReader):
                     )
                     continue
 
-                child_config = _clone_config(
+                child_config = _copy_request_config(
                     config,
-                    {
-                        'property_name': key,  # set the proper quantity name
-                        'include': ['*'],  # ignore the pattern for children
-                        'exclude': None,
-                        'index': None,  # ignore index requirements for children
-                    },
+                    property_name=key,
+                    include=frozenset({'*'}),
+                    exclude=None,
+                    index=None,
                 )
 
                 if child_config.is_plain():
