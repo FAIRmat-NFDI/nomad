@@ -239,11 +239,12 @@ def assert_example_entry(entry):
 class UploadFilesFixtures:
     @pytest.fixture(scope='function')
     def test_upload_id(self) -> Generator[str, None, None]:
-        for cls in [StagingUploadFiles, PublicUploadFiles]:
-            DirectoryObject(cls.base_folder_for('test_upload')).delete()  # type: ignore
-        yield 'test_upload'
-        for cls in [StagingUploadFiles, PublicUploadFiles]:
-            DirectoryObject(cls.base_folder_for('test_upload')).delete()  # type: ignore
+        upload_id = f'test_upload_{uuid.uuid4().hex}'
+        try:
+            yield upload_id
+        finally:
+            for cls in [StagingUploadFiles, PublicUploadFiles]:
+                DirectoryObject(cls.base_folder_for(upload_id)).delete()  # type: ignore
 
 
 class UploadFilesContract(UploadFilesFixtures):
