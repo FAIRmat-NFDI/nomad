@@ -241,7 +241,6 @@ def test_archive_walk_metrics_are_aggregated_on_recording_span(monkeypatch):
     assert span.attributes['graph.result.populate_count'] > 0
     assert span.attributes['graph.result.populate_time_ms'] >= 0
     assert span.attributes['graph.archive.lazy_access_time_ms'] >= 0
-    assert span.attributes['graph.config.clone_time_ms'] >= 0
     assert span.attributes['graph.definition.check_count'] > 0
     assert span.attributes['graph.definition.check_time_ms'] >= 0
     assert span.attributes['graph.definition.property_lookup_count'] > 0
@@ -392,6 +391,37 @@ def test_metainfo_property_definitions_are_cached_per_graph_request():
         assert _get_property_definition(node, 'child') is child_definition
         assert _get_property_definition(node, 'child') is child_definition
         assert definition.resolve_calls == 1
+
+
+def test_fast_request_config_copy_matches_validated_copy_and_resets_hash():
+    from nomad.graph.graph_reader import _copy_request_config
+    from nomad.graph.model import DirectiveType, RequestConfig
+
+    parent = RequestConfig(
+        directive=DirectiveType.resolved,
+        include=frozenset({'value'}),
+        index=(0,),
+    )
+    parent_hash = parent.hash
+
+    child = _copy_request_config(
+        parent,
+        property_name='child',
+        include=frozenset({'*'}),
+        exclude=None,
+        index=None,
+    )
+    validated_child = parent.new(
+        {
+            'property_name': 'child',
+            'include': ['*'],
+            'exclude': None,
+            'index': None,
+        }
+    )
+
+    assert child.model_dump() == validated_child.model_dump()
+    assert child.hash != parent_hash
 
 
 counter = increment()
