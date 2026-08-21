@@ -156,6 +156,9 @@ def check_pattern(data: frozenset[str] | None) -> frozenset[str] | None:
     return None
 
 
+_WILDCARD_FROZENSET: frozenset[str] = frozenset({'*'})
+
+
 class RequestConfig(BaseModel):
     """
     A class to represent the query configuration.
@@ -398,10 +401,18 @@ class RequestConfig(BaseModel):
         For a given key, check whether it should be included.
         """
         if self.include:
+            if (
+                self.include is _WILDCARD_FROZENSET
+                or '*' in self.include
+                or key in self.include
+            ):
+                return True
             return any(
                 re.match(pattern, key) for pattern in _normalise_pattern(self.include)
             )
         if self.exclude:
+            if key in self.exclude:
+                return False
             return not any(
                 re.match(pattern, key) for pattern in _normalise_pattern(self.exclude)
             )
@@ -431,7 +442,10 @@ class RequestConfig(BaseModel):
             and self.depth is None
             and self.max_list_size is None
             and self.max_dict_size is None
-            and self.include == frozenset({'*'})
+            and (
+                self.include is _WILDCARD_FROZENSET
+                or self.include == _WILDCARD_FROZENSET
+            )
             and self.m_def_format == MDefFormatType.full
         )
 
