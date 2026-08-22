@@ -3447,6 +3447,8 @@ class ArchiveReader(ArchiveLikeReader):
                     if self.__if_strip(node, config)
                     else node.archive,
                 )
+            if isinstance(node.definition, SubSection):
+                node = node.replace(definition=node.definition.sub_section.m_resolved())
             return await self._resolve_list(
                 node, config, omit_keys=omit_keys, wildcard=wildcard
             )

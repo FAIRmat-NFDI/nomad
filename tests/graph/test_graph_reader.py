@@ -5137,3 +5137,51 @@ def test_archive_reader_filtered_v3_lazy_reader():
         ) as reader:
             res = reader.sync_read(entry)
             assert res == {'metadata': {'entry_id': 'entry_id_1'}}, f'Got {res}'
+
+
+def test_archive_reader_resolves_repeated_subsection_definition_once(monkeypatch):
+    from nomad.graph.model import DirectiveType, RequestConfig
+    from nomad.metainfo import MSection, Package, SubSection
+
+    m_package = Package(name='test_repeated_subsection_definition')
+
+    class Child(MSection):
+        pass
+
+    class Parent(MSection):
+        children = SubSection(section_def=Child, repeats=True)
+
+    m_package.__init_metainfo__()
+    original_m_resolved = MSection.m_resolved
+    resolution_count = 0
+
+    def count_child_resolution(definition):
+        nonlocal resolution_count
+        if definition is Child.m_def:
+            resolution_count += 1
+        return original_m_resolved(definition)
+
+    monkeypatch.setattr(MSection, 'm_resolved', count_child_resolution)
+    children = [{}, {}, {}]
+    result = {}
+
+    with ArchiveReader({}) as reader:
+        node = GraphNode(
+            upload_id='upload',
+            entry_id='entry',
+            current_path=['children'],
+            result_root=result,
+            ref_result_root=result,
+            archive=children,
+            archive_root={'children': children},
+            definition=Parent.children,
+            visited_path=set(),
+            current_depth=0,
+            reader=reader,
+        )
+        asyncio.run(
+            reader._resolve(node, RequestConfig(directive=DirectiveType.resolved))
+        )
+
+    assert result == {'children': []}
+    assert resolution_count == 1
