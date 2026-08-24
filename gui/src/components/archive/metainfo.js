@@ -249,6 +249,13 @@ export class Metainfo {
         }
       }
     }
+    // Handle entry-backed schema `entry_id:<schema-entry-id>.<section-name>`
+    if (!pkg && this._parsedUrl.entryId) {
+      pkg = Object.values(this._packageDefs).find(
+        candidate => candidate._unique_id === `entry_id:${this._parsedUrl.entryId}`
+      )
+      splitIndex = 0
+    }
     if (!pkg) return undefined
     pathSegments = pathSegments.slice(splitIndex)
     if (!pathSegments.length) return pkg

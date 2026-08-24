@@ -152,3 +152,50 @@ def test_get_schema_rejects_mismatched_name_and_id(mongo_module):
             'tests.metainfo.test_metainfo.SectionWithBoth',
             First.m_def.definition_id,
         )
+
+
+def test_get_schema_accepts_content_addressed_bundle_copy(mongo_module):
+    """Resolve a bundled schema copy by content ID despite its new entry ID."""
+    package = Package(name='tests.bundle_schema_copy')
+    package.upload_id = 'source-upload'
+    package.entry_id = 'source-entry'
+
+    class CopiedSchema(MSection):
+        pass
+
+    package.section_definitions.append(CopiedSchema.m_def)
+    PackageDefinition.create_new(package)
+
+    definition = get_schema(
+        'entry_id:synthetic-bundle-entry.CopiedSchema',
+        CopiedSchema.m_def.definition_id,
+    )
+
+    assert definition.name == CopiedSchema.m_def.name
+    assert definition.definition_id == CopiedSchema.m_def.definition_id
+
+
+def test_mongo_schema_context_serializes_definition_reference(mongo_module):
+    """Serialize an instance whose section definition was loaded from MongoDB."""
+    package = Package(name='tests.serialized_mongo_schema')
+    package.upload_id = 'source-upload'
+    package.entry_id = 'source-entry'
+
+    class MongoSchema(MSection):
+        pass
+
+    package.section_definitions.append(MongoSchema.m_def)
+    PackageDefinition.create_new(package)
+
+    definition = get_schema(
+        f'entry_id:{package.entry_id}.{MongoSchema.m_def.name}',
+        MongoSchema.m_def.definition_id,
+    )
+    section = definition.section_cls()
+
+    serialized = section.m_to_dict(with_root_def=True, with_def_id=True)
+
+    assert serialized['m_def'].startswith(
+        '../uploads/source-upload/archive/source-entry#definitions/'
+    )
+    assert serialized['m_def_id'] == MongoSchema.m_def.definition_id

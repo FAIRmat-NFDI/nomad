@@ -38,6 +38,7 @@ class APITag(str, Enum):
     ARCHIVE = 'uploads/archive'
     ACTION = 'uploads/action'
     BUNDLE = 'uploads/bundle'
+    TRANSFER = 'uploads/transfer'
 
 
 class UploadTransferFormat(str, Enum):

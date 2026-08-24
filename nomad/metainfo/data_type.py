@@ -1166,8 +1166,12 @@ def normalize_type(value):
         type_data = value.get('type_data', '')
 
         # python primitive types
-        if type_kind in ('python', 'user', 'author'):
+        if type_kind == 'python':
             return normalize_type(type_data).normalize_flags(value)
+
+        # User and author types are references, not flag-bearing data types.
+        if type_kind in ('user', 'author'):
+            return normalize_type(type_data)
 
         # numpy primitive types
         if type_kind == 'numpy':

@@ -17,9 +17,11 @@
 #
 
 import hashlib
+import io
 import json
 import os
 from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
@@ -28,6 +30,7 @@ from packaging import version
 
 from nomad import datamodel, search, utils
 from nomad.app.v1.models import MetadataRequired
+from nomad.archive.utils import read_archive, to_json, write_archive
 from nomad.config import config
 from nomad.config.models.config import BundleExportSettings, BundleImportSettings
 from nomad.files import (
@@ -39,6 +42,7 @@ from nomad.files import (
     PublicUploadFiles,
     StagingUploadFiles,
     StandardJSONDecoder,
+    StreamedFile,
     StreamedFileSource,
     UploadFiles,
     ZipFileSource,
@@ -47,13 +51,27 @@ from nomad.files import (
     zipfile,
 )
 from nomad.files import bundle_info_filename as BUNDLE_INFO_FILENAME
-from nomad.metainfo import Package, Section
+from nomad.metainfo import Definition, Package, Quantity, Reference, Section, SubSection
+from nomad.metainfo.util import MDefNotFound
+from nomad.mongo.package import PackageDefinition
 from nomad.processing.base import ProcessStatus
 from nomad.processing.data import Entry, Upload, mongo_entry_metadata
 from nomad.schemas import get_schema
 
 
-def _get_section_defs_for_upload(upload_id: str) -> list[Section]:
+@dataclass(frozen=True)
+class _SchemaPackageExport:
+    """A schema package and its synthetic entry representation in a bundle."""
+
+    package: Package
+    package_dict: dict[str, Any]
+    raw_path: str
+    entry_id: str
+
+
+def _get_section_defs_for_upload(
+    upload_id: str, definition_id_aliases: dict[str, str] | None = None
+) -> list[Section]:
     """Get section definitions from all entries in an upload."""
     upload = Upload.get(upload_id)
     definitions_by_id: dict[str, Section] = {}
@@ -78,17 +96,33 @@ def _get_section_defs_for_upload(upload_id: str) -> list[Section]:
                 continue
 
             definition_id = section_def.get('definition_id')
-            definition = get_schema(qualified_name, definition_id)
+            try:
+                definition = get_schema(qualified_name, definition_id)
+            except MDefNotFound:
+                if qualified_name.startswith('entry_id:'):
+                    raise
+                # A built-in definition may have been indexed with an older snapshot
+                # than the currently loaded Python definition. Resolve that exact
+                # snapshot from MongoDB so the bundle remains version-independent.
+                try:
+                    definition = get_schema(None, definition_id)
+                except (MDefNotFound, HTTPException):
+                    # Old installations did not persist all built-in snapshots. In
+                    # that case, migrate the archive reference to the installed
+                    # definition so the exported bundle remains resolvable.
+                    definition = get_schema(qualified_name)
+                    if definition_id_aliases is not None and definition_id:
+                        definition_id_aliases[definition_id] = definition.definition_id
             if isinstance(definition, Section):
                 definitions_by_id.setdefault(
-                    definition_id or definition.definition_id,
+                    definition.definition_id,
                     definition,
                 )
 
     return list(definitions_by_id.values())
 
 
-def _get_package_for_section(definition: Section) -> Package | None:
+def _get_package_for_section(definition: Definition) -> Package | None:
     """Get schema package for a section definition."""
     parent = definition.m_parent
     while parent is not None and not isinstance(parent, Package):
@@ -96,17 +130,49 @@ def _get_package_for_section(definition: Section) -> Package | None:
     return parent if isinstance(parent, Package) else None
 
 
-def _get_schema_packages_for_upload(upload_id: str) -> list[Package]:
-    """Collect schema packages referenced by entries in an upload."""
+def _get_package_dependencies(package: Package) -> set[Package]:
+    """Collect packages referenced by definitions in a schema package."""
+    dependencies: set[Package] = set()
+
+    def add_definition(definition: Definition) -> None:
+        if dependency := _get_package_for_section(definition):
+            if dependency is not package:
+                dependencies.add(dependency)
+
+    for content in package.m_all_contents():
+        if isinstance(content, SubSection):
+            add_definition(content.sub_section.m_resolved())
+        elif isinstance(content, Quantity) and isinstance(content.type, Reference):
+            add_definition(content.type.target_section_def.m_resolved())
+        elif isinstance(content, Section):
+            for base_section in content.base_sections:
+                add_definition(base_section)
+        if isinstance(content, Definition):
+            for category in content.categories:
+                add_definition(category)
+
+    return dependencies
+
+
+def _get_schema_packages_for_upload(
+    upload_id: str, definition_id_aliases: dict[str, str] | None = None
+) -> list[Package]:
+    """Collect schema packages and their transitive dependencies for an upload."""
     packages_by_key: dict[tuple[str | None, str | None, str | None], Package] = {}
+    packages_to_visit: list[Package] = []
 
-    for definition in _get_section_defs_for_upload(upload_id):
+    for definition in _get_section_defs_for_upload(upload_id, definition_id_aliases):
         package = _get_package_for_section(definition)
-        if package is None:
-            continue
+        if package is not None:
+            packages_to_visit.append(package)
 
+    while packages_to_visit:
+        package = packages_to_visit.pop()
         key = (package.upload_id, package.entry_id, package.name)
-        packages_by_key.setdefault(key, package)
+        if key in packages_by_key:
+            continue
+        packages_by_key[key] = package
+        packages_to_visit.extend(_get_package_dependencies(package))
 
     return [
         packages_by_key[key]
@@ -158,6 +224,9 @@ class BundleExporter:
         self.zipped = zipped
         self.overwrite = overwrite
         self.export_settings = export_settings
+        self._schema_packages: list[Package] | None = None
+        self._schema_exports: list[_SchemaPackageExport] | None = None
+        self._definition_id_aliases: dict[str, str] = {}
 
     @classmethod
     def check_export_settings(cls, export_settings: BundleExportSettings) -> None:
@@ -213,20 +282,227 @@ class BundleExporter:
             json_to_streamed_file(bundle_info, BUNDLE_INFO_FILENAME)
         )
 
-        # 2. Synthetic schema archive files in raw/
-        if self.export_settings.include_schemas:
-            for package in _get_schema_packages_for_upload(self.upload.upload_id):
-                package_dict = package.m_to_dict(with_out_meta=True)
-                # Use `sort_keys` to ensure stable hashes (from key orders)
-                package_json = json.dumps(package_dict, sort_keys=True).encode()
-                package_hash = hashlib.md5(package_json).hexdigest()[:8]
-                file_path = f'raw/schema_package_{package_hash}.archive.json'
-                yield StreamedFileSource(
-                    json_to_streamed_file({'definitions': package_dict}, file_path)
-                )
+        schema_exports = self._get_schema_exports()
 
-        # 3. Files from the upload dir
-        yield from self.upload.upload_files.files_to_bundle(self.export_settings)
+        # 2. Synthetic schema archive files and their processed archive entries.
+        for schema_export in schema_exports:
+            yield StreamedFileSource(
+                json_to_streamed_file(
+                    {'definitions': schema_export.package_dict}, schema_export.raw_path
+                )
+            )
+            yield StreamedFileSource(self._schema_archive_streamed_file(schema_export))
+
+        # 3. Files from the upload dir. Rewriting happens only in the bundle stream.
+        definition_references = self._schema_definition_references(schema_exports)
+        for file_source in self.upload.upload_files.files_to_bundle(
+            self.export_settings
+        ):
+            if definition_references:
+                yield from self._rewritten_archive_file_sources(
+                    file_source, definition_references
+                )
+            else:
+                yield file_source
+
+    def _get_schema_exports(self) -> list[_SchemaPackageExport]:
+        """Build synthetic entries for packages without an entry in this upload."""
+        if self._schema_exports is not None:
+            return self._schema_exports
+
+        self._schema_exports = []
+        if not self.export_settings.include_schemas:
+            return self._schema_exports
+
+        existing_entry_ids = {
+            entry.entry_id for entry in self.upload.successful_entries
+        }
+        for package in self._get_schema_packages():
+            if (
+                package.m_is_custom_package
+                and package.upload_id == self.upload.upload_id
+                and package.entry_id in existing_entry_ids
+            ):
+                continue
+
+            package_dict = package.m_to_dict(
+                with_out_meta=True,
+                with_def_id=True,
+                stable_references=True,
+            )
+            # Use `sort_keys` to ensure stable hashes from dictionary key order.
+            package_json = json.dumps(package_dict, sort_keys=True).encode()
+            package_hash = hashlib.md5(package_json).hexdigest()[:8]
+            raw_path = f'raw/schema_package_{package_hash}.archive.json'
+            self._schema_exports.append(
+                _SchemaPackageExport(
+                    package=package,
+                    package_dict=package_dict,
+                    raw_path=raw_path,
+                    entry_id=utils.generate_entry_id(
+                        self.upload.upload_id, raw_path.removeprefix('raw/')
+                    ),
+                )
+            )
+
+        return self._schema_exports
+
+    def _get_schema_packages(self) -> list[Package]:
+        """Return and cache all schema packages needed by this bundle."""
+        if self._schema_packages is None:
+            self._schema_packages = _get_schema_packages_for_upload(
+                self.upload.upload_id, self._definition_id_aliases
+            )
+        return self._schema_packages
+
+    def _schema_definition_references(
+        self, schema_exports: Iterable[_SchemaPackageExport]
+    ) -> dict[str, tuple[str, str]]:
+        """Map section IDs to existing or synthetic bundle schema entries."""
+        package_entry_ids = self._schema_package_entry_ids(schema_exports)
+
+        references: dict[str, tuple[str, str]] = {}
+        for package in self._get_schema_packages():
+            if not (entry_id := package_entry_ids.get(id(package))):
+                continue
+            package_name = package.qualified_name()
+            for definition in package.m_all_contents(include_self=False):
+                if isinstance(definition, Section):
+                    definition_name = definition.qualified_name().removeprefix(
+                        f'{package_name}.'
+                    )
+                    references[definition.definition_id] = (
+                        f'entry_id:{entry_id}.{definition_name}',
+                        definition.definition_id,
+                    )
+        for (
+            old_definition_id,
+            current_definition_id,
+        ) in self._definition_id_aliases.items():
+            if reference := references.get(current_definition_id):
+                references[old_definition_id] = reference
+        return references
+
+    def _schema_package_entry_ids(
+        self, schema_exports: Iterable[_SchemaPackageExport]
+    ) -> dict[int, str]:
+        """Map schema packages to their existing or synthetic bundle entries."""
+        if not self.export_settings.include_schemas:
+            return {}
+
+        package_entry_ids = {
+            id(schema_export.package): schema_export.entry_id
+            for schema_export in schema_exports
+        }
+        existing_entry_ids = {
+            entry.entry_id for entry in self.upload.successful_entries
+        }
+        for package in self._get_schema_packages():
+            if (
+                package.m_is_custom_package
+                and package.upload_id == self.upload.upload_id
+                and package.entry_id in existing_entry_ids
+            ):
+                package_entry_ids[id(package)] = cast(str, package.entry_id)
+        return package_entry_ids
+
+    def _schema_archive_streamed_file(
+        self, schema_export: _SchemaPackageExport
+    ) -> StreamedFile:
+        """Create the processed archive file for one synthetic schema entry."""
+        metadata = datamodel.EntryMetadata(
+            upload_id=self.upload.upload_id,
+            entry_id=schema_export.entry_id,
+            mainfile=schema_export.raw_path.removeprefix('raw/'),
+            parser_name='parsers/archive',
+            processed=True,
+            entry_name=schema_export.package.name,
+            entry_type='Schema',
+        )
+        return self._archive_streamed_file(
+            f'archive/{schema_export.entry_id}-{self._archive_version_suffix()}.msg',
+            {
+                schema_export.entry_id: {
+                    'metadata': metadata.m_to_dict(with_def_id=True),
+                    'definitions': schema_export.package_dict,
+                }
+            },
+        )
+
+    def _rewritten_archive_file_sources(
+        self,
+        file_source: FileSource,
+        definition_references: dict[str, tuple[str, str]],
+    ) -> Iterable[FileSource]:
+        """Yield upload files while replacing schema references in archive messages."""
+        for streamed_file in file_source.to_streamed_files():
+            is_archive_file = streamed_file.path.startswith(
+                ('archive/', 'archive-')
+            ) and streamed_file.path.endswith('.msg')
+            if not is_archive_file:
+                yield StreamedFileSource(streamed_file)
+                continue
+
+            with (
+                streamed_file.src as archive_file,
+                read_archive(archive_file) as archive,
+            ):
+                archive_data = {
+                    entry_id: self._replace_definition_references(
+                        to_json(archive[entry_id]), definition_references
+                    )
+                    for entry_id in archive.keys()
+                }
+            yield StreamedFileSource(
+                self._archive_streamed_file(streamed_file.path, archive_data)
+            )
+
+    @staticmethod
+    def _replace_definition_references(
+        value: Any, definition_references: dict[str, tuple[str, str]]
+    ) -> Any:
+        """Replace serialized ``m_def`` values using their stable definition IDs."""
+        if isinstance(value, list):
+            return [
+                BundleExporter._replace_definition_references(
+                    item, definition_references
+                )
+                for item in value
+            ]
+        if not isinstance(value, dict):
+            return value
+
+        replaced = {
+            key: BundleExporter._replace_definition_references(
+                item, definition_references
+            )
+            for key, item in value.items()
+        }
+        if definition_id := replaced.get('m_def_id'):
+            if replacement := definition_references.get(definition_id):
+                replaced['m_def'], replaced['m_def_id'] = replacement
+        if (
+            'definition_qualified_name' in replaced
+            and (definition_id := replaced.get('definition_id'))
+            and (replacement := definition_references.get(definition_id))
+        ):
+            replaced['definition_id'] = replacement[1]
+        return replaced
+
+    @staticmethod
+    def _archive_streamed_file(path: str, data: dict[str, Any]) -> StreamedFile:
+        """Serialize archive data into a streamed NOMAD archive file."""
+        archive_file = io.BytesIO()
+        write_archive(archive_file, data)
+        size = archive_file.tell()
+        archive_file.seek(0)
+        return StreamedFile(path=path, src=archive_file, size=size)
+
+    @staticmethod
+    def _archive_version_suffix() -> str:
+        """Return the configured suffix used for newly written archive files."""
+        suffix = config.fs.archive_version_suffix
+        return suffix[0] if isinstance(suffix, list) else suffix
 
     def _create_bundle_info(self) -> dict[str, Any]:
         """Create the bundle_info.json manifest used to recreate the upload.
@@ -243,6 +519,19 @@ class BundleExporter:
                 entry.to_mongo().to_dict() for entry in self.upload.successful_entries
             ],
         )
+        for schema_export in self._get_schema_exports():
+            schema_entry = Entry(
+                upload_id=self.upload.upload_id,
+                entry_id=schema_export.entry_id,
+                mainfile=schema_export.raw_path.removeprefix('raw/'),
+                parser_name='parsers/archive',
+                process_status=ProcessStatus.SUCCESS,
+            )
+            bundle_info['entries'].append(schema_entry.to_mongo().to_dict())
+        if self.export_settings.include_schemas:
+            bundle_info['schema_entries'] = sorted(
+                set(self._schema_package_entry_ids(self._get_schema_exports()).values())
+            )
         # Handle datasets
         dataset_ids: set[str] = set()
         for entry_dict in bundle_info['entries']:
@@ -396,6 +685,7 @@ class BundleImporter:
                 new_datasets, dataset_id_mapping = self._import_datasets()
             entries = self._import_entries_mongo_data(current_time, dataset_id_mapping)
             self._import_files()
+            self._import_schema_packages(entries)
             self.bundle.close()
             entry_data_to_index = self._get_entry_data_to_index(entries)
             # Everything looks good - save to mongo.
@@ -756,6 +1046,55 @@ class BundleImporter:
                     assert False, 'Invalid metadata in archive entry: ' + str(e)
             self.upload_files.close()  # Because full_entry_metadata reads the archive files.
         return entry_data_to_index
+
+    def _import_schema_packages(self, entries: list[Entry]) -> None:
+        """Register schema snapshots contained in imported archive entries."""
+        if not self.import_settings.include_archive_files:
+            return
+        assert self.upload_files is not None
+
+        entries_by_id = {entry.entry_id: entry for entry in entries}
+        schema_entry_ids = self.bundle_info.get('schema_entries', [])
+        assert all(entry_id in entries_by_id for entry_id in schema_entry_ids), (
+            'Invalid schema entry in bundle_info.json'
+        )
+
+        for entry_id in schema_entry_ids:
+            entry = entries_by_id[entry_id]
+            try:
+                with self.upload_files.read_archive(entry.entry_id) as archive:
+                    entry_archive = archive[entry.entry_id]
+                    if 'definitions' not in entry_archive:
+                        continue
+                    package_dict = to_json(entry_archive['definitions'])
+            except KeyError:
+                continue
+
+            package_id = package_dict.get('definition_id')
+            section_ids = [
+                section.get('definition_id')
+                for section in package_dict.get('section_definitions', [])
+            ]
+            if (
+                not package_id
+                or not section_ids
+                or any(section_id is None for section_id in section_ids)
+            ):
+                # Older bundles do not carry snapshot IDs in serialized schema
+                # packages and retain their previous import behaviour.
+                continue
+
+            if PackageDefinition.has_package(package_id):
+                continue
+
+            PackageDefinition(
+                snapshot_package_id=package_id,
+                upload_id=self.upload.upload_id,
+                entry_id=entry.entry_id,
+                qualified_name=f'entry_id:{entry.entry_id}',
+                package_definition=package_dict,
+                snapshot_section_ids=section_ids,
+            ).save()
 
     def _index_search(self, entry_data_to_index: list[datamodel.EntryArchive]) -> None:
         """Index imported archive data in Elasticsearch."""
