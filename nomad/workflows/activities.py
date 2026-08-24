@@ -22,13 +22,13 @@ import random
 import shutil
 import time
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from nomad.actions.heartbeat import activity_heartbeat
+from nomad.common import now
 from nomad.config import config
 from nomad.files import PublicUploadFiles, StagingUploadFiles
 from nomad.parsing.parsers import parsers
@@ -101,7 +101,7 @@ def _process_single_entry(input: ProcessEntryActivityInput):
         entry._process_entry_local()
         entry.on_success()
         entry.process_status = ProcessStatus.SUCCESS
-        entry.complete_time = datetime.now(timezone.utc)
+        entry.complete_time = now()
         entry.save()
     except Exception as e:
         entry.fail(*[e])
@@ -414,6 +414,8 @@ def finalize_upload_processing_activity(input: FinalizeUploadProcessingInput):
         upload.process_status = (
             ProcessStatus.SUCCESS if input.trigger_processing else ProcessStatus.READY
         )
+        if input.trigger_processing:
+            upload.complete_time = now()
         upload.set_last_status_message('Process completed successfully')
     else:
         upload.last_status_message = (
