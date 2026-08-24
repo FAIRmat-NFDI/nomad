@@ -68,4 +68,30 @@ test('metainfo initializes correctly', async () => {
   expect(defsByName.TestSection[0]._properties.baseSectionQuantity.name).toBe('baseSectionQuantity')
 })
 
+test('entry schema resolves a section without the package name', async () => {
+  const metainfo = await createMetainfo(
+    {
+      definitions: {
+        m_def: 'entry_id:builtin-package.Package',
+        name: 'TestPackage',
+        section_definitions: [{
+          m_def: 'entry_id:builtin-package.Section',
+          name: 'TestSection',
+          quantities: [{
+            m_def: 'entry_id:builtin-package.Quantity',
+            name: 'value',
+            type: {type_kind: 'python', type_data: 'str'}
+          }]
+        }]
+      }
+    },
+    undefined,
+    'http://localhost/api/uploads/upload/archive/schema-entry#/definitions'
+  )
+
+  const section = metainfo.getDefByQualifiedName('TestSection')
+  expect(section?.name).toBe('TestSection')
+  expect(section?._properties.value.name).toBe('value')
+})
+
 // TODO: more tests. How to test resolving?

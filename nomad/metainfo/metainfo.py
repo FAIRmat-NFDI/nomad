@@ -449,11 +449,12 @@ class QuantityType(Datatype):
             return value.serialize_self()
         elif isinstance(value, Reference):
             # When requesting stable references, use this simplified serialization
-            if type(value) in {
+            stable_references = kwargs.get('stable_references', False)
+            if stable_references and type(value) in {
                 Reference,
                 QuantityReference,
                 MSectionReference,
-            } and kwargs.get('stable_references', False):
+            }:
                 target = value.target_section_def
                 type_data = f'{target.qualified_name()}@{target.definition_id}'
                 return {
@@ -465,6 +466,14 @@ class QuantityType(Datatype):
             else:
                 transform = kwargs.get('transform')
                 serialized = value.serialize_self(kwargs.get('section'))
+                if stable_references and serialized.get('type_kind') in {
+                    'reference',
+                    'quantity_reference',
+                }:
+                    target = value.target_section_def
+                    serialized['type_data'] = (
+                        f'{target.qualified_name()}@{target.definition_id}'
+                    )
                 return transform(serialized) if transform is not None else serialized
 
         raise MetainfoError(f'Type {value} is not a valid quantity type.')

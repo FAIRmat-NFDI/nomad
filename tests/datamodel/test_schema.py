@@ -20,9 +20,9 @@ import os.path
 
 import pytest
 
-from nomad.datamodel.context import ServerContext
+from nomad.datamodel.context import Context, ServerContext
 from nomad.datamodel.data import AuthorReference, Query, UserReference
-from nomad.datamodel.datamodel import EntryArchive, EntryMetadata
+from nomad.datamodel.datamodel import EntryArchive, EntryMetadata, m_package
 from nomad.datamodel.metainfo.annotations import valid_eln_components, valid_eln_types
 from nomad.metainfo import MetainfoError
 from nomad.metainfo.data_type import Datatype
@@ -154,6 +154,13 @@ def test_user_author_yaml_deserialization():
     """
         )
     )
+    des_m_package = des_m_package.m_from_dict(
+        des_m_package.m_to_dict(
+            with_out_meta=True,
+            with_def_id=True,
+            stable_references=True,
+        )
+    )
     des_sample = des_m_package['section_definitions'][0]
     des_my_user = des_sample.quantities[0]
     des_my_author = des_sample.quantities[1]
@@ -162,6 +169,21 @@ def test_user_author_yaml_deserialization():
     assert des_my_author.name == 'my_author'
     assert isinstance(des_my_user.type, UserReference)
     assert isinstance(des_my_author.type, AuthorReference)
+
+
+def test_builtin_schema_serialization_roundtrip():
+    """A synthetic built-in schema archive can be parsed and validated."""
+    package_dict = m_package.m_to_dict(
+        with_out_meta=True,
+        with_def_id=True,
+        stable_references=True,
+    )
+
+    archive = EntryArchive(m_context=Context())
+    archive.m_update_from_dict({'definitions': package_dict})
+
+    errors, _ = archive.m_all_validate()
+    assert not errors
 
 
 def test_query_yaml_deserialization():

@@ -76,7 +76,7 @@ _upload_bundle_response = (
 
 @router.get(
     '/{upload_id}/export',
-    tags=[APITag.BUNDLE],
+    tags=[APITag.TRANSFER],
     summary='Exports the specified upload.',
     response_class=StreamingResponse,
     responses=create_responses(
@@ -193,7 +193,7 @@ def get_upload_bundle(
 
 @router.post(
     '/import',
-    tags=[APITag.BUNDLE],
+    tags=[APITag.TRANSFER],
     summary='Imports an upload to this NOMAD deployment.',
     response_model=UploadProcDataResponse,
     responses=create_responses(_not_authorized, _bad_request),

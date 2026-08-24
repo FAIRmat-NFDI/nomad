@@ -132,14 +132,34 @@ def _find_definition(package: Package, qualified_name: str) -> Definition:
 
 def _load_mongo_package(mongo_package: MongoPackage) -> Package:
     """Deserialize a MongoDB package and add all of its definitions to the cache."""
+    from nomad.datamodel.context import Context
+
     snapshot_package_id = mongo_package['snapshot_package_id']
     if package := _mongo_package_cache.get(snapshot_package_id):
         return package
 
-    package = cast(Package, Package.m_from_dict(mongo_package['package_definition']))
+    class MongoSchemaContext(Context):
+        """Resolve stable references while a MongoDB package is initialized."""
+
+        @staticmethod
+        def normalize_reference(_source, url: str) -> str:
+            return url
+
+        @staticmethod
+        def fetch_section(_definition_ref: str | None, definition_id: str):
+            try:
+                return _get_mongo_schema(None, definition_id)
+            except Exception:  # noqa
+                return None
+
+    package = cast(
+        Package,
+        Package.m_from_dict(
+            mongo_package['package_definition'], m_context=MongoSchemaContext()
+        ),
+    )
     package.upload_id = mongo_package.get('upload_id')
     package.entry_id = mongo_package.get('entry_id')
-    package.init_metainfo()
     package.snapshot_id = snapshot_package_id
     package.loaded_from_mongodb = True
     for snapshot, section in zip(
@@ -147,9 +167,24 @@ def _load_mongo_package(mongo_package: MongoPackage) -> Package:
     ):
         section.snapshot_id = snapshot
 
+    # Cache IDs before initialization so references within the same package can
+    # resolve without recursively loading the package again.
     _cache_package_definitions(
         package, snapshot_package_id, mongo_package['snapshot_section_ids']
     )
+    try:
+        package.init_metainfo()
+    except Exception:
+        _mongo_package_cache.pop(snapshot_package_id, None)
+        for definition_id in (
+            snapshot_package_id,
+            *mongo_package['snapshot_section_ids'],
+        ):
+            if _mongo_definition_cache.get(definition_id, (None, None))[0] == (
+                snapshot_package_id
+            ):
+                _mongo_definition_cache.pop(definition_id, None)
+        raise
     return package
 
 
@@ -212,11 +247,16 @@ def get_schema(
         raise MDefNotFound(
             f'Definition ID {definition_id} does not match {qualified_name}.',
         )
+    # A content-addressed definition can be copied into a synthetic bundle entry.
+    # In that case its entry ID changes, but its definition ID and name do not.
+    # The definition_id match already establishes identity; the trailing name
+    # check is a last resort for bundled schema copies whose package path differs.
     if (
         definition_id is not None
         and qualified_name is not None
         and qualified_name.startswith('entry_id:')
         and definition.qualified_name() != qualified_name
+        and definition.name != qualified_name.rsplit('.', 1)[-1]
     ):
         raise MDefNotFound(
             f'Definition ID {definition_id} does not match {qualified_name}.',

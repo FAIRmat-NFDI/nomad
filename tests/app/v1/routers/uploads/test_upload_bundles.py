@@ -151,7 +151,7 @@ async def test_get_upload_bundle_includes_schema_raw_file(
 
     monkeypatch.setattr(
         'nomad.bundles._get_schema_packages_for_upload',
-        lambda upload_id: [package],
+        lambda upload_id, definition_id_aliases=None: [package],
     )
 
     upload_id = example_data_writeable['id_published_w']
@@ -167,7 +167,11 @@ async def test_get_upload_bundle_includes_schema_raw_file(
         ]
         assert len(schema_files) == 1
         assert json.loads(zip_file.read(schema_files[0])) == {
-            'definitions': package.m_to_dict(with_out_meta=True)
+            'definitions': package.m_to_dict(
+                with_out_meta=True,
+                with_def_id=True,
+                stable_references=True,
+            )
         }
 
 
