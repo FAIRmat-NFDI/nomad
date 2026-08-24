@@ -672,6 +672,9 @@ class TestPublicUploadFiles(UploadFilesContract):
         self, monkeypatch, test_upload_id
     ):
         """A migration fallback selects local once, rather than mixing artifacts."""
+        # The fallback scenario requires an existing local copy. Make its setup
+        # independent of whether the test suite itself uses S3 storage.
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', None)
         _, entries, local_upload_files = create_public_upload(
             test_upload_id, entry_specs='p', with_upload=False
         )
