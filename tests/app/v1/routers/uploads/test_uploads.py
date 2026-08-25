@@ -2049,6 +2049,24 @@ async def _perform_create_new_folder(
             True,
             id='renaming-a-non-existing-file',
         ),
+        pytest.param(
+            'examples_template/0.aux',
+            'random[1].aux',
+            400,
+            'wildcard characters',
+            True,
+            True,
+            id='wildcard-in-new-file-name-is-rejected',
+        ),
+        pytest.param(
+            'examples_template/0[a].aux',
+            'random-name.aux',
+            400,
+            'wildcard characters',
+            False,
+            True,
+            id='wildcard-in-source-path-is-rejected',
+        ),
     ],
 )
 @pytest.mark.asyncio

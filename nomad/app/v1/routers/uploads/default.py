@@ -40,7 +40,12 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from nomad import files, utils
 from nomad.auth.scopes import Scope
 from nomad.auth.tokens import generate_upload_token
-from nomad.common import get_compression_format, is_safe_basename, is_safe_relative_path
+from nomad.common import (
+    get_compression_format,
+    has_glob_wildcards,
+    is_safe_basename,
+    is_safe_relative_path,
+)
 from nomad.config import config
 from nomad.config.models.config import Reprocess
 from nomad.config.models.plugins import ExampleUploadEntryPoint
@@ -1483,6 +1488,19 @@ async def put_upload_raw_path(
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
                 detail='Bad source path provided.',
+            )
+
+        if (
+            has_glob_wildcards(path)
+            or has_glob_wildcards(file_name)
+            or has_glob_wildcards(copy_or_move_source_path)
+        ):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    'File and folder names must not contain the wildcard characters '
+                    "'*', '?', '[' or ']'."
+                ),
             )
 
     upload_paths, _, method = await _get_files_if_provided(
