@@ -358,6 +358,28 @@ def test_fast_request_config_copy_matches_validated_copy_and_resets_hash():
     assert child.hash != parent_hash
 
 
+def test_fast_request_config_copy_uses_supported_path_for_subclasses():
+    from pydantic import ConfigDict, PrivateAttr
+
+    from nomad.graph.graph_reader import _copy_request_config
+    from nomad.graph.model import RequestConfig
+
+    class ExtendedRequestConfig(RequestConfig):
+        model_config = ConfigDict(extra='allow')
+        extra_field: str = 'default'
+        _private_state: list[str] = PrivateAttr(default_factory=list)
+
+    parent = ExtendedRequestConfig(extra_field='custom', extension='preserved')
+    parent._private_state.append('preserved')
+    child = _copy_request_config(parent, property_name='child')
+
+    assert type(child) is ExtendedRequestConfig
+    assert child.extra_field == 'custom'
+    assert child.extension == 'preserved'
+    assert child._private_state == ['preserved']
+    assert child.property_name == 'child'
+
+
 counter = increment()
 
 
