@@ -1051,3 +1051,104 @@ def test_test_upload_files(raw_files_infra):
     finally:
         if upload_files.exists():
             upload_files.delete()
+
+
+def _create_raw_folder_with_file(
+    upload_files: StagingUploadFiles, folder_name: str, file_name: str, content: str
+) -> None:
+    folder_path = os.path.join(upload_files._raw_dir.os_path, folder_name)
+    os.makedirs(folder_path)
+    with open(os.path.join(folder_path, file_name), 'w') as f:
+        f.write(content)
+
+
+@pytest.mark.parametrize(
+    'folder_name',
+    [
+        pytest.param('my[abc]folder', id='square-brackets'),
+        pytest.param('my*folder', id='asterisk'),
+        pytest.param('my?folder', id='question-mark'),
+    ],
+)
+@pytest.mark.parametrize('copy_or_move', ['copy', 'move'])
+def test_copy_or_move_folder_with_glob_wildcard_in_name_is_rejected(
+    raw_files_infra, folder_name, copy_or_move
+):
+    """
+    ``copy_or_move`` copies/moves folders via ``self._fs.cp``/``self._fs.mv``,
+    i.e. fsspec's ``AbstractFileSystem.copy``/``mv``. Unlike a literal path
+    operation, these interpret '*', '?' and '[...]' in the source path as glob
+    patterns (``glob.has_magic`` / ``expand_path``) rather than literal
+    characters, which can silently operate on the wrong files or raise a
+    RecursionError. Such names must be rejected outright with a clear error,
+    and the source/destination must be left untouched.
+    """
+    upload_id = utils.create_uuid()
+    upload_files = StagingUploadFiles(upload_id, create=True)
+    _create_raw_folder_with_file(upload_files, folder_name, 'data.txt', 'real content')
+
+    with pytest.raises(ValueError):
+        upload_files.copy_or_move(folder_name, 'copied_folder', copy_or_move)
+
+    assert not upload_files.raw_exists('copied_folder')
+    assert upload_files.raw_exists(f'{folder_name}/data.txt')
+
+
+def test_copy_folder_with_square_brackets_does_not_touch_unrelated_sibling(
+    raw_files_infra,
+):
+    """
+    Before being rejected outright, a folder name containing '[...]' could
+    cause ``copy_or_move`` to silently copy an unrelated sibling folder's
+    content instead of the requested folder's content, if the sibling's name
+    happened to match the glob pattern derived from the '[...]' name. Ensure
+    the operation is rejected before it can touch anything.
+    """
+    upload_id = utils.create_uuid()
+    upload_files = StagingUploadFiles(upload_id, create=True)
+    folder_name = 'my[a]folder'
+    _create_raw_folder_with_file(
+        upload_files, folder_name, 'real_data.txt', 'real content'
+    )
+    # Unrelated sibling folder that happens to match the glob pattern that
+    # 'my[a]folder' expands to (i.e. 'myafolder').
+    _create_raw_folder_with_file(
+        upload_files, 'myafolder', 'unrelated_secret.txt', 'unrelated content'
+    )
+
+    with pytest.raises(ValueError):
+        upload_files.copy_or_move(folder_name, 'copied_folder', 'copy')
+
+    assert not upload_files.raw_exists('copied_folder')
+    assert upload_files.raw_exists(f'{folder_name}/real_data.txt')
+    assert upload_files.raw_exists('myafolder/unrelated_secret.txt')
+
+
+@pytest.mark.parametrize('copy_or_move', ['copy', 'move'])
+def test_copy_or_move_folder_into_own_subtree_is_rejected(
+    raw_files_infra, copy_or_move
+):
+    """
+    ``copy_or_move`` must reject an operation whose destination lies inside
+    the source folder itself (e.g. copying/moving 'folder' to
+    'folder/subfolder'). Copying into the own subtree would recurse forever /
+    silently create nested duplicates, and moving into the own subtree fails
+    deep inside ``shutil.move`` with an unhandled ``shutil.Error``
+    ("Cannot move a directory into itself"), crashing the processing worker
+    instead of being reported as a normal validation error. Both cases must
+    instead be rejected with a ``ValueError`` and leave the source untouched.
+    """
+    upload_id = utils.create_uuid()
+    upload_files = StagingUploadFiles(upload_id, create=True)
+    _create_raw_folder_with_file(upload_files, 'folder', 'a.txt', 'hello')
+
+    dest = 'folder/subfolder'
+    with pytest.raises(
+        ValueError,
+        match=r"Cannot (copy|move) 'folder' into itself or one of its own subfolders",
+    ):
+        upload_files.copy_or_move('folder', dest, copy_or_move)
+
+    assert not upload_files.raw_exists(dest)
+    assert upload_files.raw_exists('folder/a.txt')
+    assert {x.path for x in upload_files.raw_listdir('folder')} == {'folder/a.txt'}

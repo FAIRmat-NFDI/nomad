@@ -2796,7 +2796,7 @@ class Upload(Proc):
                 elif op == 'COPY' or op == 'MOVE':
                     self.set_last_status_message(f'{op} the file')
                     with utils.timer(logger, f'{op} the file within the upload'):
-                        staging_upload_files.copy_or_move_rawfile(
+                        staging_upload_files.copy_or_move(
                             file_operation['path_to_existing_file'],
                             file_operation['path_to_target_file'],
                             op,
