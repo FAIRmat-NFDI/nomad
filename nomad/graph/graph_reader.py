@@ -70,6 +70,7 @@ from nomad.graph.lazy_wrapper import (
     LazyUserWrapper,
 )
 from nomad.graph.model import (
+    _WILDCARD_FROZENSET,
     DatasetQuery,
     DefinitionType,
     DirectiveType,
@@ -126,14 +127,45 @@ class _EntryLayoutReadPlan:
     archive_request: _LayoutArchiveRequest | None = None
 
 
+_OBJECT_SETATTR = object.__setattr__
+
+
 def _copy_request_config(config: RequestConfig, **updates: Any) -> RequestConfig:
     """Copy an already validated config."""
 
-    copied = config.model_copy(update=updates)
+    # The internal shortcut is deliberately limited to the exact model whose
+    # invariants are known here. Subclasses may add fields, private attributes,
+    # or a different extra policy and must use Pydantic's supported copy path.
+    if (
+        type(config) is not RequestConfig
+        or not updates.keys() <= RequestConfig.model_fields.keys()
+    ):
+        copied = config.model_copy(update=updates)
+        copied.__dict__.pop('hash', None)
+        return copied
 
-    # Pydantic copies cached-property values from ``__dict__``. Keeping the
-    # parent's hash would make distinct child requests collide in graph caches.
-    copied.__dict__.pop('hash', None)
+    copied = object.__new__(type(config))
+    d = config.__dict__.copy()
+    d.update(updates)
+    d.pop('hash', None)
+    _OBJECT_SETATTR(copied, '__dict__', d)
+    _OBJECT_SETATTR(
+        copied,
+        '__pydantic_fields_set__',
+        config.__pydantic_fields_set__ | updates.keys(),
+    )
+    _OBJECT_SETATTR(
+        copied,
+        '__pydantic_extra__',
+        None if config.__pydantic_extra__ is None else config.__pydantic_extra__.copy(),
+    )
+    _OBJECT_SETATTR(
+        copied,
+        '__pydantic_private__',
+        None
+        if config.__pydantic_private__ is None
+        else config.__pydantic_private__.copy(),
+    )
     return copied
 
 
@@ -960,6 +992,9 @@ class GeneralReader:
     __UPLOAD_ID__: set = {'upload_id'}
     # controls the names of fields that are treated as dataset id
     __DATASET_ID__: set = {'datasets'}
+    __ALL_ID_FIELDS__: frozenset[str] = frozenset(
+        __USER_ID__ | __ENTRY_ID__ | __UPLOAD_ID__ | __DATASET_ID__
+    )
     __CACHE__: str = '__CACHE__'
 
     def __init__(
@@ -1365,7 +1400,9 @@ class GeneralReader:
         await _populate_result(node.result_root, node.current_path, [])
         # The update is internal and already typed, so full Pydantic
         # re-validation for every list is unnecessary.
-        new_config = _copy_request_config(config, index=None)
+        new_config = (
+            config if config.index is None else _copy_request_config(config, index=None)
+        )
         for i in _normalise_index(config.index, len(node.archive)):
             await self._resolve(
                 node.replace(
@@ -3344,13 +3381,30 @@ class ArchiveReader(ArchiveLikeReader):
                     )
                     continue
 
-                child_config = _copy_request_config(
-                    config,
-                    property_name=key,
-                    include=frozenset({'*'}),
-                    exclude=None,
-                    index=None,
-                )
+                if (
+                    (
+                        config.include is _WILDCARD_FROZENSET
+                        or config.include == _WILDCARD_FROZENSET
+                    )
+                    and config.exclude is None
+                    and config.index is None
+                    and (
+                        config.property_name == key
+                        or (
+                            config.property_name not in GeneralReader.__ALL_ID_FIELDS__
+                            and key not in GeneralReader.__ALL_ID_FIELDS__
+                        )
+                    )
+                ):
+                    child_config = config
+                else:
+                    child_config = _copy_request_config(
+                        config,
+                        property_name=key,
+                        include=_WILDCARD_FROZENSET,
+                        exclude=None,
+                        index=None,
+                    )
 
                 if child_config.is_plain():
                     await _populate_result(
