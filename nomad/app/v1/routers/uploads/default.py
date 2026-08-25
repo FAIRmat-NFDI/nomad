@@ -1548,6 +1548,16 @@ async def put_upload_raw_path(
                         status.HTTP_409_CONFLICT,
                         detail=f'No file or folder with that source path: {copy_or_move_source_path}',
                     )
+                if path_to_target_file == copy_or_move_source_path or (
+                    path_to_target_file.startswith(f'{copy_or_move_source_path}/')
+                ):
+                    raise HTTPException(
+                        status.HTTP_409_CONFLICT,
+                        detail=(
+                            f"Cannot {copy_or_move} '{copy_or_move_source_path}' into "
+                            f"itself or one of its own subfolders ('{path_to_target_file}')."
+                        ),
+                    )
                 file_operations = [
                     dict(
                         op=copy_or_move.upper(),

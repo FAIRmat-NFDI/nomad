@@ -1995,6 +1995,21 @@ async def _perform_move_or_copy(
     )
 
 
+async def _perform_create_new_folder(
+    client: TestClient,
+    user,
+    upload_id: str,
+    new_folder_path: str,
+):
+    url = f'uploads/{upload_id}/raw-create-dir/{requests.utils.quote(new_folder_path)}'
+    return await asyncio.to_thread(
+        lambda: client.post(
+            url,
+            headers=user,
+        )
+    )
+
+
 @pytest.mark.parametrize(
     'source_path, new_file_name, expected_status_code, expected_error_message, orignal_file_should_exist, trigger_processing',
     [
@@ -2034,11 +2049,10 @@ async def _perform_move_or_copy(
             True,
             id='renaming-a-non-existing-file',
         ),
-        # TODO: Add folder rename tests when folder rename is supported
     ],
 )
 @pytest.mark.asyncio
-async def test_rename_file_or_folder(
+async def test_rename_file(
     temporal_worker,
     non_empty_processed_with_temporal: processing.Upload,
     client: TestClient,
@@ -2089,6 +2103,506 @@ async def test_rename_file_or_folder(
                 assert not _raw_path_exists(upload_id, source_path)
 
 
+def _build_expected_base_path(
+    final_destination_folder_path: str,
+    new_file_name: str,
+) -> str:
+    if final_destination_folder_path:
+        return f'{final_destination_folder_path}/{new_file_name}'
+    return new_file_name
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        'source_path',
+        'new_file_name',
+        'final_destination_folder_path',
+        'trigger_processing',
+    ),
+    [
+        pytest.param(
+            'examples_template',
+            'new_folder_name',
+            '',
+            True,
+            id='move-folder-to-folder-with-reprocessing',
+        ),
+        pytest.param(
+            'examples_template',
+            'new_folder_name',
+            '',
+            False,
+            id='move-folder-to-folder-without-reprocessing',
+        ),
+    ],
+)
+async def test_rename_folder(
+    temporal_worker,
+    non_empty_processed_with_temporal: processing.Upload,
+    client: TestClient,
+    elastic_function,
+    auth_headers,
+    source_path: str,
+    new_file_name: str,
+    final_destination_folder_path: str,
+    trigger_processing: bool,
+):
+    upload_id = non_empty_processed_with_temporal.upload_id
+    user = auth_headers['user1']
+    expected_base_path = _build_expected_base_path(
+        final_destination_folder_path,
+        new_file_name,
+    )
+    expected_mainfile = f'{expected_base_path}/template.json'
+    async with temporal_worker() as env:
+        await _perform_move_or_copy(
+            client,
+            user,
+            upload_id,
+            source_path=source_path,
+            new_file_name=new_file_name,
+            copy_or_move='move',
+            final_destination_folder_path=final_destination_folder_path,
+            trigger_processing=trigger_processing,
+        )
+
+        await _assert_trigger_reprocessing_behavior(
+            env,
+            client,
+            upload_id,
+            user,
+            trigger_processing,
+        )
+        _assert_aux_files_exist(upload_id, expected_base_path)
+        assert not _raw_path_exists(upload_id, source_path)
+        last_upload = Upload.get(upload_id)
+        entries = last_upload.entries_sublist(0, 10)
+        assert len(entries) == 1
+        entry = entries[0]
+        if trigger_processing:
+            assert entry.mainfile == expected_mainfile
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        'source_path',
+        'new_file_name',
+        'final_destination_folder_path',
+        'trigger_processing',
+    ),
+    [
+        pytest.param(
+            'examples_template',
+            'examples_template',
+            'folder_0',
+            True,
+            id='move-folder-to-folder-with-reprocessing',
+        ),
+        pytest.param(
+            'examples_template',
+            'examples_template',
+            'folder_0',
+            False,
+            id='move-folder-to-folder-without-reprocessing',
+        ),
+    ],
+)
+async def test_move_folder(
+    temporal_worker,
+    non_empty_processed_with_temporal: processing.Upload,
+    client: TestClient,
+    elastic_function,
+    auth_headers,
+    source_path: str,
+    new_file_name: str,
+    final_destination_folder_path: str,
+    trigger_processing: bool,
+):
+    upload_id = non_empty_processed_with_temporal.upload_id
+    user = auth_headers['user1']
+    expected_base_path = _build_expected_base_path(
+        final_destination_folder_path,
+        new_file_name,
+    )
+    expected_mainfile = f'{expected_base_path}/template.json'
+
+    async with temporal_worker() as env:
+        if final_destination_folder_path:
+            await _perform_create_new_folder(
+                client,
+                user,
+                upload_id,
+                final_destination_folder_path,
+            )
+
+        await _perform_move_or_copy(
+            client,
+            user,
+            upload_id,
+            source_path=source_path,
+            new_file_name=new_file_name,
+            copy_or_move='move',
+            final_destination_folder_path=final_destination_folder_path,
+            trigger_processing=trigger_processing,
+        )
+
+        await _assert_trigger_reprocessing_behavior(
+            env,
+            client,
+            upload_id,
+            user,
+            trigger_processing,
+        )
+
+        if source_path != expected_base_path:
+            assert not _raw_path_exists(upload_id, source_path)
+
+        _assert_aux_files_exist(upload_id, expected_base_path)
+        last_upload = Upload.get(upload_id)
+        entries = last_upload.entries_sublist(0, 10)
+        assert len(entries) == 1
+        entry = entries[0]
+        if trigger_processing:
+            assert entry.mainfile == expected_mainfile
+
+
+def _assert_aux_files_exist(upload_id: str, base_path: str) -> None:
+    assert _raw_path_exists(upload_id, base_path)
+    assert _raw_path_exists(upload_id, f'{base_path}/0.aux')
+    assert _raw_path_exists(upload_id, f'{base_path}/1.aux')
+    assert _raw_path_exists(upload_id, f'{base_path}/2.aux')
+
+
+@pytest.mark.parametrize('copy_or_move', ['copy', 'move'])
+@pytest.mark.asyncio
+async def test_copy_move_folder_to_root(
+    temporal_worker,
+    non_empty_processed_with_temporal: processing.Upload,
+    client: TestClient,
+    elastic_function,
+    auth_headers,
+    copy_or_move,
+):
+    upload_id = non_empty_processed_with_temporal.upload_id
+    user = auth_headers['user1']
+
+    async with temporal_worker() as env:
+        await _perform_create_new_folder(
+            client,
+            user,
+            upload_id,
+            'folder_0',
+        )
+
+        await _perform_move_or_copy(
+            client,
+            user,
+            upload_id,
+            source_path='examples_template',
+            new_file_name='examples_template',
+            copy_or_move='move',
+            final_destination_folder_path='folder_0',
+            trigger_processing=True,
+        )
+
+        await _assert_trigger_reprocessing_behavior(
+            env,
+            client,
+            upload_id,
+            user,
+            True,
+        )
+
+        _assert_aux_files_exist(upload_id, 'folder_0/examples_template')
+        assert not _raw_path_exists(upload_id, 'examples_template')
+
+        await _perform_move_or_copy(
+            client,
+            user,
+            upload_id,
+            source_path='folder_0/examples_template',
+            new_file_name='examples_template',
+            copy_or_move=copy_or_move,
+            final_destination_folder_path='',
+            trigger_processing=True,
+        )
+        await _assert_trigger_reprocessing_behavior(
+            env,
+            client,
+            upload_id,
+            user,
+            True,
+        )
+        _assert_aux_files_exist(upload_id, 'examples_template')
+        last_upload = Upload.get(upload_id)
+        entries = last_upload.entries_sublist(0, 10)
+        if copy_or_move == 'copy':
+            assert len(entries) == 2
+            mainfiles = {entry.mainfile for entry in entries}
+            assert 'folder_0/examples_template/template.json' in mainfiles
+            assert 'examples_template/template.json' in mainfiles
+        elif copy_or_move == 'move':
+            assert len(entries) == 1
+            assert not _raw_path_exists(upload_id, 'folder_0/examples_template')
+            entry = entries[0]
+            assert entry.mainfile == 'examples_template/template.json'
+
+
+@pytest.mark.parametrize('copy_or_move', ['copy', 'move'])
+@pytest.mark.asyncio
+async def test_copy_move_folder_fails_for_missing_source(
+    temporal_worker,
+    non_empty_processed_with_temporal: processing.Upload,
+    client: TestClient,
+    auth_headers,
+    copy_or_move,
+):
+    upload_id = non_empty_processed_with_temporal.upload_id
+    user = auth_headers['user1']
+
+    async with temporal_worker():
+        await _perform_create_new_folder(client, user, upload_id, 'folder_0')
+        response = await _perform_move_or_copy(
+            client,
+            user,
+            upload_id,
+            source_path='does_not_exist',
+            new_file_name='does_not_exist',
+            copy_or_move=copy_or_move,
+            final_destination_folder_path='folder_0',
+            trigger_processing=True,
+        )
+        assert response.status_code == 409
+        assert response is not None
+        assert not _raw_path_exists(upload_id, 'folder_0/does_not_exist')
+        assert not _raw_path_exists(upload_id, 'does_not_exist')
+
+
+@pytest.mark.asyncio
+async def test_move_folder_into_child_fails(
+    temporal_worker,
+    non_empty_processed_with_temporal: processing.Upload,
+    client: TestClient,
+    auth_headers,
+):
+    upload_id = non_empty_processed_with_temporal.upload_id
+    user = auth_headers['user1']
+
+    async with temporal_worker():
+        await _perform_create_new_folder(
+            client, user, upload_id, 'examples_template/folder_0'
+        )
+        response = await _perform_move_or_copy(
+            client,
+            user,
+            upload_id,
+            source_path='examples_template',
+            new_file_name='examples_template',
+            copy_or_move='move',
+            final_destination_folder_path='examples_template/folder_0',
+            trigger_processing=True,
+        )
+
+        assert response.status_code == 409
+        assert response.json()['detail'] == (
+            "Cannot move 'examples_template' into itself or one of its own "
+            "subfolders ('examples_template/folder_0/examples_template')."
+        )
+        assert _raw_path_exists(upload_id, 'examples_template')
+        assert not _raw_path_exists(
+            upload_id, 'examples_template/folder_0/examples_template'
+        )
+
+
+@pytest.mark.parametrize('copy_or_move', ['copy', 'move'])
+@pytest.mark.asyncio
+async def test_copy_or_move_folder_into_own_subtree_is_rejected(
+    temporal_worker,
+    non_empty_processed_with_temporal: processing.Upload,
+    client: TestClient,
+    auth_headers,
+    copy_or_move,
+):
+    """
+    Copying/moving a folder into a destination nested inside itself (e.g.
+    'examples_template' -> 'examples_template/examples_template_copy') must
+    be rejected outright, not accepted for processing, with a clear error
+    message. In both cases the source folder must be left untouched.
+    """
+    upload_id = non_empty_processed_with_temporal.upload_id
+    user = auth_headers['user1']
+
+    async with temporal_worker():
+        response = await _perform_move_or_copy(
+            client,
+            user,
+            upload_id,
+            source_path='examples_template',
+            new_file_name='examples_template_copy',
+            copy_or_move=copy_or_move,
+            final_destination_folder_path='examples_template',
+            trigger_processing=True,
+        )
+
+        assert response.status_code == 409
+        assert response.json()['detail'] == (
+            f"Cannot {copy_or_move} 'examples_template' into itself or one of its "
+            "own subfolders ('examples_template/examples_template_copy')."
+        )
+        assert not _raw_path_exists(
+            upload_id, 'examples_template/examples_template_copy'
+        )
+        _assert_aux_files_exist(upload_id, 'examples_template')
+
+
+@pytest.mark.parametrize('copy_or_move', ['copy', 'move'])
+@pytest.mark.asyncio
+async def test_move_folder_fails_when_destination_has_same_name(
+    temporal_worker,
+    non_empty_processed_with_temporal: processing.Upload,
+    client: TestClient,
+    auth_headers,
+    copy_or_move,
+):
+    upload_id = non_empty_processed_with_temporal.upload_id
+    user = auth_headers['user1']
+
+    async with temporal_worker():
+        await _perform_create_new_folder(client, user, upload_id, 'folder_0')
+        await _perform_create_new_folder(
+            client, user, upload_id, 'folder_0/examples_template_copy'
+        )
+
+        response = await _perform_move_or_copy(
+            client,
+            user,
+            upload_id,
+            source_path='examples_template',
+            new_file_name='examples_template_copy',
+            copy_or_move=copy_or_move,
+            final_destination_folder_path='folder_0',
+            trigger_processing=True,
+        )
+
+        assert response is not None
+        assert response.status_code == 409
+        assert response.json()['detail'] == ('The provided path already exists.')
+        assert _raw_path_exists(upload_id, 'examples_template')
+        _assert_aux_files_exist(upload_id, 'examples_template')
+        assert _raw_path_exists(upload_id, 'folder_0/examples_template_copy')
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    (
+        'source_path',
+        'new_file_name',
+        'final_destination_folder_path',
+        'trigger_processing',
+    ),
+    [
+        pytest.param(
+            'examples_template',
+            'examples_template_copy',
+            'folder_0',
+            True,
+            id='copy-folder-to-folder-with-reprocessing',
+        ),
+        pytest.param(
+            'examples_template',
+            'examples_template_copy',
+            'folder_0',
+            False,
+            id='copy-folder-to-folder-without-reprocessing',
+        ),
+        pytest.param(
+            'examples_template',
+            '1_abc_9',
+            'folder_0',
+            True,
+            id='alphanumeric',
+        ),
+        pytest.param(
+            'examples_template',
+            '1',
+            'folder_0',
+            True,
+            id='numeric',
+        ),
+    ],
+)
+async def test_copy_folder(
+    temporal_worker,
+    non_empty_processed_with_temporal: processing.Upload,
+    client: TestClient,
+    elastic_function,
+    auth_headers,
+    source_path: str,
+    new_file_name: str,
+    final_destination_folder_path: str,
+    trigger_processing: bool,
+):
+    upload_id = non_empty_processed_with_temporal.upload_id
+    user = auth_headers['user1']
+    expected_base_path = _build_expected_base_path(
+        final_destination_folder_path,
+        new_file_name,
+    )
+    expected_mainfile = f'{expected_base_path}/template.json'
+
+    async with temporal_worker() as env:
+        if final_destination_folder_path:
+            await _perform_create_new_folder(
+                client,
+                user,
+                upload_id,
+                final_destination_folder_path,
+            )
+
+        await _perform_move_or_copy(
+            client,
+            user,
+            upload_id,
+            source_path=source_path,
+            new_file_name=new_file_name,
+            copy_or_move='copy',
+            final_destination_folder_path=final_destination_folder_path,
+            trigger_processing=trigger_processing,
+        )
+
+        await _assert_trigger_reprocessing_behavior(
+            env,
+            client,
+            upload_id,
+            user,
+            trigger_processing,
+        )
+
+        last_upload = Upload.get(upload_id)
+        # original must still exist for copy
+        _assert_aux_files_exist(upload_id, source_path)
+        # copied destination must also exist
+        _assert_aux_files_exist(upload_id, expected_base_path)
+
+        last_upload = Upload.get(upload_id)
+        entries = last_upload.entries_sublist(0, 10)
+
+        if trigger_processing:
+            assert len(entries) == 2
+            mainfiles = {entry.mainfile for entry in entries}
+            assert f'{source_path}/template.json' in mainfiles
+            assert expected_mainfile in mainfiles
+        else:
+            assert len(entries) == 1
+
+        assert last_upload.errors == []
+        for entry in entries:
+            assert entry.process_status == ProcessStatus.SUCCESS
+            assert entry.errors == []
+
+
 async def _get_list_of_started_workflows(temporal_env):
     matching_workflows = []
     async for execution in temporal_env.client.list_workflows():
@@ -2121,6 +2635,8 @@ async def _assert_trigger_reprocessing_behavior(
     Waits for possible processing and asserts that the correct workflows are started
     based on the trigger_processing flag. Also checks that match_all_activity was
     triggered inside UpdateUploadWorkflow.
+
+    If trigger processing is enabled, it asserts that the processing finish successfully.
     """
     if trigger_processing is True or (trigger_processing is None):
         await asyncio.to_thread(lambda: assert_processing(client, upload_id, user))

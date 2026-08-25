@@ -63,6 +63,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
+from glob import has_magic
 from typing import IO, Any, Literal, NamedTuple
 
 import magic
@@ -1750,36 +1751,79 @@ class StagingUploadFiles(UploadFiles):
             # Special case - deleting everything, i.e. the entire raw folder. Need to recreate.
             self._fs.makedirs(os_path)
 
-    def copy_or_move_rawfile(
+    def copy_or_move(
         self,
         src: str,
         dest: str,
-        copy_or_move: str,
+        copy_or_move: Literal['copy', 'move'],
         updated_files: set[str] | None = None,
     ):
+        """
+        Copies or moves a raw file or folder from `src` to `dest`, both given as
+        paths relative to the `raw` folder. Fails if `dest` already exists, or if
+        `src` and `dest` contain glob wildcard characters ('*', '?', '[' or ']').
+        Does nothing if `src` does not exist.
+
+        If `updated_files` is provided, it is populated with the paths (relative
+        to the `raw` folder) of all files affected by the operation: for a move,
+        both the source and destination paths of every file that was moved; for a
+        rename of a single file, both the old and new path (even when unchanged,
+        the destination is added).
+        """
         assert is_safe_relative_path(src)
         assert is_safe_relative_path(dest)
+        if has_magic(src) or has_magic(dest):
+            # `self._fs.cp`/`self._fs.mv` (fsspec) interpret '*', '?' and '[...]'
+            # in paths as glob patterns rather than literal characters, which
+            # would silently copy/move the wrong files or blow up with a
+            # RecursionError.
+            raise ValueError(
+                'File and folder names must not contain the wildcard characters '
+                "'*', '?', '[' or ']'."
+            )
         src_full_path = os.path.join(self._raw_dir.os_path, src)
         dest_full_path = os.path.join(self._raw_dir.os_path, dest)
+        src_is_folder = self._fs.isdir(src_full_path)
+        mode = copy_or_move.lower()
         if not self._fs.exists(src_full_path):
             return
-        if not self._fs.isfile(src_full_path):
-            raise ValueError('Copying a directory is not possible.')
+        if dest == src or dest.startswith(f'{src}/'):
+            # Prevent moving/copying a folder into itself or one of its subfolders
+            raise ValueError(
+                f"Cannot {mode} '{src}' into itself or one of its own subfolders "
+                f"('{dest}')."
+            )
         if self._fs.exists(dest_full_path):
-            raise ValueError('A file with the same name already exists.')
+            raise ValueError(
+                f'A {"folder" if src_is_folder else "file"} with the same name already exists.'
+            )
 
-        if copy_or_move.lower() == 'copy':
-            self._fs.cp_file(src_full_path, dest_full_path)
-        elif copy_or_move.lower() == 'move':
-            self._fs.mv(src_full_path, dest_full_path)
-
+        if src_is_folder and updated_files is not None and mode == 'move':
+            # Recursively add the paths of all files currently inside the source folder to `updated_files` BEFORE the folder is moved.
+            updated_files.update(
+                x.path for x in self.raw_listdir(src, recursive=True, files_only=True)
+            )
+        if mode == 'move':
+            self._fs.mv(src_full_path, dest_full_path, recursive=src_is_folder)
+        elif mode == 'copy':
+            self._fs.cp(src_full_path, dest_full_path, recursive=src_is_folder)
+        else:
+            raise ValueError('Invalid operation. Must be "copy" or "move".')
         if updated_files is not None:
-            updated_files.add(dest)
-            # if both the new and old name are the same then no new entry will be
-            # added to the set. but if different, we add the old one so that later on
-            # when self.matchall is called in data.py, the old filename is removed
-            # from mongo database
-            updated_files.add(src)
+            if src_is_folder:
+                # Recursively add the paths of all files currently inside the destination folder to `updated_files` AFTER the folder is moved.
+                updated_files.update(
+                    x.path
+                    for x in self.raw_listdir(dest, recursive=True, files_only=True)
+                )
+            else:
+                updated_files.add(dest)
+                # if both the new and old name are the same then no new entry will be
+                # added to the set. but if different, we add the old one so that later on
+                # when self.matchall is called in data.py, the old filename is removed
+                # from mongo database
+                if mode == 'move':
+                    updated_files.add(src)
 
     def metadata_file_cached(self, path_dir: str = ''):
         """
