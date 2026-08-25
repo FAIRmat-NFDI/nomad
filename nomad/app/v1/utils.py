@@ -204,6 +204,7 @@ def create_download_stream_raw_file(
     offset: int = 0,
     length: int = -1,
     decompress=False,
+    raw_path_reader=None,
 ):
     """
     Creates a file stream for downloading raw data with ``StreamingResponse``.
@@ -216,30 +217,39 @@ def create_download_stream_raw_file(
             file will be read.
         decompress: decompresses if the file is compressed (and of a supported type).
     """
-    with upload_files, upload_files.raw_file(path, 'rb') as raw_file:
-        target_file: IO | io.IOBase = raw_file
-        if decompress:
-            if path.endswith('.gz'):
-                target_file = gzip.GzipFile(
-                    filename=path[:3], mode='rb', fileobj=raw_file
-                )
-            elif path.endswith('.xz'):
-                target_file = lzma.open(filename=raw_file, mode='rb')
-
-        assert offset >= 0, 'Invalid offset provided'
-        assert length > 0 or length == -1, (
-            'Invalid length provided. Should be > 0 or equal to -1.'
+    try:
+        raw_file_context = (
+            raw_path_reader.open('rb')
+            if raw_path_reader is not None
+            else upload_files.raw_file(path, 'rb')
         )
-        if offset > 0:
-            target_file.seek(offset)
+        with upload_files, raw_file_context as raw_file:
+            target_file: IO | io.IOBase = raw_file
+            if decompress:
+                if path.endswith('.gz'):
+                    target_file = gzip.GzipFile(
+                        filename=path[:3], mode='rb', fileobj=raw_file
+                    )
+                elif path.endswith('.xz'):
+                    target_file = lzma.open(filename=raw_file, mode='rb')
 
-        if length > 0:
-            # Read up to a certain number of bytes
-            yield target_file.read(length)
-        else:
-            # Read until the end of the file.
-            while content := target_file.read(1024 * 1024):
-                yield content
+            assert offset >= 0, 'Invalid offset provided'
+            assert length > 0 or length == -1, (
+                'Invalid length provided. Should be > 0 or equal to -1.'
+            )
+            if offset > 0:
+                target_file.seek(offset)
+
+            if length > 0:
+                # Read up to a certain number of bytes
+                yield target_file.read(length)
+            else:
+                # Read until the end of the file.
+                while content := target_file.read(1024 * 1024):
+                    yield content
+    finally:
+        if raw_path_reader is not None:
+            raw_path_reader.close()
 
 
 async def create_stream_from_string(content: str):

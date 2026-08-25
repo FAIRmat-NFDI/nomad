@@ -1210,8 +1210,9 @@ def get_upload_raw_path(
     upload = get_upload_with_read_access(upload_id, user, include_others=True)
     # Get upload files
     upload_files = upload.upload_files
+    raw_path_reader = upload_files.raw_path_reader(path)
     try:
-        if not upload_files.raw_exists(path):
+        if not raw_path_reader.exists():
             raise HTTPException(
                 status.HTTP_404_NOT_FOUND,
                 detail=strip(
@@ -1219,7 +1220,7 @@ def get_upload_raw_path(
                 Not found. Invalid path?"""
                 ),
             )
-        if upload_files.raw_isfile(path):
+        if raw_path_reader.isfile():
             # File
             if files_params.compress:
                 media_type = 'application/zip'
@@ -1253,10 +1254,12 @@ def get_upload_raw_path(
                 if ignore_mime_type or not (offset == 0 and length == -1):
                     media_type = 'application/octet-stream'
                 else:
-                    media_type = upload_files.raw_file_mime_type(path)
+                    media_type = raw_path_reader.mime_type()
                 content = create_download_stream_raw_file(
-                    upload_files, path, offset, length, decompress
+                    upload_files, path, offset, length, decompress, raw_path_reader
                 )
+                # The download stream closes the reader after the body is sent.
+                raw_path_reader = None
             return StreamingResponse(
                 content,
                 headers=browser_download_headers(
@@ -1300,6 +1303,9 @@ def get_upload_raw_path(
             logger.error('exception while streaming download', exc_info=e)
         upload_files.close()
         raise
+    finally:
+        if raw_path_reader is not None:
+            raw_path_reader.close()
 
 
 @router.put(
