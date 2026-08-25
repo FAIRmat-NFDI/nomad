@@ -18,7 +18,13 @@
 
 import pytest
 
-from nomad.common import is_email, is_safe_path, is_safe_relative_path, parse_timedelta
+from nomad.common import (
+    has_glob_wildcards,
+    is_email,
+    is_safe_path,
+    is_safe_relative_path,
+    parse_timedelta,
+)
 
 
 @pytest.mark.parametrize(
@@ -111,6 +117,22 @@ def test_is_safe_path(path, safe_path, is_directory, is_safe):
 )
 def test_is_safe_relative_path(path, is_safe):
     assert is_safe_relative_path(path) == is_safe
+
+
+@pytest.mark.parametrize(
+    'path, has_wildcards',
+    [
+        pytest.param('subfolder/file.txt', False, id='safe path'),
+        pytest.param('', False, id='empty path'),
+        pytest.param('folder/file[1].txt', True, id='square brackets'),
+        pytest.param('*.txt', True, id='star at start'),
+        pytest.param('file*', True, id='star at end'),
+        pytest.param('file?.txt', True, id='question mark middle'),
+        pytest.param('[abc]folder/file.txt', True, id='bracket group at start'),
+    ],
+)
+def test_has_glob_wildcards(path, has_wildcards):
+    assert has_glob_wildcards(path) == has_wildcards
 
 
 @pytest.mark.parametrize(

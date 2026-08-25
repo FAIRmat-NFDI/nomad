@@ -29,6 +29,7 @@ import tarfile
 import warnings
 import zipfile
 from datetime import datetime, timedelta, timezone
+from glob import has_magic
 from tempfile import TemporaryDirectory
 from typing import Literal
 
@@ -271,6 +272,15 @@ def is_safe_relative_path(path: str) -> bool:
             return False
 
     return True
+
+
+def has_glob_wildcards(path: str) -> bool:
+    """
+    Checks if `path` contains glob wildcard characters ('*', '?', '[' or ']').
+    fsspec's copy/move operations interpret these as glob patterns rather than
+    literal characters, which can silently operate on the wrong files.
+    """
+    return has_magic(path)
 
 
 # Return current UTC time (can be mocked for tests)

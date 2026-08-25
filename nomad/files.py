@@ -63,7 +63,6 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
-from glob import has_magic
 from typing import IO, Any, Literal, NamedTuple
 
 import magic
@@ -88,7 +87,11 @@ from nomad.archive import (
     to_json,
     write_archive,
 )
-from nomad.common import get_compression_format, is_safe_relative_path
+from nomad.common import (
+    get_compression_format,
+    has_glob_wildcards,
+    is_safe_relative_path,
+)
 from nomad.config import config
 from nomad.config.models.config import BundleExportSettings, BundleImportSettings
 
@@ -1772,7 +1775,7 @@ class StagingUploadFiles(UploadFiles):
         """
         assert is_safe_relative_path(src)
         assert is_safe_relative_path(dest)
-        if has_magic(src) or has_magic(dest):
+        if has_glob_wildcards(src) or has_glob_wildcards(dest):
             # `self._fs.cp`/`self._fs.mv` (fsspec) interpret '*', '?' and '[...]'
             # in paths as glob patterns rather than literal characters, which
             # would silently copy/move the wrong files or blow up with a
