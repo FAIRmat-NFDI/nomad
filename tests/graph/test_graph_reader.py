@@ -26,6 +26,7 @@ import pytest
 import pytest_asyncio
 import yaml
 
+from nomad import utils
 from nomad.datamodel import EntryArchive, ServerContext
 from nomad.datamodel.metainfo.simulation import run
 from nomad.graph.graph_reader import (
@@ -135,6 +136,21 @@ user3_dict = {
     'username': 'hwolowitz',
     'is_admin': False,
 }
+
+
+def test_rewrite_mainfile_archive_reference_with_dotted_filename():
+    from nomad.graph.graph_reader import _convert_ref_to_path_string
+
+    upload_id = 'current-upload'
+    mainfile = 'mp-999540/vasprun.xml.gz'
+    entry_id = utils.generate_entry_id(upload_id, mainfile)
+
+    assert (
+        _convert_ref_to_path_string(
+            f'../upload/archive/mainfile/{mainfile}#/workflow2', upload_id
+        )
+        == f'uploads/{upload_id}/entries/{entry_id}/archive/workflow2'
+    )
 
 
 def increment():
