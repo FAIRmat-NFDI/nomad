@@ -1921,6 +1921,11 @@ class Archive(ConfigBaseModel):
             copy_chunk_size=self.copy_chunk_size,
             # Memory may leak when set to True in concurrent scenarios.
             disable_gc=False,
+            # we only deal with data 100% comply with JSON specification
+            # disable extended types to improve performance
+            has_numpy=False,
+            has_set=False,
+            has_tuple=False,
         )
 
 

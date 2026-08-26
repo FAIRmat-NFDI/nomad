@@ -55,7 +55,7 @@ fsspec==2026.7.0          # via s3fs, universal-pathlib, nomad-lab (pyproject.to
 googleapis-common-protos==1.75.1  # via opentelemetry-exporter-otlp-proto-grpc, opentelemetry-exporter-otlp-proto-http
 greenlet==3.5.5 ; platform_machine == 'AMD64' or platform_machine == 'WIN32' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'ppc64le' or platform_machine == 'win32' or platform_machine == 'x86_64'  # via sqlalchemy
 grpcio==1.83.0            # via opentelemetry-exporter-otlp-proto-grpc
-gunicorn==26.1.0          # via nomad-lab (pyproject.toml)
+gunicorn==26.2.0          # via nomad-lab (pyproject.toml)
 h11==0.16.0               # via httpcore, httpcore2, uvicorn
 h5grove==4.0.0            # via nomad-lab (pyproject.toml)
 h5py==3.16.0              # via h5grove, nomad-lab (pyproject.toml)
@@ -94,7 +94,7 @@ mongomock==4.3.0          # via optimade
 monty==2025.3.3 ; python_full_version < '3.11'  # via pymatgen
 monty==2026.7.16 ; python_full_version >= '3.11'  # via pymatgen-core
 mpmath==1.3.0             # via sympy
-msglc==260821             # via nomad-lab (pyproject.toml)
+msglc==260825             # via nomad-lab (pyproject.toml)
 msgpack==1.2.1            # via msglc
 msgspec==0.21.1           # via msglc
 multidict==6.7.1          # via aiobotocore, aiohttp, yarl
@@ -134,7 +134,7 @@ pendulum==3.2.0           # via fastapi-cache2
 pillow==12.3.0            # via matplotlib
 pint==0.24.4 ; python_full_version < '3.11'  # via nomad-lab (pyproject.toml)
 pint==0.25.3 ; python_full_version >= '3.11'  # via nomad-lab (pyproject.toml)
-platformdirs==4.11.3      # via pint
+platformdirs==4.11.4      # via pint
 plotly==5.24.1            # via pymatgen, pymatgen-core, nomad-lab (pyproject.toml)
 prometheus-client==0.26.0  # via jupyterhub, nomad-lab (pyproject.toml)
 propcache==0.5.2          # via aiohttp, yarl
@@ -176,7 +176,7 @@ ruamel-yaml==0.19.1       # via jupyter-telemetry, monty, oauthenticator, pymatg
 s3fs==2026.7.0            # via msglc
 scipy==1.15.3 ; python_full_version < '3.11'  # via ase, pymatgen, nomad-lab (pyproject.toml)
 scipy==1.17.1 ; python_full_version == '3.11.*'  # via ase, pymatgen-core, nomad-lab (pyproject.toml)
-scipy==1.18.0 ; python_full_version >= '3.12'  # via ase, pymatgen-core, nomad-lab (pyproject.toml)
+scipy==1.18.1 ; python_full_version >= '3.12'  # via ase, pymatgen-core, nomad-lab (pyproject.toml)
 sentinels==1.1.1          # via mongomock
 six==1.17.0               # via elasticsearch-dsl, python-dateutil, rdflib
 soupsieve==2.9.2          # via beautifulsoup4
@@ -186,17 +186,17 @@ starlette==1.6.0          # via fastapi, nomad-lab (pyproject.toml)
 structlog==26.1.0         # via nomad-lab (pyproject.toml)
 sympy==1.14.0             # via pymatgen, pymatgen-core
 tabulate==0.10.0          # via pymatgen, pymatgen-core, nomad-lab (pyproject.toml)
-temporalio==1.31.0        # via nomad-lab (pyproject.toml)
+temporalio==1.32.0        # via nomad-lab (pyproject.toml)
 tenacity==9.1.4           # via plotly
 tifffile==2025.5.10 ; python_full_version < '3.11'  # via h5grove
 tifffile==2026.3.3 ; python_full_version == '3.11.*'  # via h5grove
-tifffile==2026.8.16 ; python_full_version >= '3.12'  # via h5grove
+tifffile==2026.8.23 ; python_full_version >= '3.12'  # via h5grove
 tomli==2.4.1 ; python_full_version < '3.11'  # via alembic
 tornado==6.5.8            # via jupyterhub, oauthenticator
 tqdm==4.70.0              # via molid, pymatgen, pymatgen-core
 traitlets==5.16.1         # via jupyter-telemetry, jupyterhub, oauthenticator
 truststore==0.10.4 ; sys_platform != 'emscripten'  # via httpcore2, httpx2
-types-protobuf==7.34.1.20260816  # via temporalio
+types-protobuf==7.35.1.20260825  # via temporalio
 typing-extensions==4.16.0  # via aiobotocore, aiohttp, aiosignal, alembic, anyio, ase, asgiref, beanie, cryptography, exceptiongroup, fastapi, fastapi-cache2, flexcache, flexparser, grpcio, h5grove, httpx2, jwcrypto, multidict, nexus-rpc, opentelemetry-api, opentelemetry-exporter-otlp-proto-grpc, opentelemetry-exporter-otlp-proto-http, opentelemetry-sdk, opentelemetry-semantic-conventions, pint, pydantic, pydantic-core, pyjwt, referencing, spglib, sqlalchemy, starlette, structlog, temporalio, typing-inspection, uvicorn
 typing-inspection==0.4.4  # via fastapi, pydantic, pydantic-settings
 tzdata==2026.3            # via pandas, pendulum
@@ -214,4 +214,4 @@ wrapt==2.3.0              # via aiobotocore, opentelemetry-instrumentation, open
 xarray==2025.6.1 ; python_full_version < '3.11'  # via nomad-lab (pyproject.toml)
 xarray==2026.7.0 ; python_full_version >= '3.11'  # via nomad-lab (pyproject.toml)
 yarl==1.24.5              # via aiohttp
-zipstream-ng==1.9.2       # via nomad-lab (pyproject.toml)
+zipstream-ng==1.9.3       # via nomad-lab (pyproject.toml)
