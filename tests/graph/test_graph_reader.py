@@ -5050,8 +5050,8 @@ def test_archive_reader_filtered_v3_lazy_reader():
     target.seek(0)
 
     with LazyReader(target) as combined_reader:
-        entry = combined_reader['entry_id_1']
-        assert isinstance(entry, LazyReader)
+        entry = combined_reader['entry_id_1'].unwrap()
+        assert not isinstance(entry, LazyReader)
 
         # 1. exclude: ['*'] should return empty dict
         with ArchiveReader(

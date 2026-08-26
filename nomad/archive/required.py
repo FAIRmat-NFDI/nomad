@@ -25,7 +25,7 @@ import re
 from typing import TypeAlias, cast
 
 from fastapi import HTTPException
-from msglc.reader import LazyDict, LazyList
+from msglc.reader import LazyDict, LazyList, LazyReader
 
 from nomad import utils
 from nomad.metainfo import (
@@ -191,6 +191,9 @@ class RequiredReader:
             archive_root = archive_reader[normalized_id]
         else:
             raise KeyError(entry_id)
+
+        if isinstance(archive_root, LazyReader):
+            archive_root = archive_root.unwrap()
 
         result_root: dict = {}
         ref_result_root: dict = {}

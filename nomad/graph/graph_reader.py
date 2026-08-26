@@ -109,7 +109,7 @@ logger = utils.get_logger(__name__)
 
 
 GenericList: TypeAlias = list | ArchiveList | ArchiveListNew | LazyList
-GenericDict: TypeAlias = dict | ArchiveDict | ArchiveDictNew | LazyDict | LazyReader
+GenericDict: TypeAlias = dict | ArchiveDict | ArchiveDictNew | LazyDict
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1343,7 +1343,9 @@ class GeneralReader:
                     measurement as stats,
                     self.upload_pool[upload_id].read_archive(entry_id) as reader,
                 ):
-                    archive = reader[entry_id]
+                    if isinstance(archive := reader[entry_id], LazyReader):
+                        # unwrap to reveal the actual container
+                        archive = archive.unwrap()
                     try:
                         # The caller walks the archive while this generator is
                         # suspended, so lazy reads happen within this context.
