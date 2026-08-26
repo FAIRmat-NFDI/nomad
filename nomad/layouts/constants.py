@@ -39,6 +39,23 @@ def _resolved_request(
     return {'m_request': request}
 
 
+def _plain_reference_request() -> dict[str, Any]:
+    """Request a reference value without resolving its target section."""
+    return {
+        'm_request': {
+            'directive': 'plain',
+            'always_rewrite_references': True,
+        }
+    }
+
+
+def _workflow_link_request() -> dict[str, Any]:
+    return {
+        'name': '*',
+        'section': _plain_reference_request(),
+    }
+
+
 _BAND_STRUCTURE_ELECTRONIC = {
     'results': {
         'properties': {
@@ -175,9 +192,16 @@ BUILTIN_NODE_TYPE_DEFAULTS: dict[str, Any] = {
     'workflow': {
         'request': {
             'workflow2': {
-                'inputs': _resolved_request(),
-                'outputs': _resolved_request(),
-                'tasks': _resolved_request(),
+                'name': '*',
+                'inputs': _workflow_link_request(),
+                'outputs': _workflow_link_request(),
+                'tasks': {
+                    'name': '*',
+                    'section': _plain_reference_request(),
+                    'task': _plain_reference_request(),
+                    'inputs': _workflow_link_request(),
+                    'outputs': _workflow_link_request(),
+                },
             }
         }
     },

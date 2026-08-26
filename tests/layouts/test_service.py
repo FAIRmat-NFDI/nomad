@@ -62,14 +62,25 @@ def test_builtin_widget_defaults_are_applied_to_derived_requests():
     derived_request: dict = {}
     calculate_request_from_layout(compiled, derived_request)
 
-    assert (
-        derived_request['workflow2']['inputs']['m_request']['directive'] == 'resolved'
-    )
-    assert 'depth' not in derived_request['workflow2']['inputs']['m_request']
-    assert (
-        derived_request['workflow2']['outputs']['m_request']['directive'] == 'resolved'
-    )
-    assert derived_request['workflow2']['tasks']['m_request']['directive'] == 'resolved'
+    reference_request = {
+        'm_request': {
+            'directive': 'plain',
+            'always_rewrite_references': True,
+        }
+    }
+    link_request = {'name': '*', 'section': reference_request}
+    assert derived_request['workflow2'] == {
+        'name': '*',
+        'inputs': link_request,
+        'outputs': link_request,
+        'tasks': {
+            'name': '*',
+            'section': reference_request,
+            'task': reference_request,
+            'inputs': link_request,
+            'outputs': link_request,
+        },
+    }
 
 
 def test_entry_layout_helpers_only_require_search_when_needed():
@@ -125,8 +136,9 @@ def test_layout_plan_returns_compiled_layouts_and_selected_request():
     assert [layout['id'] for layout in plan.matching_layouts] == ['default']
     assert plan.matching_layouts[0]['overview']['type'] == 'container'
     assert plan.archive_request['data']['figures'] == '*'
-    assert plan.archive_request['workflow2']['tasks']['m_request'] == {
-        'directive': 'resolved'
+    assert plan.archive_request['workflow2']['tasks']['task']['m_request'] == {
+        'directive': 'plain',
+        'always_rewrite_references': True,
     }
     assert 'request' not in str(plan.matching_layouts[0]['overview'])
 
