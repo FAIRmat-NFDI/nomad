@@ -505,16 +505,20 @@ async def _if_exists(target_root: dict, path_stack: list) -> bool:
 
 @functools.lru_cache(maxsize=1024)
 def _convert_ref_to_path(ref: str, upload_id: str | None = None) -> list:
-    # test module name
-    if '.' in (stripped_ref := ref.strip('.')) or re.compile(r'^\w*(\.\w*)*$').match(
-        ref.split('/section_definitions', maxsplit=1)[0]
-    ):
-        module_path, _ = split_python_definition(stripped_ref)
-        return [Token.METAINFO, '.'.join(module_path[:-1])] + module_path[-1].split('/')
-
-    # test reference
+    # Parse archive references before checking for Python definition names. Raw
+    # mainfile paths commonly contain dots (for example ``vasprun.xml.gz``),
+    # which must not make an otherwise valid archive reference look like a
+    # metainfo reference.
     parse_result = parse_path(ref, upload_id)
     if parse_result is None:
+        stripped_ref = ref.strip('.')
+        if '.' in stripped_ref or re.compile(r'^\w*(\.\w*)*$').match(
+            ref.split('/section_definitions', maxsplit=1)[0]
+        ):
+            module_path, _ = split_python_definition(stripped_ref)
+            return [Token.METAINFO, '.'.join(module_path[:-1])] + module_path[-1].split(
+                '/'
+            )
         raise ArchiveError(f'Invalid reference: {ref}.')
 
     installation, upload_id, entry_id, kind, path = parse_result
