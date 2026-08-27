@@ -1881,7 +1881,7 @@ class Archive(ConfigBaseModel):
         description='Deprecated, not used in the latest storage. Depths of table of contents in the archive.',
     )
     small_obj_optimization_threshold: int = Field(
-        1 * 2**20,
+        4 * 2**20,
         description="""
         For any child of lists/dicts whose encoded size is smaller than this value, no TOC will be generated.""",
     )

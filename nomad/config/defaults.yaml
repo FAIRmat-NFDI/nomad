@@ -3,7 +3,7 @@ archive:
   read_buffer_size: 1048576
   copy_chunk_size: 16777216
   toc_depth: 10
-  small_obj_optimization_threshold: 16777216
+  small_obj_optimization_threshold: 4194304
   fast_loading: true
   fast_loading_threshold: 0.6
   trivial_size: 20
