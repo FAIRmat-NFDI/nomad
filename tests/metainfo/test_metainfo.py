@@ -337,6 +337,14 @@ class TestM2:
         assert t.section_one == sub_section
         assert t.section_two == sub_section
 
+    def test_underscore_prefixed_alias_resolves(self):
+        class Test(MSection):
+            value = Quantity(type=str, aliases=['_value'])
+
+        t = Test()
+        t._value = 'x'
+        assert t.value == 'x'
+
     def test_multiple_sub_sections(self):
         class TestSection(MSection):  # pylint: disable=unused-variable
             one = SubSection(sub_section=System)

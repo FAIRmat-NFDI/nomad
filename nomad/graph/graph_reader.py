@@ -179,8 +179,8 @@ class _ReaderCache:
     definitions: dict[tuple[str | None, str | None, str | None, str | None], Any] = (
         dataclasses.field(default_factory=dict)
     )
-    short_definition_references: dict[int, tuple[Any, str]] = dataclasses.field(
-        default_factory=dict
+    short_definition_references: dict[int, tuple[Any, tuple[int, ...], str]] = (
+        dataclasses.field(default_factory=dict)
     )
     property_definitions: dict[tuple[int, str], tuple[Any, Any]] = dataclasses.field(
         default_factory=dict
@@ -956,14 +956,60 @@ def _get_property_definition(node: GraphNode, name: str):
     return None
 
 
+def _definition_tree_version(definition: Any) -> tuple[int, ...]:
+    """Return ``m_mod_count`` along the parent chain, starting at ``definition``.
+
+    ``qualified_name()`` includes ancestor names, but renaming a parent only
+    increments the parent's ``m_mod_count``. Keying the short-ref cache on the
+    child's count alone would return a stale ``package.Section@id`` string.
+    """
+    counts: list[int] = []
+    seen: set[int] = set()
+    current = definition
+    while current is not None:
+        ident = id(current)
+        if ident in seen:
+            break
+        seen.add(ident)
+        counts.append(getattr(current, 'm_mod_count', 0))
+        current = getattr(current, 'm_parent', None)
+    return tuple(counts)
+
+
+def _store_short_definition_reference(
+    definition: Any, reference: str, version: tuple[int, ...]
+) -> None:
+    try:
+        cache_store = object.__getattribute__(definition, '__dict__')
+    except AttributeError:
+        return
+    cache_store['_cached_short_def_ref'] = reference
+    cache_store['_cached_short_def_ref_version'] = version
+
+
 def _get_short_definition_reference(cache: _ReaderCache, definition: Any) -> str:
+    # Level 1: definition-level cache across requests, keyed by ancestor versions
+    version = _definition_tree_version(definition)
+    cached_ref = getattr(definition, '_cached_short_def_ref', None)
+    if (
+        cached_ref is not None
+        and getattr(definition, '_cached_short_def_ref_version', None) == version
+    ):
+        return cached_ref
+
+    # Level 2: request-local cache for objects that cannot store instance attrs
     cache_key = id(definition)
-    cached = cache.short_definition_references.get(cache_key)
-    if cached is not None and cached[0] is definition:
-        return cached[1]
+    cached_in_cache = cache.short_definition_references.get(cache_key)
+    if (
+        cached_in_cache is not None
+        and cached_in_cache[0] is definition
+        and cached_in_cache[1] == version
+    ):
+        return cached_in_cache[2]
 
     reference = f'{definition.qualified_name()}@{definition.definition_id}'
-    cache.short_definition_references[cache_key] = (definition, reference)
+    cache.short_definition_references[cache_key] = (definition, version, reference)
+    _store_short_definition_reference(definition, reference, version)
     return reference
 
 
