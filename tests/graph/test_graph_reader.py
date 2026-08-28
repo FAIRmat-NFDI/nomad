@@ -290,8 +290,13 @@ def test_short_definition_references_are_cached_per_graph_request():
     from nomad.graph.graph_reader import _get_short_definition_reference
 
     class RuntimeDefinition:
-        definition_id = 'definition-id'
-        qualified_name_calls = 0
+        """Slots-only stand-in so Level 1 cannot store instance cache fields."""
+
+        __slots__ = ('definition_id', 'qualified_name_calls')
+
+        def __init__(self):
+            self.definition_id = 'definition-id'
+            self.qualified_name_calls = 0
 
         def qualified_name(self):
             self.qualified_name_calls += 1
@@ -305,6 +310,73 @@ def test_short_definition_references_are_cached_per_graph_request():
         assert _get_short_definition_reference(cache, definition) == expected
         assert _get_short_definition_reference(cache, definition) == expected
         assert definition.qualified_name_calls == 1
+        assert cache.short_definition_references[id(definition)][0] is definition
+
+
+def test_short_definition_references_are_cached_across_requests():
+    from nomad.graph.graph_reader import _get_short_definition_reference
+
+    class RuntimeDefinition:
+        definition_id = 'definition-id'
+        qualified_name_calls = 0
+        m_mod_count = 0
+
+        def qualified_name(self):
+            self.qualified_name_calls += 1
+            return 'package.Section'
+
+    definition = RuntimeDefinition()
+    expected = 'package.Section@definition-id'
+
+    # Request 1
+    with ArchiveReader({}) as reader1:
+        assert (
+            _get_short_definition_reference(reader1._reader_cache, definition)
+            == expected
+        )
+        assert definition.qualified_name_calls == 1
+
+    # Request 2 (different reader and fresh reader cache)
+    with ArchiveReader({}) as reader2:
+        assert (
+            _get_short_definition_reference(reader2._reader_cache, definition)
+            == expected
+        )
+        # Should hit definition-level cache without calling qualified_name again
+        assert definition.qualified_name_calls == 1
+
+    # Modification invalidates definition-level cache
+    definition.m_mod_count += 1
+    definition.definition_id = 'definition-id-v2'
+    expected_v2 = 'package.Section@definition-id-v2'
+
+    with ArchiveReader({}) as reader3:
+        assert (
+            _get_short_definition_reference(reader3._reader_cache, definition)
+            == expected_v2
+        )
+        assert definition.qualified_name_calls == 2
+
+
+def test_short_definition_references_invalidate_on_ancestor_rename():
+    from nomad.graph.graph_reader import _get_short_definition_reference
+    from nomad.metainfo import Package, Section
+
+    package = Package(name='short_ref_ancestor_v1')
+    section = Section(name='MySection')
+    package.m_add_sub_section(Package.section_definitions, section)
+
+    with ArchiveReader({}) as reader1:
+        ref_v1 = _get_short_definition_reference(reader1._reader_cache, section)
+    assert ref_v1.startswith('short_ref_ancestor_v1.MySection@')
+
+    # Renaming the package bumps only the package's m_mod_count, not the child's.
+    package.name = 'short_ref_ancestor_v2'
+
+    with ArchiveReader({}) as reader2:
+        ref_v2 = _get_short_definition_reference(reader2._reader_cache, section)
+    assert ref_v2.startswith('short_ref_ancestor_v2.MySection@')
+    assert ref_v2 != ref_v1
 
 
 def test_metainfo_property_definitions_are_cached_per_graph_request():
