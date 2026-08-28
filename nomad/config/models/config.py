@@ -20,7 +20,6 @@ import logging
 import os
 import warnings
 from enum import Enum
-from functools import cached_property
 from importlib.metadata import entry_points, version
 from typing import Literal
 from urllib.parse import quote
@@ -731,7 +730,7 @@ used consistently for an upload; artifacts are never mixed between the two backe
             if msglc_config.write_buffer_size < 5 * 2**20:
                 configure(write_buffer_size=5 * 2**20)
 
-    @cached_property
+    @property
     def target_fs(self) -> AbstractFileSystem:
         if self.protocol is None:
             return LocalFileSystem()
