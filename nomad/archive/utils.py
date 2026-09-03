@@ -126,8 +126,14 @@ def read_archive(file_or_path: str | BinaryIO, **kwargs):
     raise NotImplementedError
 
 
+_PRIMITIVE_TYPES = (str, int, float, bool)
+
+
 def to_json(data: Any) -> Any:
     """Convert data into JSON-compatible Python data."""
+    if data is None or type(data) in _PRIMITIVE_TYPES:
+        return data
+
     if hasattr(data, 'to_json'):
         return data.to_json()
 

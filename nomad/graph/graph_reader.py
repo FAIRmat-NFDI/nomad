@@ -96,8 +96,7 @@ from nomad.metainfo import (
     Section,
     SubSection,
 )
-from nomad.metainfo.data_type import JSON, Datatype
-from nomad.metainfo.data_type import Any as AnyType
+from nomad.metainfo.data_type import Datatype
 from nomad.metainfo.util import MSubSectionList, split_python_definition
 from nomad.mongo.groups import MongoUserGroup, get_mongo_user_group
 from nomad.mongo.package import PackageDefinition
@@ -305,6 +304,14 @@ class GraphNode:
     visited_path: set[str]  # visited paths, for tracking circular references
     current_depth: int  # current depth, for tracking depth limit
     reader: Any  # the reader used to read the archive # pylint: disable=E0601
+    result_cursor: ResultCursor | None = None
+
+    def descend(self, key: str, **kwargs) -> GraphNode:
+        return self.replace(
+            current_path=self.current_path + [key],
+            result_cursor=_node_cursor(self).child(key),
+            **kwargs,
+        )
 
     def replace(
         self,
@@ -319,14 +326,27 @@ class GraphNode:
         visited_path: Any = _NODE_SENTINEL,
         current_depth: Any = _NODE_SENTINEL,
         reader: Any = _NODE_SENTINEL,
+        result_cursor: Any = _NODE_SENTINEL,
     ):
         """
         Create a new `ArchiveNode` instance with the attributes of the current instance replaced.
         """
+        new_current_path = (
+            self.current_path if current_path is _NODE_SENTINEL else current_path
+        )
+        new_result_cursor = (
+            self.result_cursor if result_cursor is _NODE_SENTINEL else result_cursor
+        )
+        if (
+            result_cursor is _NODE_SENTINEL
+            and current_path is not _NODE_SENTINEL
+            and current_path != self.current_path
+        ):
+            new_result_cursor = None
         return GraphNode(
             self.upload_id if upload_id is _NODE_SENTINEL else upload_id,
             self.entry_id if entry_id is _NODE_SENTINEL else entry_id,
-            self.current_path if current_path is _NODE_SENTINEL else current_path,
+            new_current_path,
             self.result_root if result_root is _NODE_SENTINEL else result_root,
             self.ref_result_root
             if ref_result_root is _NODE_SENTINEL
@@ -337,6 +357,7 @@ class GraphNode:
             self.visited_path if visited_path is _NODE_SENTINEL else visited_path,
             self.current_depth if current_depth is _NODE_SENTINEL else current_depth,
             self.reader if reader is _NODE_SENTINEL else reader,
+            new_result_cursor,
         )
 
     @property
@@ -464,19 +485,16 @@ class GraphNode:
         self, node: GraphNode, resolve_inplace: bool, reference_url: str
     ):
         if resolve_inplace:
-            # place the target into the current result container
             return node
 
-        # place the reference into the current result container
-        await _populate_result(
-            self.result_root,
-            self.current_path,
-            _convert_ref_to_path_string(reference_url),
-        )
+        ref_path_string = _convert_ref_to_path_string(reference_url)
+        _node_cursor(self).set(ref_path_string)
 
+        target_path = _convert_ref_to_path(reference_url)
         return node.replace(
-            current_path=_convert_ref_to_path(reference_url),
+            current_path=target_path,
             result_root=self.ref_result_root,
+            result_cursor=ResultCursor.from_path(self.ref_result_root, target_path),
         )
 
 
@@ -599,6 +617,132 @@ def _merge_result_dict(target: dict, source: dict):
             )
 
 
+_SCALAR_TYPES = (str, int, float, bool)
+
+
+def _slot_get(container: dict | list, key: str | int) -> Any:
+    if isinstance(container, dict):
+        assert isinstance(key, str)
+        return container.get(key)
+    assert isinstance(key, int)
+    if (extra := max(key - len(container) + 1, 0)) > 0:
+        container.extend([None] * extra)
+    return container[key]
+
+
+def _slot_set(container: dict | list, key: str | int, value: Any) -> None:
+    if isinstance(container, dict):
+        assert isinstance(key, str)
+        container[key] = value
+    else:
+        assert isinstance(key, int)
+        if (extra := max(key - len(container) + 1, 0)) > 0:
+            container.extend([None] * extra)
+        container[key] = value
+
+
+class ResultCursor:
+    """Denotes a slot (parent container + key) in the result tree.
+
+    Nothing exists in the result tree until ``set()`` or ``container()`` is
+    called. Digit keys denote list indices, mirroring ``_populate_result``.
+    """
+
+    __slots__ = ('_parent', '_key', '_container')
+
+    def __init__(
+        self,
+        container: dict | list | None = None,
+        *,
+        parent: ResultCursor | None = None,
+        key: str | int | None = None,
+    ):
+        self._parent = parent
+        self._key = key
+        self._container = container
+
+    @classmethod
+    def from_path(cls, root: dict, path: list[str]) -> ResultCursor:
+        cursor = cls(root)
+        for segment in path:
+            cursor = cursor.child(segment)
+        return cursor
+
+    def child(self, key: str) -> ResultCursor:
+        key_or_index: str | int = int(key) if key.isdigit() else key
+        return ResultCursor(parent=self, key=key_or_index)
+
+    def _parent_container(self) -> dict | list:
+        assert self._parent is not None and self._key is not None
+        return self._parent.container(list if isinstance(self._key, int) else dict)
+
+    def container(self, kind: type[dict] | type[list]) -> dict | list:
+        if self._parent is None:
+            assert isinstance(self._container, kind)
+            return self._container
+
+        if self._container is not None and isinstance(self._container, kind):
+            return self._container
+
+        parent = self._parent_container()
+        key = self._key
+        assert key is not None
+        existing = _slot_get(parent, key)
+        if isinstance(existing, kind):
+            child = existing
+        else:
+            child = kind()
+            _slot_set(parent, key, child)
+        self._container = child
+        return child
+
+    def set(self, value: Any) -> None:
+        if self._parent is None:
+            assert isinstance(self._container, dict)
+            new_value = to_json(value)
+            assert isinstance(new_value, dict)
+            _merge_result_dict(self._container, new_value)
+            return
+
+        parent = self._parent_container()
+        key = self._key
+        assert key is not None
+        _write_result_at(parent, key, value)
+
+
+def _write_result_at(
+    target_container: dict | list,
+    key_or_index: str | int,
+    value: Any,
+) -> None:
+    val_type = type(value)
+    if val_type in _SCALAR_TYPES or value is None:
+        _slot_set(target_container, key_or_index, value)
+        return
+
+    new_value = to_json(value)
+    if new_value is value and isinstance(value, dict | list):
+        new_value = value.copy()
+
+    existing = _slot_get(target_container, key_or_index)
+
+    if existing is None:
+        _slot_set(target_container, key_or_index, new_value)
+    elif isinstance(new_value, dict) and isinstance(existing, dict):
+        _merge_result_dict(existing, new_value)
+    elif isinstance(new_value, list) and isinstance(existing, list):
+        _merge_result_list(existing, new_value)
+    else:
+        _slot_set(target_container, key_or_index, new_value)
+
+
+def _node_cursor(node: GraphNode) -> ResultCursor:
+    """The node's result cursor, derived lazily from its path for readers that do not track one."""
+    return node.result_cursor or ResultCursor.from_path(
+        node.result_root, node.current_path
+    )
+
+
 async def _populate_result(
     container_root: dict,
     path: list,
@@ -663,7 +807,14 @@ async def _populate_result(
 
     # the target container does not necessarily have to be a dict or a list
     # if the result is striped due to large size, it will be replaced by a string
-    new_value = await async_to_json(value)
+    val_type = type(value)
+    if val_type in _SCALAR_TYPES or value is None:
+        new_value = value
+    else:
+        new_value = await async_to_json(value)
+        if new_value is value and isinstance(value, dict | list):
+            new_value = value.copy()
+
     if isinstance(target_container, list):
         assert isinstance(key_or_index, int)
         if target_container[key_or_index] is None:
@@ -1447,20 +1598,18 @@ class GeneralReader:
     ):
         # The list contents are intentionally not traced individually; the
         # enclosing archive walk span provides the useful aggregate timing.
-        # the original archive may be an empty list
-        # populate an empty list to keep the structure
-        await _populate_result(node.result_root, node.current_path, [])
-        # The update is internal and already typed, so full Pydantic
-        # re-validation for every list is unnecessary.
         new_config = (
             config if config.index is None else _copy_request_config(config, index=None)
         )
+        _node_cursor(node).container(list)
         for i in _normalise_index(config.index, len(node.archive)):
+            archive_item = await goto_child(node.archive, i)
+            child = node.descend(str(i), archive=archive_item)
+            if new_config.is_plain() and isinstance(node.definition, Quantity):
+                _node_cursor(child).set(archive_item)
+                continue
             await self._resolve(
-                node.replace(
-                    archive=await goto_child(node.archive, i),
-                    current_path=node.current_path + [str(i)],
-                ),
+                child,
                 new_config,
                 omit_keys=omit_keys,
                 wildcard=wildcard,
@@ -3118,6 +3267,7 @@ class ArchiveReader(ArchiveLikeReader):
                             visited_path=set(),
                             current_depth=0,
                             reader=self,
+                            result_cursor=ResultCursor(response),
                         ),
                         self.required_query,
                         self.global_config,
@@ -3241,33 +3391,45 @@ class ArchiveReader(ArchiveLikeReader):
                 self._log(f'Definition {key} is not repeatable.')
                 continue
 
-            child_path: list = node.current_path + [name]
-
-            child = functools.partial(node.replace, definition=child_definition)
-
             if isinstance(value, RequestConfig):
-                # this is a leaf, resolve it according to the config
-                child_node = child(current_path=child_path, archive=child_archive)
+                # Quantities are atomic from the graph reader's perspective, so a
+                # plain request can copy them directly. Subsections still need a
+                # definition-aware walk: archive dictionaries may contain fields
+                # that are not part of their metainfo definition.
+                if value.is_plain() and isinstance(child_definition, Quantity):
+                    _node_cursor(node).child(name).set(child_archive)
+                    continue
+
+                child_node = node.descend(
+                    name, archive=child_archive, definition=child_definition
+                )
                 await self._resolve_figure(child_node, node, value)
                 await self._resolve(child_node, value)
             elif isinstance(value, dict):
                 # this is a nested query, keep walking down the tree
-                async def __walk(__path, __archive):
-                    await self._walk(
-                        child(current_path=__path, archive=__archive),
-                        value,
-                        current_config,
-                    )
-
                 if is_list:
                     if GeneralReader.__CONFIG__ in value:
                         index = value[GeneralReader.__CONFIG__].index or index
-                    # field[start:end]: dict
+
+                    list_node = node.descend(
+                        name,
+                        archive=child_archive,
+                        definition=child_definition,
+                    )
                     for i in _normalise_index(index, len(child_archive)):
-                        await __walk(child_path + [str(i)], child_archive[i])
+                        await self._walk(
+                            list_node.descend(str(i), archive=child_archive[i]),
+                            value,
+                            current_config,
+                        )
                 else:
-                    # field: dict
-                    await __walk(child_path, child_archive)
+                    await self._walk(
+                        node.descend(
+                            name, archive=child_archive, definition=child_definition
+                        ),
+                        value,
+                        current_config,
+                    )
             elif isinstance(value, list):
                 # optionally support alternative syntax
                 pass
@@ -3346,7 +3508,7 @@ class ArchiveReader(ArchiveLikeReader):
                     else node.archive,
                 )
             if isinstance(node.definition, SubSection):
-                node = node.replace(definition=node.definition.sub_section.m_resolved())
+                node = node.replace(definition=_unwrap_subsection(node.definition))
             return await self._resolve_list(
                 node, config, omit_keys=omit_keys, wildcard=wildcard
             )
@@ -3386,20 +3548,17 @@ class ArchiveReader(ArchiveLikeReader):
             else:
                 result_to_write = await self._apply_resolver(node, config)
 
-            return await _populate_result(
-                node.result_root, node.current_path, result_to_write
-            )
+            _node_cursor(node).set(result_to_write)
+            return
 
-        if isinstance(node.definition, Quantity) or isinstance(
-            getattr(node.definition, 'type', None), JSON | AnyType
-        ):
+        if isinstance(node.definition, Quantity):
             # the container size limit does not recursively apply to JSON
             result_to_write = (
                 f'__INTERNAL__:{node.generate_reference()}'
                 if self.__if_strip(node, config)
                 else await self._apply_resolver(node, config)
             )
-            await _populate_result(node.result_root, node.current_path, result_to_write)
+            _node_cursor(node).set(result_to_write)
             return
 
         for key in node.archive.keys():
@@ -3415,21 +3574,33 @@ class ArchiveReader(ArchiveLikeReader):
                     self._log(f'Definition {key} is not found.')
                     continue
 
+                child_archive = await goto_child(node.archive, key)
+                if (
+                    isinstance(child_definition, Quantity)
+                    and not _is_quantity_reference(child_definition)
+                    and key not in GeneralReader.__ALL_ID_FIELDS__
+                    and config.resolve_type is None
+                    and (
+                        child_archive is None
+                        or type(child_archive) in (str, int, float, bool)
+                    )
+                ):
+                    _node_cursor(node).child(key).set(child_archive)
+                    continue
+
                 if is_subsection := isinstance(child_definition, SubSection):
                     child_definition = child_definition.sub_section
 
-                child_node = node.replace(
-                    archive=await goto_child(node.archive, key),
-                    current_path=node.current_path + [key],
+                child_node = node.descend(
+                    key,
+                    archive=child_archive,
                     definition=child_definition,
                     current_depth=node.current_depth + 1,
                 )
 
                 if self.__if_strip(child_node, config, depth_check=is_subsection):
-                    await _populate_result(
-                        node.result_root,
-                        child_node.current_path,
-                        f'__INTERNAL__:{child_node.generate_reference()}',
+                    _node_cursor(node).child(key).set(
+                        f'__INTERNAL__:{child_node.generate_reference()}'
                     )
                     continue
 
@@ -3459,9 +3630,7 @@ class ArchiveReader(ArchiveLikeReader):
                     )
 
                 if child_config.is_plain():
-                    await _populate_result(
-                        node.result_root, child_node.current_path, child_node.archive
-                    )
+                    _node_cursor(node).child(key).set(child_node.archive)
                 else:
                     await self._resolve_figure(child_node, node, child_config)
                     await self._resolve(child_node, child_config)
@@ -3484,15 +3653,12 @@ class ArchiveReader(ArchiveLikeReader):
 
         if custom_def is None and custom_def_id is None:
             if use_qualified or config.include_definition is DefinitionType.both:
-                definition = node.definition
-                if isinstance(definition, SubSection):
-                    definition = definition.sub_section.m_resolved()
+                definition = _unwrap_subsection(node.definition)
                 if use_qualified:
-                    await _populate_result(
-                        node.result_root,
-                        node.current_path + [Token.DEF],
-                        _get_short_definition_reference(self._reader_cache, definition),
+                    def_val = _get_short_definition_reference(
+                        self._reader_cache, definition
                     )
+                    _node_cursor(node).child(Token.DEF).set(def_val)
                 else:
                     with DefinitionReader(
                         RequestConfig(
@@ -3521,11 +3687,8 @@ class ArchiveReader(ArchiveLikeReader):
             return node
 
         if use_qualified:
-            await _populate_result(
-                node.result_root,
-                node.current_path + [Token.DEF],
-                _get_short_definition_reference(self._reader_cache, new_def),
-            )
+            def_val = _get_short_definition_reference(self._reader_cache, new_def)
+            _node_cursor(node).child(Token.DEF).set(def_val)
         elif config.include_definition is not DefinitionType.none:
             with DefinitionReader(
                 RequestConfig(
@@ -3557,7 +3720,10 @@ class ArchiveReader(ArchiveLikeReader):
 
         # resolve subsections
         if isinstance(original_def, SubSection):
-            return node.replace(definition=original_def.sub_section.m_resolved())
+            return node.replace(definition=_unwrap_subsection(original_def))
+
+        if isinstance(original_def, Section):
+            return node
 
         # if not a quantity reference, early return
         if not _is_quantity_reference(original_def):
