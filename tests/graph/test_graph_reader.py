@@ -5229,3 +5229,489 @@ def test_archive_reader_resolves_repeated_subsection_definition_once(monkeypatch
 
     assert result == {'children': []}
     assert resolution_count == 1
+
+
+def test_archive_reader_plain_subsection_does_not_resolve_definition(monkeypatch):
+    from nomad.graph.model import DirectiveType, RequestConfig
+    from nomad.metainfo import MSection, Package, Quantity, SubSection
+
+    m_package = Package(name='test_plain_subsection_definition')
+
+    class Child(MSection):
+        value = Quantity(type=str)
+
+    class Parent(MSection):
+        child = SubSection(section_def=Child)
+
+    m_package.__init_metainfo__()
+    original_m_resolved = MSection.m_resolved
+    resolution_count = 0
+
+    def count_child_resolution(definition):
+        nonlocal resolution_count
+        if definition is Child.m_def:
+            resolution_count += 1
+        return original_m_resolved(definition)
+
+    monkeypatch.setattr(MSection, 'm_resolved', count_child_resolution)
+    archive = {'child': {'value': 'test'}}
+    result = {}
+
+    with ArchiveReader({}) as reader:
+        node = GraphNode(
+            upload_id='upload',
+            entry_id='entry',
+            current_path=[],
+            result_root=result,
+            ref_result_root=result,
+            archive=archive,
+            archive_root=archive,
+            definition=Parent.m_def,
+            visited_path=set(),
+            current_depth=0,
+            reader=reader,
+        )
+        asyncio.run(reader._resolve(node, RequestConfig(directive=DirectiveType.plain)))
+
+    assert result == archive
+    assert resolution_count == 0
+
+
+def test_archive_reader_direct_containers_preserve_filtered_results():
+    archive = {
+        'metadata': {
+            'entry_id': 'entry',
+            'upload_id': 'upload',
+            'quantities': ['first', 'second'],
+            'text_search_contents': [],
+        }
+    }
+
+    with ArchiveReader(
+        {
+            'metadata': {
+                'm_request': {
+                    'directive': 'plain',
+                    'include': ['does_not_exist'],
+                }
+            }
+        }
+    ) as reader:
+        assert reader.sync_read(archive) == {}
+
+    with ArchiveReader(
+        {
+            'metadata': {
+                'm_request': {
+                    'directive': 'plain',
+                    'max_list_size': 1,
+                }
+            }
+        }
+    ) as reader:
+        assert reader.sync_read(archive) == {
+            'metadata': {
+                'entry_id': 'entry',
+                'upload_id': 'upload',
+                'quantities': (
+                    '__INTERNAL__:../uploads/upload/archive/entry#/metadata/quantities'
+                ),
+                'text_search_contents': [],
+            }
+        }
+
+    with ArchiveReader(
+        {
+            'metadata': {
+                'm_request': {
+                    'directive': 'plain',
+                    'include': ['text_search_contents'],
+                    'depth': 1,
+                }
+            }
+        }
+    ) as reader:
+        assert reader.sync_read(archive) == {
+            'metadata': {
+                'text_search_contents': (
+                    '__INTERNAL__:../uploads/upload/archive/entry#/metadata/text_search_contents'
+                )
+            }
+        }
+
+
+def test_archive_reader_result_containers_do_not_alias_the_source_archive():
+    archive = {
+        'metadata': {
+            'entry_id': 'entry',
+            'upload_id': 'upload',
+            'quantities': ['first', 'second'],
+        }
+    }
+
+    with ArchiveReader({'metadata': '*'}) as reader:
+        result = reader.sync_read(archive)
+
+    result['metadata']['result_only'] = True
+    assert 'result_only' not in archive['metadata']
+
+
+def test_archive_reader_discards_container_pointer_after_reference_root_switch():
+    archive = {
+        'metadata': {'entry_id': 'entry', 'upload_id': 'upload'},
+        'run': [
+            {
+                'system': [{'atoms': {'labels': ['H']}}],
+                'calculation': [{'system_ref': '/run/0/system/0'}],
+            }
+        ],
+    }
+    query = {
+        'run[0]': {
+            'calculation[0]': {
+                'm_request': {
+                    'directive': 'resolved',
+                    'include': ['system_ref'],
+                }
+            }
+        }
+    }
+
+    with ArchiveReader(query) as reader:
+        assert reader.sync_read(archive) == {
+            'run': [
+                {
+                    'calculation': [
+                        {
+                            'system_ref': (
+                                'uploads/upload/entries/entry/archive/run/0/system/0'
+                            )
+                        }
+                    ]
+                }
+            ],
+            'uploads': {
+                'upload': {
+                    'entries': {
+                        'entry': {
+                            'archive': {
+                                'run': [{'system': [{'atoms': {'labels': ['H']}}]}]
+                            }
+                        }
+                    }
+                }
+            },
+        }
+
+
+def test_archive_reader_json_and_any_quantities():
+    """Ensure JSON and Any quantities with dict values are resolved correctly
+    without treating inner dictionary keys as Section definitions and without
+    triggering Section.__getattr__('type') lookups.
+    """
+    from unittest.mock import patch
+
+    from nomad.graph.graph_reader import RequestConfig, ResultCursor
+    from nomad.metainfo import MSection, Package, Quantity, SubSection
+    from nomad.metainfo.data_type import JSON, Any
+
+    m_package = Package(name='test_package_json_any')
+
+    class SubSectionData(MSection):
+        sub_prop = Quantity(type=str)
+
+    class MySectionData(MSection):
+        json_quantity = Quantity(type=JSON)
+        any_quantity = Quantity(type=Any)
+        str_quantity = Quantity(type=str)
+        sub = SubSection(section_def=SubSectionData)
+
+    m_package.__init_metainfo__()
+
+    archive_data = {
+        'json_quantity': {'k': 'v', 'nested': {'num': 123}},
+        'any_quantity': {'any_k': [1, 2], 'flag': True},
+        'str_quantity': 'test_str',
+        'sub': {'sub_prop': 'sub_val'},
+    }
+
+    # 1. Full resolve: verify dict-valued JSON and Any quantities resolve properly
+    result = {}
+    with ArchiveReader({}) as reader:
+        node = GraphNode(
+            upload_id='upload_1',
+            entry_id='entry_1',
+            current_path=['data'],
+            result_root=result,
+            ref_result_root=result,
+            archive=archive_data,
+            archive_root={'data': archive_data},
+            definition=MySectionData.m_def,
+            visited_path=set(),
+            current_depth=0,
+            reader=reader,
+            result_cursor=ResultCursor.from_path(result, ['data']),
+        )
+        asyncio.run(reader._resolve(node, RequestConfig()))
+
+    data = result['data']
+    assert data['json_quantity'] == {'k': 'v', 'nested': {'num': 123}}
+    assert data['any_quantity'] == {'any_k': [1, 2], 'flag': True}
+    assert data['str_quantity'] == 'test_str'
+    assert data['sub']['sub_prop'] == 'sub_val'
+
+    # 2. Stripping: verify container size limit stripping works for dict quantities
+    result_stripped = {}
+    with ArchiveReader({}) as reader:
+        node = GraphNode(
+            upload_id='upload_1',
+            entry_id='entry_1',
+            current_path=['data'],
+            result_root=result_stripped,
+            ref_result_root=result_stripped,
+            archive=archive_data,
+            archive_root={'data': archive_data},
+            definition=MySectionData.m_def,
+            visited_path=set(),
+            current_depth=0,
+            reader=reader,
+            result_cursor=ResultCursor.from_path(result_stripped, ['data']),
+        )
+        asyncio.run(reader._resolve(node, RequestConfig(max_dict_size=1)))
+
+    data_stripped = result_stripped['data']
+    assert data_stripped['json_quantity'].startswith('__INTERNAL__:')
+    assert data_stripped['any_quantity'].startswith('__INTERNAL__:')
+    assert data_stripped['str_quantity'] == 'test_str'
+
+    # 3. Regression test: Section.__getattr__ is never called with 'type'
+    original_getattr = MSection.__getattr__
+    type_lookups = []
+
+    def mock_getattr(self, name):
+        if name == 'type':
+            type_lookups.append(name)
+        return original_getattr(self, name)
+
+    with patch.object(MSection, '__getattr__', mock_getattr):
+        result_perf = {}
+        with ArchiveReader({}) as reader:
+            node = GraphNode(
+                upload_id='upload_1',
+                entry_id='entry_1',
+                current_path=['data'],
+                result_root=result_perf,
+                ref_result_root=result_perf,
+                archive=archive_data,
+                archive_root={'data': archive_data},
+                definition=MySectionData.m_def,
+                visited_path=set(),
+                current_depth=0,
+                reader=reader,
+                result_cursor=ResultCursor.from_path(result_perf, ['data']),
+            )
+            asyncio.run(reader._resolve(node, RequestConfig()))
+
+        assert len(type_lookups) == 0, (
+            f"Expected 0 'type' lookups on Section, got {len(type_lookups)}"
+        )
+
+
+def test_archive_reader_quantity_fast_path_preserves_definition_output():
+    from nomad.graph.model import DirectiveType, MDefFormatType, RequestConfig
+    from nomad.metainfo import MSection, Package, Quantity
+    from nomad.metainfo.data_type import JSON
+
+    m_package = Package(name='test_quantity_fast_path_definition')
+
+    class MySection(MSection):
+        payload = Quantity(type=JSON)
+
+    m_package.__init_metainfo__()
+    archive = {'payload': {'key': 'value'}}
+    result = {}
+
+    with ArchiveReader({}) as reader:
+        node = GraphNode(
+            upload_id='upload',
+            entry_id='entry',
+            current_path=['data'],
+            result_root=result,
+            ref_result_root=result,
+            archive=archive,
+            archive_root={'data': archive},
+            definition=MySection.m_def,
+            visited_path=set(),
+            current_depth=0,
+            reader=reader,
+        )
+        asyncio.run(
+            reader._resolve(
+                node,
+                RequestConfig(
+                    directive=DirectiveType.resolved,
+                    m_def_format=MDefFormatType.short,
+                ),
+            )
+        )
+
+    assert result['data']['payload']['key'] == 'value'
+    assert result['data']['payload']['m_def'].startswith(
+        f'{MySection.payload.qualified_name()}@'
+    )
+
+
+def test_archive_reader_quantity_fast_path_uses_child_resolver_config():
+    from nomad.graph.model import DirectiveType, RequestConfig
+    from nomad.metainfo import MSection, Package, Quantity
+
+    m_package = Package(name='test_quantity_fast_path_resolver_config')
+
+    class MySection(MSection):
+        main_author = Quantity(type=str)
+
+    m_package.__init_metainfo__()
+    archive = {'main_author': 'user-id'}
+    result = {}
+    resolver_properties = []
+
+    with ArchiveReader({}) as reader:
+        apply_resolver = reader._apply_resolver
+
+        async def record_resolver(node, config):
+            resolver_properties.append(config.property_name)
+            return await apply_resolver(node, config)
+
+        reader._apply_resolver = record_resolver
+        node = GraphNode(
+            upload_id='upload',
+            entry_id='entry',
+            current_path=['data'],
+            result_root=result,
+            ref_result_root=result,
+            archive=archive,
+            archive_root={'data': archive},
+            definition=MySection.m_def,
+            visited_path=set(),
+            current_depth=0,
+            reader=reader,
+        )
+        asyncio.run(
+            reader._resolve(node, RequestConfig(directive=DirectiveType.resolved))
+        )
+
+    assert result == {'data': {'main_author': 'user-id'}}
+    assert resolver_properties == ['main_author']
+
+
+def test_archive_reader_quantity_fast_path_skips_resolver_for_lists():
+    from nomad.graph.model import DirectiveType, RequestConfig, ResolveType
+    from nomad.metainfo import MSection, Package, Quantity
+
+    m_package = Package(name='test_quantity_fast_path_list_resolver')
+
+    class MySection(MSection):
+        identifiers = Quantity(type=str, shape=['*'])
+
+    m_package.__init_metainfo__()
+    archive = {'identifiers': ['first', 'second']}
+    result = {}
+
+    with ArchiveReader({}) as reader:
+
+        async def unexpected_resolver(*args, **kwargs):
+            pytest.fail('list-valued quantities must bypass the value resolver')
+
+        reader._apply_resolver = unexpected_resolver
+        node = GraphNode(
+            upload_id='upload',
+            entry_id='entry',
+            current_path=['data'],
+            result_root=result,
+            ref_result_root=result,
+            archive=archive,
+            archive_root={'data': archive},
+            definition=MySection.m_def,
+            visited_path=set(),
+            current_depth=0,
+            reader=reader,
+        )
+        asyncio.run(
+            reader._resolve(
+                node,
+                RequestConfig(
+                    directive=DirectiveType.resolved,
+                    resolve_type=ResolveType.user,
+                ),
+            )
+        )
+
+    assert result == {'data': {'identifiers': ['first', 'second']}}
+
+
+def test_archive_reader_subsection_plain_wildcard_filters_unknown_properties():
+    archive = {
+        'metadata': {
+            'entry_id': 'entry_1',
+            'upload_id': 'upload_1',
+            'quantities': ['q1', 'q2'],
+            'not_in_definition': 'must not leak',
+        },
+        'run': [
+            {
+                'calculation': [
+                    {'energy': {'total': {'value': 1.0}}},
+                    {
+                        'energy': {
+                            'total': {'value': 2.0},
+                            'nested_not_in_definition': 'plain child remains atomic',
+                        },
+                        'not_in_definition': 'must not leak',
+                    },
+                ]
+            }
+        ],
+    }
+
+    query = {
+        'metadata': '*',
+        'run[0]': {
+            'calculation[-1]': '*',
+        },
+    }
+
+    with ArchiveReader(query) as reader:
+        result = reader.sync_read(archive)
+
+    assert result == {
+        'm_errors': [
+            {
+                'error_type': 'GENERAL',
+                'message': 'Definition not_in_definition is not found.',
+            }
+        ],
+        'metadata': {
+            'entry_id': 'entry_1',
+            'upload_id': 'upload_1',
+            'quantities': ['q1', 'q2'],
+        },
+        'run': [
+            {
+                'calculation': [
+                    None,
+                    {
+                        'energy': {
+                            'total': {'value': 2.0},
+                            'nested_not_in_definition': 'plain child remains atomic',
+                        }
+                    },
+                ]
+            }
+        ],
+    }
+
+    # Verify no container aliasing
+    result['metadata']['result_only'] = True
+    result['run'][0]['calculation'][1]['result_only'] = True
+    assert 'result_only' not in archive['metadata']
+    assert 'result_only' not in archive['run'][0]['calculation'][1]
