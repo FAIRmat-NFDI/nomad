@@ -18,6 +18,7 @@
 
 import asyncio
 import json
+import zipfile
 from contextlib import contextmanager
 from datetime import datetime
 from types import SimpleNamespace
@@ -29,6 +30,7 @@ import yaml
 from nomad import utils
 from nomad.datamodel import EntryArchive, ServerContext
 from nomad.datamodel.metainfo.simulation import run
+from nomad.files import PublicUploadFiles, StagingUploadFiles
 from nomad.graph.graph_reader import (
     ArchiveReader,
     EntryReader,
@@ -4880,6 +4882,122 @@ def test_file_system_reader_resolved_directory_uses_batch_lookup(
 
     assert response['mainfile_for_id_01']['entry']['entry_id'] == 'id_01'
     assert response['mainfile_for_id_02']['entry']['entry_id'] == 'id_02'
+
+
+def test_file_system_reader_plain_listing(user1, example_data_with_reference):
+    required = {
+        'm_request': {
+            'directive': 'plain',
+        }
+    }
+    with FileSystemReader(required, user=user1) as reader:
+        response = reader.sync_read('id_published_with_ref')
+        assert 'id_published_with_ref' in reader.upload_pool
+        assert response['m_is'] == 'Directory'
+        assert response['1.aux'] == {'path': '1.aux', 'm_is': 'File', 'size': 8}
+        assert response['mainfile_for_id_01']['m_is'] == 'File'
+        assert response['mainfile_for_id_01']['size'] == 3227
+
+
+def test_file_system_reader_pools_and_closes_published_zip(user1, example_data):
+    required = {
+        'm_request': {
+            'directive': 'plain',
+            'depth': 2,
+        }
+    }
+    with FileSystemReader(required, user=user1) as reader:
+        response = reader.sync_read('id_published')
+        assert 'id_published' in reader.upload_pool
+        upload_files = reader.upload_pool['id_published']
+        assert isinstance(upload_files, PublicUploadFiles)
+        assert upload_files._zip_index is not None
+        assert response['m_is'] == 'Directory'
+        assert 'test_content' in response
+
+    assert upload_files._zip_index is None
+
+
+def test_file_system_reader_reuses_zip_index_across_queries(
+    monkeypatch, tmp_path, user1, example_data
+):
+    from nomad.config import config
+
+    monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+    monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'directory', str(tmp_path))
+
+    zipfile_calls = {'n': 0}
+    original_zipfile = zipfile.ZipFile
+
+    class CountingZipFile(original_zipfile):
+        def __init__(self, *args, **kwargs):
+            zipfile_calls['n'] += 1
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(zipfile, 'ZipFile', CountingZipFile)
+
+    required = {
+        'm_request': {
+            'directive': 'plain',
+            'depth': 2,
+        }
+    }
+    with FileSystemReader(required, user=user1) as reader:
+        response = reader.sync_read('id_published')
+        upload_files = reader.upload_pool['id_published']
+        assert response['m_is'] == 'Directory'
+        assert upload_files._zip_index is not None
+    assert upload_files._zip_index is None
+    first_parses = zipfile_calls['n']
+    assert first_parses >= 1
+
+    with FileSystemReader(required, user=user1) as reader:
+        response = reader.sync_read('id_published')
+        upload_files = reader.upload_pool['id_published']
+        assert response['m_is'] == 'Directory'
+        assert 'test_content' in response
+        assert upload_files._zip_index is not None
+    assert zipfile_calls['n'] == first_parses
+
+
+def test_file_system_reader_reuses_zip_index_across_queries_with_ref(
+    monkeypatch, tmp_path, user1, example_data_with_reference
+):
+    from nomad.config import config
+
+    monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+    monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'directory', str(tmp_path))
+
+    zipfile_calls = {'n': 0}
+    original_zipfile = zipfile.ZipFile
+
+    class CountingZipFile(original_zipfile):
+        def __init__(self, *args, **kwargs):
+            zipfile_calls['n'] += 1
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(zipfile, 'ZipFile', CountingZipFile)
+
+    required = {
+        'm_request': {
+            'directive': 'plain',
+            'depth': 2,
+        }
+    }
+    with FileSystemReader(required, user=user1) as reader:
+        response = reader.sync_read('id_published_with_ref')
+        upload_files = reader.upload_pool['id_published_with_ref']
+        assert response['m_is'] == 'Directory'
+        assert isinstance(upload_files, StagingUploadFiles)
+        assert 'mainfile_for_id_01' in response
+    assert zipfile_calls['n'] == 0
+
+    with FileSystemReader(required, user=user1) as reader:
+        response = reader.sync_read('id_published_with_ref')
+        upload_files = reader.upload_pool['id_published_with_ref']
+        assert response['m_is'] == 'Directory'
+        assert 'mainfile_for_id_01' in response
+    assert zipfile_calls['n'] == 0
 
 
 def test_entry_reader_retrieve_entry_does_not_call_perform_search(

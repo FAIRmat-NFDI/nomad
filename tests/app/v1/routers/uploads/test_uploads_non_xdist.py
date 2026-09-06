@@ -20,7 +20,6 @@ import io
 import os
 import time
 import zipfile
-from contextlib import contextmanager
 from typing import Any
 
 import pytest
@@ -1573,22 +1572,29 @@ def test_get_upload_raw_path(
 def test_get_published_raw_file_reuses_and_closes_one_zip_filesystem(
     monkeypatch, auth_headers, client, example_data
 ):
-    """Metadata lookup and streaming share one ZIP reader for a file response."""
+    """Metadata lookup and streaming share one ZIP parse for a file response."""
     opened = 0
     closed = 0
-    original_zip_fs = PublicUploadFiles._zip_fs
+    original_ensure = PublicUploadFiles._ensure_raw_zip
+    original_close = PublicUploadFiles.close
 
-    @contextmanager
-    def tracked_zip_fs(self, *args, **kwargs):
-        nonlocal opened, closed
-        opened += 1
-        with original_zip_fs(self, *args, **kwargs) as zip_fs:
-            try:
-                yield zip_fs
-            finally:
-                closed += 1
+    def tracked_ensure(self):
+        nonlocal opened
+        first_open = self._zip_index is None
+        result = original_ensure(self)
+        if first_open:
+            opened += 1
+        return result
 
-    monkeypatch.setattr(PublicUploadFiles, '_zip_fs', tracked_zip_fs)
+    def tracked_close(self):
+        nonlocal closed
+        had_index = self._zip_index is not None
+        original_close(self)
+        if had_index:
+            closed += 1
+
+    monkeypatch.setattr(PublicUploadFiles, '_ensure_raw_zip', tracked_ensure)
+    monkeypatch.setattr(PublicUploadFiles, 'close', tracked_close)
 
     response = client.get(
         'uploads/id_published/raw/test_content/subdir/test_entry_01/mainfile.json',
