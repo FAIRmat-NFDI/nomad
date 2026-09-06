@@ -605,6 +605,36 @@ class Oasis(ConfigBaseModel):
     )
 
 
+class MetadataCache(ConfigBaseModel):
+    """Per-node on-disk cache of immutable ZIP member indexes."""
+
+    enabled: Literal['auto'] | bool = Field(
+        'auto',
+        description="""Whether to cache parsed ZIP member indexes on local disk.
+
+``auto`` enables the cache when ``protocol == 's3'``. Set ``true`` to force it
+on (for example in local tests) and ``false`` to disable it.""",
+    )
+    directory: str | None = Field(
+        None,
+        description="""Directory for cached index files. When unset, indexes are stored
+under ``<config.fs.local_tmp>/nomad-zip-index``. The directory is shared by all
+Gunicorn workers on the node.""",
+    )
+    max_disk_mb: int = Field(
+        1024,
+        ge=0,
+        description="""Maximum total size of cached index files on disk, in MiB.
+
+Set to 0 to disable sweeping (unbounded growth).""",
+    )
+
+    def is_enabled(self, protocol: str | None) -> bool:
+        if self.enabled == 'auto':
+            return protocol == 's3'
+        return bool(self.enabled)
+
+
 class NOMADFileSystem(ConfigBaseModel):
     protocol: Literal['s3'] | None = Field(
         None,
@@ -709,6 +739,24 @@ used consistently for an upload; artifacts are never mixed between the two backe
         24 * 60 * 60,
         gt=0,
         description='Lifetime in seconds of signed URLs created for published raw ZIP downloads.',
+    )
+    zip_tail_prefetch_kb: int = Field(
+        512,
+        ge=0,
+        description="""KiB of ZIP tail to prefetch when indexing a remote published raw archive.
+
+The end-of-central-directory record stores absolute offsets from byte 0 of the ZIP.
+Prefetching the last N KiB lets ``zipfile.ZipFile`` parse the central directory from RAM
+for typical uploads. Set to 0 to fetch the tail on demand. Oversized central directories
+fall back to additional range reads.""",
+    )
+    metadata_cache: MetadataCache = Field(
+        default_factory=MetadataCache,
+        description="""Per-node on-disk cache of immutable ZIP member indexes.
+
+Enabled automatically for S3 public storage. Index files are immutable, keyed
+by object identity, validated by one HEAD/info call per request, and shared by
+all workers on the node.""",
     )
 
     @model_validator(mode='after')

@@ -46,6 +46,7 @@ from nomad.files import (
 )
 from nomad.mongo.package import PackageDefinition
 from nomad.processing import Upload
+from nomad.zip_index import RangeTailFile
 
 EntryWithFiles = tuple[datamodel.EntryMetadata, str]
 UploadWithFiles = tuple[str, list[datamodel.EntryMetadata], UploadFiles]
@@ -889,6 +890,301 @@ class TestPublicUploadFiles(UploadFilesContract):
         v1_file = public_upload_files.msg_fp(public_upload_files.access, fallback=True)
         assert not v2_file.exists()
         assert os.path.basename(v1_file.os_path) == 'archive-public-v1.msg.msg'
+
+    def test_zip_index_parse_once_and_close(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
+        )
+        _, _, upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+
+        def fail_zip_fs(self, *args, **kwargs):
+            raise AssertionError('listing must not open a new ZipFileSystem')
+
+        monkeypatch.setattr(PublicUploadFiles, '_zip_fs', fail_zip_fs)
+
+        zipfile_calls = {'n': 0}
+        original_zipfile = zipfile.ZipFile
+
+        class CountingZipFile(original_zipfile):
+            def __init__(self, *args, **kwargs):
+                zipfile_calls['n'] += 1
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr(zipfile, 'ZipFile', CountingZipFile)
+
+        assert upload_files.raw_exists('')
+        assert upload_files.raw_exists('examples_template')
+        assert not upload_files.raw_exists('missing-dir')
+        assert upload_files.raw_isfile('examples_template/template.json')
+        assert not upload_files.raw_isfile('examples_template')
+        recursive = list(upload_files.raw_listdir('', recursive=True))
+        nested = list(
+            upload_files.raw_listdir(
+                'examples_template', recursive=True, files_only=True
+            )
+        )
+        assert recursive
+        assert nested
+        assert not upload_files.is_empty()
+
+        assert upload_files._zip_index is not None
+        with upload_files.raw_file('examples_template/template.json', 'rb') as raw_file:
+            assert raw_file.read()
+
+        first_parses = zipfile_calls['n']
+        assert first_parses == 1
+        assert len(list(tmp_path.glob('*.v1.msgpack'))) == 1
+
+        upload_files.close()
+        assert upload_files._zip_index is None
+        upload_files.close()
+
+        other = PublicUploadFiles(test_upload_id)
+        assert other.raw_exists('examples_template')
+        list(other.raw_listdir('', recursive=True))
+        with other.raw_file('examples_template/template.json', 'rb') as raw_file:
+            assert raw_file.read()
+        assert other._zip_index is not None
+        assert zipfile_calls['n'] == first_parses
+        other.close()
+
+    def test_remote_storage_parses_zip_from_one_tail_fetch(
+        self, test_upload_id, monkeypatch
+    ):
+        from tests.test_zip_member_index import CountingRangeFS
+
+        _, _, upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        data = pathlib.Path(upload_files.raw_zip_file_object().os_path).read_bytes()
+        counting_fs = CountingRangeFS(data)
+        monkeypatch.setattr(
+            PublicUploadFiles,
+            '_open_raw_zip_fileobj',
+            lambda self: RangeTailFile.from_filesystem(
+                counting_fs, counting_fs.path, len(data)
+            ),
+        )
+
+        assert upload_files.raw_exists('examples_template')
+        assert upload_files.raw_isfile('examples_template/template.json')
+        list(upload_files.raw_listdir('', recursive=True))
+        list(upload_files.raw_listdir('examples_template', recursive=True))
+        with upload_files.raw_file('examples_template/template.json', 'rb') as raw_file:
+            assert raw_file.read()
+
+        assert counting_fs.info_calls == 1
+        assert counting_fs.cat_file_calls == 1
+        assert counting_fs.open_calls == 0
+        upload_files.close()
+
+    def test_empty_published_zip_root_exists(self, empty_test_upload):
+        upload_files = empty_test_upload
+        assert upload_files.raw_exists('')
+        assert not upload_files.raw_exists('missing')
+        assert list(upload_files.raw_listdir('')) == []
+        assert list(upload_files.raw_listdir('', recursive=True)) == []
+        assert upload_files.is_empty()
+        upload_files.close()
+        upload_files.close()
+
+    def test_zip_metadata_cache_warm_disk_skips_parse(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        from tests.test_zip_member_index import CountingRangeFS
+
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
+        )
+        _, _, upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        data = pathlib.Path(upload_files.raw_zip_file_object().os_path).read_bytes()
+        counting_fs = CountingRangeFS(data)
+        zipfile_calls = {'n': 0}
+        original_zipfile = zipfile.ZipFile
+
+        class CountingZipFile(original_zipfile):
+            def __init__(self, *args, **kwargs):
+                zipfile_calls['n'] += 1
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr(zipfile, 'ZipFile', CountingZipFile)
+        monkeypatch.setattr(
+            PublicUploadFiles,
+            '_open_raw_zip_fileobj',
+            lambda self: RangeTailFile.from_filesystem(
+                counting_fs, counting_fs.path, len(data)
+            ),
+        )
+
+        assert upload_files.raw_exists('examples_template')
+        listing = list(upload_files.raw_listdir('', recursive=True))
+        assert listing
+        assert zipfile_calls['n'] == 1
+        assert counting_fs.cat_file_calls == 1
+        assert len(list(tmp_path.glob('*.v1.msgpack'))) == 1
+        upload_files.close()
+        assert upload_files._zip_index is None
+
+        other = PublicUploadFiles(test_upload_id)
+        assert other.raw_exists('examples_template')
+        assert list(other.raw_listdir('', recursive=True))
+        assert zipfile_calls['n'] == 1
+        assert counting_fs.cat_file_calls == 1
+        with other.raw_file('examples_template/template.json', 'rb') as raw_file:
+            payload = raw_file.read()
+            raw_file.seek(1)
+            assert raw_file.read(3) == payload[1:4]
+        other.close()
+
+    def test_zip_metadata_cache_etag_mismatch_refetches(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        from nomad.zip_index import object_identity as original_identity
+
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
+        )
+        _, _, upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        token = {'etag': 'v1'}
+        zipfile_calls = {'n': 0}
+        original_zipfile = zipfile.ZipFile
+
+        class CountingZipFile(original_zipfile):
+            def __init__(self, *args, **kwargs):
+                zipfile_calls['n'] += 1
+                super().__init__(*args, **kwargs)
+
+        def fake_identity(fs, path):
+            _path, _etag, size = original_identity(fs, path)
+            return (_path, token['etag'], size)
+
+        monkeypatch.setattr(zipfile, 'ZipFile', CountingZipFile)
+        monkeypatch.setattr('nomad.files.object_identity', fake_identity)
+
+        assert upload_files.raw_exists('examples_template')
+        upload_files.close()
+        assert zipfile_calls['n'] == 1
+        assert len(list(tmp_path.glob('*.v1.msgpack'))) == 1
+
+        other = PublicUploadFiles(test_upload_id)
+        assert other.raw_exists('examples_template')
+        other.close()
+        assert zipfile_calls['n'] == 1
+
+        token['etag'] = 'v2'
+        refreshed = PublicUploadFiles(test_upload_id)
+        assert refreshed.raw_exists('examples_template')
+        refreshed.close()
+        assert zipfile_calls['n'] == 2
+        assert len(list(tmp_path.glob('*.v1.msgpack'))) == 2
+
+    def test_zip_metadata_cache_close_then_ensure_reuses_disk(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
+        )
+        _, _, upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        zipfile_calls = {'n': 0}
+        original_zipfile = zipfile.ZipFile
+
+        class CountingZipFile(original_zipfile):
+            def __init__(self, *args, **kwargs):
+                zipfile_calls['n'] += 1
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr(zipfile, 'ZipFile', CountingZipFile)
+        upload_files._ensure_raw_zip()
+        upload_files.close()
+        upload_files._ensure_raw_zip()
+        assert zipfile_calls['n'] == 1
+        upload_files.close()
+
+    def test_zip_metadata_cache_disabled_reparses_each_instance(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', False)
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
+        )
+        _, _, upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        zipfile_calls = {'n': 0}
+        original_zipfile = zipfile.ZipFile
+
+        class CountingZipFile(original_zipfile):
+            def __init__(self, *args, **kwargs):
+                zipfile_calls['n'] += 1
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr(zipfile, 'ZipFile', CountingZipFile)
+        upload_files.raw_exists('examples_template')
+        upload_files.close()
+        assert zipfile_calls['n'] == 1
+        assert list(tmp_path.glob('*.v1.msgpack')) == []
+
+        other = PublicUploadFiles(test_upload_id)
+        other.raw_exists('examples_template')
+        other.close()
+        assert zipfile_calls['n'] == 2
+
+    def test_zip_metadata_cache_corrupt_file_reparsed(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        from nomad.zip_index import IndexDiskStore, object_identity
+
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
+        )
+        _, _, upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        zipfile_calls = {'n': 0}
+        original_zipfile = zipfile.ZipFile
+
+        class CountingZipFile(original_zipfile):
+            def __init__(self, *args, **kwargs):
+                zipfile_calls['n'] += 1
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr(zipfile, 'ZipFile', CountingZipFile)
+
+        assert upload_files.raw_exists('examples_template')
+        assert list(upload_files.raw_listdir('', recursive=True))
+        assert zipfile_calls['n'] == 1
+        assert len(list(tmp_path.glob('*.zip.v1.msgpack'))) == 1
+
+        location = upload_files.raw_zip_file_object().location
+        identity = object_identity(upload_files.storage_fs, location)
+        key_path = tmp_path / IndexDiskStore(str(tmp_path), 1024, 'zip').key_filename(
+            identity
+        )
+        key_path.write_bytes(b'garbage')
+        upload_files.close()
+
+        other = PublicUploadFiles(test_upload_id)
+        assert other.raw_exists('examples_template')
+        assert list(other.raw_listdir('', recursive=True))
+        other.close()
+        assert zipfile_calls['n'] == 2
+        assert key_path.read_bytes() != b'garbage'
+        assert len(list(tmp_path.glob('*.zip.v1.msgpack'))) == 1
 
 
 def assert_upload_files(

@@ -2933,6 +2933,12 @@ class FileSystemReader(GeneralReader):
                     error_type=QueryError.NOACCESS,
                 )
             else:
+                if upload_id not in self.upload_pool:
+                    self.upload_pool[upload_id] = upload.upload_files
+                    self._reader_cache.server_contexts[upload_id] = ServerContext(
+                        upload
+                    )
+                upload_files = self.upload_pool[upload_id]
                 await self._walk(
                     GraphNode(
                         upload_id=upload_id,
@@ -2940,7 +2946,7 @@ class FileSystemReader(GeneralReader):
                         current_path=[],
                         result_root=response,
                         ref_result_root=self.global_root,
-                        archive=upload.upload_files,
+                        archive=upload_files,
                         archive_root=None,
                         definition=None,
                         visited_path=set(),

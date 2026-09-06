@@ -48,6 +48,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import os
 import shutil
 import stat
@@ -63,7 +64,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cached_property
-from typing import IO, Any, Literal, NamedTuple
+from typing import IO, Any, Literal, NamedTuple, cast
 
 import magic
 import yaml
@@ -94,8 +95,17 @@ from nomad.common import (
 )
 from nomad.config import config
 from nomad.config.models.config import BundleExportSettings, BundleImportSettings
+from nomad.zip_index import (
+    IndexDiskStore,
+    RangeTailFile,
+    ZipMemberIndex,
+    object_identity,
+    open_zip_member,
+)
 
 bundle_info_filename = 'bundle_info.json'
+
+logger = logging.getLogger(__name__)
 
 empty_zip_file_size = 22
 empty_archive_file_size = 32
@@ -1103,8 +1113,8 @@ class UploadFiles(DirectoryObject):
         """Return a short-lived reader for inspecting and opening one raw path.
 
         The default reader delegates to the existing raw-file methods. Published
-        uploads override this with a reader that keeps one ZIP filesystem open for
-        the whole download request.
+        uploads override this with a reader that reuses the request-scoped ZIP
+        member index for the whole download request.
         """
         return RawPathReader(self, path)
 
@@ -2119,78 +2129,27 @@ class StagingUploadFiles(UploadFiles):
 
 
 class ZipRawPathReader(RawPathReader):
-    """Keep a published raw ZIP filesystem alive for one download request."""
+    """Published raw paths share ``PublicUploadFiles`` request-scoped ZIP state.
+
+    Exists/isfile/open/mime_type delegate to ``PublicUploadFiles``. ``close()``
+    is a no-op so download streams can close the reader after
+    ``PublicUploadFiles.close()`` without double-closing the ZIP.
+    """
 
     upload_files: PublicUploadFiles
 
-    def __init__(self, upload_files: PublicUploadFiles, path: str):
-        super().__init__(upload_files, path)
-        self._archive_context = None
-        self._zip_fs = None
-        self._raw_zip_exists = None
-        self._closed = False
-
-    def _filesystem(self):
-        if self._zip_fs is None:
-            self._archive_context = self.upload_files._zip_fs()
-            self._zip_fs = self._archive_context.__enter__()
-        return self._zip_fs
-
-    def _has_raw_zip(self) -> bool:
-        if self._raw_zip_exists is None:
-            self._raw_zip_exists = self.upload_files.raw_zip_file_object().exists()
-        return self._raw_zip_exists
-
-    def exists(self) -> bool:
-        if not is_safe_relative_path(self.path):
-            return False
-        if not self._has_raw_zip():
-            # Keep the established behaviour that an empty raw root exists.
-            return not self.path
-        return self._filesystem().exists(self.path)
-
-    def isfile(self) -> bool:
-        return (
-            is_safe_relative_path(self.path)
-            and self._has_raw_zip()
-            and self._filesystem().isfile(self.path)
-        )
-
-    def mime_type(self) -> str:
-        assert self.isfile(), 'Provided path does not specify a file, or is invalid.'
-        with self._filesystem().open(self.path, 'rb') as raw_file:
-            return (
-                magic.from_buffer(raw_file.read(2048), mime=True)
-                or 'application/octet-stream'
-            )
-
-    @contextmanager
-    def open(self, *args, **kwargs):
-        assert is_safe_relative_path(self.path)
-        mode = kwargs.pop('mode', None)
-        if args:
-            mode = args[0]
-        mode = mode or 'rb'
-        encoding = kwargs.pop('encoding', None)
-
-        try:
-            with self._filesystem().open(self.path, **kwargs) as raw_file:
-                yield (
-                    io.TextIOWrapper(raw_file, encoding=encoding)
-                    if 't' in mode
-                    else raw_file
-                )
-        except (FileNotFoundError, IsADirectoryError, KeyError) as e:
-            raise KeyError(self.path) from e
-
-    def close(self):
-        if not self._closed:
-            self._closed = True
-            if self._archive_context is not None:
-                self._archive_context.__exit__(None, None, None)
-
 
 class PublicUploadFiles(UploadFiles):
+    def __init__(
+        self,
+        upload_id: str,
+        create: bool = False,
+        *,
+        fs: AbstractFileSystem | None = None,
+    ):
+        super().__init__(upload_id, create, fs=fs)
+        self._zip_index: ZipMemberIndex | None = None
+
     @classmethod
     def _file_area(cls):
         return UPath(config.fs.public)
@@ -2310,10 +2269,89 @@ class PublicUploadFiles(UploadFiles):
 
     @contextmanager
     def _zip_fs(self, mode: Literal['a', 'w', 'r'] = 'r'):
+        if mode != 'r':
+            self.close()
         with FSUtility.open_archive(
             self.raw_zip_file_object().os_path, mode, fs=self.storage_fs
         ) as zip_fs:
             yield zip_fs
+
+    def _open_raw_zip_fileobj(self) -> IO[bytes]:
+        zip_obj = self.raw_zip_file_object()
+        fs = self.storage_fs
+        location = zip_obj.location
+        if isinstance(fs, LocalFileSystem):
+            return fs.open(location, 'rb')
+        return cast(IO[bytes], RangeTailFile.from_filesystem(fs, location))
+
+    def _open_zip_member_fileobj(self) -> IO[bytes]:
+        """Open the ZIP object for a member read without prefetching the tail."""
+        zip_obj = self.raw_zip_file_object()
+        return self.storage_fs.open(zip_obj.location, 'rb')
+
+    def _parse_raw_zip_index(self) -> ZipMemberIndex:
+        fileobj = self._open_raw_zip_fileobj()
+        try:
+            zip_file = zipfile.ZipFile(fileobj, 'r')
+        except Exception:
+            with suppress(Exception):
+                fileobj.close()
+            raise
+        try:
+            return ZipMemberIndex.from_zipfile(zip_file)
+        finally:
+            with suppress(Exception):
+                zip_file.close()
+            if not getattr(fileobj, 'closed', False):
+                with suppress(Exception):
+                    fileobj.close()
+
+    def _index_store(self, kind: str) -> IndexDiskStore:
+        settings = config.fs.public_fs.metadata_cache
+        directory = settings.directory or os.path.join(
+            config.fs.local_tmp, 'nomad-zip-index'
+        )
+        return IndexDiskStore(directory, settings.max_disk_mb * 1024 * 1024, kind)
+
+    def _ensure_raw_zip(self) -> ZipMemberIndex:
+        if self._zip_index is not None:
+            return self._zip_index
+        settings = config.fs.public_fs.metadata_cache
+        fs = self.storage_fs
+        location = self.raw_zip_file_object().location
+        if not settings.is_enabled(config.fs.public_fs.protocol):
+            zip_obj = self.raw_zip_file_object()
+            if not zip_obj.exists():
+                self._zip_index = ZipMemberIndex.empty()
+                return self._zip_index
+            self._zip_index = self._parse_raw_zip_index()
+            return self._zip_index
+        try:
+            identity = object_identity(fs, location)
+        except FileNotFoundError:
+            self._zip_index = ZipMemberIndex.empty()
+            return self._zip_index
+        store = self._index_store('zip')
+        index: ZipMemberIndex | None = None
+        data = store.load(identity)
+        if data is not None:
+            try:
+                index = ZipMemberIndex.from_bytes(data)
+            except Exception:
+                logger.warning(
+                    'failed to decode cached ZIP index for %s',
+                    location,
+                    exc_info=True,
+                )
+                store.discard(identity)
+        if index is None:
+            index = self._parse_raw_zip_index()
+            store.store(identity, index.to_bytes())
+        self._zip_index = index
+        return index
+
+    def close(self):
+        self._zip_index = None
 
     def raw_path_reader(self, path: str) -> RawPathReader:
         return ZipRawPathReader(self, path)
@@ -2369,8 +2407,7 @@ class PublicUploadFiles(UploadFiles):
         return staging_upload_files
 
     def is_empty(self) -> bool:
-        with self._zip_fs() as zip_fs:
-            return not zip_fs.ls('', False)
+        return self._ensure_raw_zip().is_empty()
 
     def delete(self) -> None:
         """Delete every configured copy of this published upload.
@@ -2379,6 +2416,7 @@ class PublicUploadFiles(UploadFiles):
         Deletion must therefore target both locations independently; in particular, a
         remote error must not leave a readable local fallback behind.
         """
+        self.close()
 
         def delete_directory(fs: AbstractFileSystem, cleanup_prefix: bool) -> None:
             PathObject(self.os_path, fs=fs).delete()
@@ -2416,17 +2454,12 @@ class PublicUploadFiles(UploadFiles):
     def raw_exists(self, path: str) -> bool:
         if not is_safe_relative_path(path):
             return False
-        if not self.raw_zip_file_object().exists():
-            # We consider the empty path (i.e. root) to always "exists".
-            return not path
-        with self._zip_fs() as zip_fs:
-            return zip_fs.exists(path)
+        return self._ensure_raw_zip().exists(path)
 
     def raw_isfile(self, path: str) -> bool:
-        if not is_safe_relative_path(path) or not self.raw_zip_file_object().exists():
+        if not is_safe_relative_path(path):
             return False
-        with self._zip_fs() as zip_fs:
-            return zip_fs.isfile(path)
+        return self._ensure_raw_zip().isfile(path)
 
     def raw_listdir(
         self,
@@ -2437,24 +2470,17 @@ class PublicUploadFiles(UploadFiles):
     ) -> Iterable[RawPathInfo]:
         if not is_safe_relative_path(path) or depth == 0:
             return
-        if not path and not self.raw_zip_file_object().exists():
-            return
 
-        with self._zip_fs() as zip_fs:
-            for target in zip_fs.find(
-                path, (depth if depth > 0 else None) if recursive else 1, not files_only
-            ):
-                if not (isfile := zip_fs.isfile(target)) and UPath(target) == UPath(
-                    path
-                ):
-                    # skip folder itself
-                    continue
-                yield RawPathInfo(
-                    path=target,
-                    is_file=isfile,
-                    size=zip_fs.size(target) if isfile else zip_fs.du(target),
-                    access=self.access,
-                )
+        index = self._ensure_raw_zip()
+        for member in index.listdir(
+            path, recursive=recursive, files_only=files_only, depth=depth
+        ):
+            yield RawPathInfo(
+                path=member.path,
+                is_file=not member.is_dir,
+                size=index.size(member.path),
+                access=self.access,
+            )
 
     @contextmanager
     def raw_file(self, file_path: str, *args, **kwargs):
@@ -2465,20 +2491,41 @@ class PublicUploadFiles(UploadFiles):
         mode = mode or 'rb'
         encoding = kwargs.pop('encoding', None)
 
+        index = self._ensure_raw_zip()
+        member = index.get(file_path)
+        if member is None or member.is_dir or not member.zip_name:
+            raise KeyError(file_path)
+
+        fileobj = self._open_zip_member_fileobj()
         try:
-            with self._zip_fs() as zip_fs, zip_fs.open(file_path, **kwargs) as f:
-                yield io.TextIOWrapper(f, encoding=encoding) if 't' in mode else f
-        except (FileNotFoundError, IsADirectoryError, KeyError) as e:
-            raise KeyError(file_path) from e
+            member_file = open_zip_member(fileobj, member)
+        except Exception as e:
+            if not getattr(fileobj, 'closed', False):
+                with suppress(Exception):
+                    fileobj.close()
+            if isinstance(e, (FileNotFoundError, IsADirectoryError, KeyError)):
+                raise KeyError(file_path) from e
+            if isinstance(e, zipfile.BadZipFile):
+                raise KeyError(file_path) from e
+            raise
+
+        try:
+            if 't' in mode:
+                yield io.TextIOWrapper(member_file, encoding=encoding)
+            else:
+                yield member_file
+        finally:
+            if not member_file.closed:
+                member_file.close()
 
     def raw_file_size(self, file_path: str) -> int:
         assert is_safe_relative_path(file_path)
 
-        with suppress(FileNotFoundError):
-            with self._zip_fs() as zip_fs:
-                if file_size := zip_fs.size(file_path):
-                    return file_size
-
+        index = self._ensure_raw_zip()
+        if not index.isfile(file_path):
+            raise KeyError(file_path)
+        if file_size := index.size(file_path):
+            return file_size
         raise KeyError(file_path)
 
     @contextmanager
