@@ -18,6 +18,7 @@
 
 import os
 import re
+import threading
 
 import pytest
 import yaml
@@ -27,7 +28,13 @@ import nomad.config
 from nomad.auth.scopes import _resolve_scopes
 from nomad.config import CONFIG_ENV, load_config
 from nomad.config.models import config as config_module
-from nomad.config.models.config import Auth, Config, Services
+from nomad.config.models.config import (
+    Auth,
+    Config,
+    NOMADFileSystem,
+    Services,
+    reset_target_fs_state,
+)
 from nomad.config.models.plugins import ParserEntryPoint, SchemaPackageEntryPoint
 from nomad.utils import flatten_dict
 
@@ -1077,3 +1084,136 @@ def test_oasis_auth_backwards_compatibility_warnings(
 
     for expected_warning in expected_warnings:
         assert expected_warning in messages
+
+
+class _CountingFileSystem:
+    """Minimal fsspec stand-in that records ``makedirs`` calls."""
+
+    def __init__(self):
+        self.makedirs_calls: list[tuple[str, bool]] = []
+        self.fail_makedirs = False
+
+    def makedirs(self, path, exist_ok=False):
+        self.makedirs_calls.append((path, exist_ok))
+        if self.fail_makedirs:
+            raise OSError('bucket ensure failed')
+
+
+def test_target_fs_ensures_bucket_once_per_connection(monkeypatch):
+    """``makedirs`` runs once per protocol+bucket+extra in a process, and retries on error."""
+    reset_target_fs_state()
+    fake_fs = _CountingFileSystem()
+    monkeypatch.setattr(
+        'nomad.config.models.config.filesystem', lambda protocol, **kwargs: fake_fs
+    )
+
+    public_fs = NOMADFileSystem(
+        protocol='s3',
+        bucket='bucket-a',
+        extra={'endpoint_url': 'http://localhost:8333'},
+    )
+
+    assert public_fs.target_fs is fake_fs
+    assert fake_fs.makedirs_calls == [('bucket-a', True)]
+
+    fake_fs.makedirs_calls.clear()
+    public_fs.target_fs
+    public_fs.target_fs
+    assert fake_fs.makedirs_calls == []
+
+    public_fs.bucket = 'bucket-b'
+    public_fs.target_fs
+    assert fake_fs.makedirs_calls == [('bucket-b', True)]
+
+    fake_fs.makedirs_calls.clear()
+    fake_fs.fail_makedirs = True
+    public_fs.bucket = 'bucket-c'
+    with pytest.raises(
+        RuntimeError,
+        match='Cannot establish valid connection to the target file system.',
+    ) as exc_info:
+        public_fs.target_fs
+    assert isinstance(exc_info.value.__cause__, OSError)
+    assert fake_fs.makedirs_calls == [('bucket-c', True)]
+
+    fake_fs.makedirs_calls.clear()
+    with pytest.raises(
+        RuntimeError,
+        match='Cannot establish valid connection to the target file system.',
+    ):
+        public_fs.target_fs
+    assert fake_fs.makedirs_calls == [('bucket-c', True)]
+
+    fake_fs.makedirs_calls.clear()
+    fake_fs.fail_makedirs = False
+    public_fs.target_fs
+    assert fake_fs.makedirs_calls == [('bucket-c', True)]
+    fake_fs.makedirs_calls.clear()
+    public_fs.target_fs
+    assert fake_fs.makedirs_calls == []
+
+    reset_target_fs_state()
+
+
+def test_target_fs_makedirs_does_not_block_other_buckets(monkeypatch):
+    """A stalled ``makedirs`` for one bucket must not serialise another key."""
+    reset_target_fs_state()
+    entered = threading.Event()
+    release = threading.Event()
+
+    class BlockingFileSystem(_CountingFileSystem):
+        def makedirs(self, path, exist_ok=False):
+            if path == 'bucket-block':
+                entered.set()
+                if not release.wait(timeout=2):
+                    raise TimeoutError('release never set')
+            super().makedirs(path, exist_ok=exist_ok)
+
+    fake_fs = BlockingFileSystem()
+    monkeypatch.setattr(
+        'nomad.config.models.config.filesystem', lambda protocol, **kwargs: fake_fs
+    )
+
+    blocked = NOMADFileSystem(
+        protocol='s3',
+        bucket='bucket-block',
+        extra={'endpoint_url': 'http://localhost:8333'},
+    )
+    other = NOMADFileSystem(
+        protocol='s3',
+        bucket='bucket-other',
+        extra={'endpoint_url': 'http://localhost:8333'},
+    )
+    errors: list[Exception] = []
+
+    def first_caller():
+        try:
+            blocked.target_fs
+        except Exception as exc:
+            errors.append(exc)
+
+    def second_caller():
+        try:
+            if not entered.wait(timeout=2):
+                raise TimeoutError('blocked makedirs never started')
+            other.target_fs
+        except Exception as exc:
+            errors.append(exc)
+        finally:
+            release.set()
+
+    first = threading.Thread(target=first_caller)
+    second = threading.Thread(target=second_caller)
+    first.start()
+    second.start()
+    first.join(timeout=3)
+    second.join(timeout=3)
+    assert errors == []
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert fake_fs.makedirs_calls == [
+        ('bucket-other', True),
+        ('bucket-block', True),
+    ]
+
+    reset_target_fs_state()
