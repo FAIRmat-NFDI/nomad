@@ -961,7 +961,8 @@ class TestPublicUploadFiles(UploadFilesContract):
         _, _, upload_files = create_public_upload(
             test_upload_id, entry_specs='p', with_upload=False
         )
-        data = pathlib.Path(upload_files.raw_zip_file_object().os_path).read_bytes()
+        raw_zip_obj = upload_files.raw_zip_file_object()
+        data = upload_files.storage_fs.read_bytes(raw_zip_obj.location)
         counting_fs = CountingRangeFS(data)
         monkeypatch.setattr(
             PublicUploadFiles,
@@ -1005,7 +1006,8 @@ class TestPublicUploadFiles(UploadFilesContract):
         _, _, upload_files = create_public_upload(
             test_upload_id, entry_specs='p', with_upload=False
         )
-        data = pathlib.Path(upload_files.raw_zip_file_object().os_path).read_bytes()
+        raw_zip_obj = upload_files.raw_zip_file_object()
+        data = upload_files.storage_fs.read_bytes(raw_zip_obj.location)
         counting_fs = CountingRangeFS(data)
         zipfile_calls = {'n': 0}
         original_zipfile = zipfile.ZipFile
