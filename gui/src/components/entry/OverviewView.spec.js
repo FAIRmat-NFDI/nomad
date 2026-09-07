@@ -186,6 +186,10 @@ function expectQuantityToBe(name, label, value, root = screen) {
   values.forEach(expectedValue => expect(within(element).queryAllByText(expectedValue).length).not.toBe(0))
 }
 
+function expectQuantityNotToBe(name, root = screen) {
+  expect(root.queryByTestId(`quantity-${name}`)).not.toBeInTheDocument()
+}
+
 test('eln overview as a reviewer', async () => {
   await startAPI('tests.states.entry.eln', 'tests/data/entry/eln-reviewer', 'ttester', 'password')
   await act(async () => render(
@@ -216,8 +220,8 @@ test('eln overview as a reviewer', async () => {
   expectQuantityToBe('description', 'Description', undefined, within(cardSample))
   expectQuantityToBe('tags', 'Tags', 'project', within(cardSample))
   expectQuantityToBe('substrate_type', 'Substrate type', 'SLG', within(cardSample))
-  expectQuantityToBe('substrate_thickness', 'Substrate thickness', undefined, within(cardSample))
-  expectQuantityToBe('sample_is_from_collaboration', 'Sample is from collaboration', undefined, within(cardSample))
+  expectQuantityNotToBe('substrate_thickness', within(cardSample))
+  expectQuantityNotToBe('sample_is_from_collaboration', within(cardSample))
 
   expect(within(cardPvdEvaporation).getByText('PvdEvaporation')).toBeVisible()
   expectQuantityToBe('data_file', 'Data file', 'PVDProcess.csv', within(cardPvdEvaporation))
@@ -235,8 +239,8 @@ test('eln overview as a reviewer', async () => {
   expect(within(plotlyFigures[1]).getByText(/Time \(fs\)/)).toBeVisible()
 
   expect(within(cardHotplateAnnealing).getByText('HotplateAnnealing')).toBeVisible()
-  expectQuantityToBe('instrument', 'Instrument', undefined, within(cardHotplateAnnealing))
-  expectQuantityToBe('method', 'Method', undefined, within(cardHotplateAnnealing))
+  expectQuantityNotToBe('instrument', within(cardHotplateAnnealing))
+  expectQuantityNotToBe('method', within(cardHotplateAnnealing))
   expectQuantityToBe('set_temperature', 'Set temperature', '373.15', within(cardHotplateAnnealing))
   expectQuantityToBe('duration', 'Duration', '60', within(cardHotplateAnnealing))
 
