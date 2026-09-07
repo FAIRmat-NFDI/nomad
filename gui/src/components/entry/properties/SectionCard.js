@@ -147,11 +147,13 @@ const SectionPreview = React.memo(({sectionDef, section}) => {
   return (
     <div ref={rootRef}>
       {<QuantityTable data={section}>
-        {allVisibleProperties.map(property => (
-          <QuantityRow key={property.name} >
-            <PropertyPreview quantityDef={property} section={section}/>
-          </QuantityRow>
-        ))}
+        {allVisibleProperties
+          .filter(property => section[property.name] !== undefined && section[property.name] !== null)
+          .map(property => (
+            <QuantityRow key={property.name} >
+              <PropertyPreview quantityDef={property} section={section}/>
+            </QuantityRow>
+          ))}
       </QuantityTable>}
     </div>
   )
