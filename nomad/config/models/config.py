@@ -16,8 +16,10 @@
 # limitations under the License.
 #
 
+import json
 import logging
 import os
+import threading
 import warnings
 from enum import Enum
 from importlib.metadata import entry_points, version
@@ -635,6 +637,18 @@ Set to 0 to disable sweeping (unbounded growth).""",
         return bool(self.enabled)
 
 
+# Connection+bucket pairs for which ``makedirs`` has already succeeded in this
+# process. Keyed by protocol, bucket, and serialized ``extra`` (endpoint/credentials).
+_ensured_target_fs: set[tuple[str, str, str]] = set()
+_ensured_target_fs_lock = threading.Lock()
+
+
+def reset_target_fs_state() -> None:
+    """Drop process-level records of ensured remote buckets. Intended for tests."""
+    with _ensured_target_fs_lock:
+        _ensured_target_fs.clear()
+
+
 class NOMADFileSystem(ConfigBaseModel):
     protocol: Literal['s3'] | None = Field(
         None,
@@ -784,12 +798,24 @@ all workers on the node.""",
             return LocalFileSystem()
 
         remote_fs = filesystem(self.protocol, **self.extra)
-        try:
-            remote_fs.makedirs(self.bucket, exist_ok=True)
-        except Exception as e:
-            raise RuntimeError(
-                'Cannot establish valid connection to the target file system.'
-            ) from e
+        key = (
+            self.protocol,
+            self.bucket,
+            json.dumps(self.extra, sort_keys=True, default=str),
+        )
+        with _ensured_target_fs_lock:
+            already_ensured = key in _ensured_target_fs
+        if not already_ensured:
+            # Two first callers may both miss and both head_bucket; that is
+            # acceptable. Do not hold the lock across the network call.
+            try:
+                remote_fs.makedirs(self.bucket, exist_ok=True)
+            except Exception as e:
+                raise RuntimeError(
+                    'Cannot establish valid connection to the target file system.'
+                ) from e
+            with _ensured_target_fs_lock:
+                _ensured_target_fs.add(key)
 
         self.ensure_buffer_size()
 

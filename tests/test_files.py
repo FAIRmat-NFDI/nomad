@@ -16,6 +16,7 @@
 # limitations under the License.
 #
 
+import hashlib
 import itertools
 import os
 import pathlib
@@ -28,6 +29,7 @@ from datetime import datetime
 from typing import Any
 
 import pytest
+from fsspec.implementations.local import LocalFileSystem
 from fsspec.implementations.memory import MemoryFileSystem
 
 from nomad import datamodel, utils
@@ -40,6 +42,7 @@ from nomad.files import (
     PublicUploadFiles,
     StagingUploadFiles,
     UploadFiles,
+    clear_index_caches,
     empty_archive_file_size,
     empty_zip_file_size,
     measure_fs_reads,
@@ -573,7 +576,139 @@ def create_public_upload(
     return upload_id, entries, PublicUploadFiles(upload_id)
 
 
+class RecordingRemoteFS:
+    """Proxy that logs selected fsspec calls and is not a LocalFileSystem."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.calls: list[tuple[str, str, dict]] = []
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def _record(self, method: str, path: str, kwargs: dict) -> None:
+        self.calls.append((method, path, dict(kwargs)))
+
+    def info(self, path, **kwargs):
+        self._record('info', path, kwargs)
+        info = dict(self._inner.info(path, **kwargs))
+        try:
+            data = self._inner.cat_file(path)
+            info['ETag'] = f'"{hashlib.md5(data).hexdigest()}"'
+        except Exception:
+            pass
+        return info
+
+    def exists(self, path, **kwargs):
+        self._record('exists', path, kwargs)
+        return self._inner.exists(path, **kwargs)
+
+    def size(self, path, **kwargs):
+        self._record('size', path, kwargs)
+        return self._inner.size(path)
+
+    def isfile(self, path, **kwargs):
+        self._record('isfile', path, kwargs)
+        return self._inner.isfile(path, **kwargs)
+
+    def isdir(self, path, **kwargs):
+        self._record('isdir', path, kwargs)
+        return self._inner.isdir(path, **kwargs)
+
+    def ls(self, path, **kwargs):
+        self._record('ls', path, kwargs)
+        return self._inner.ls(path, **kwargs)
+
+    def open(self, path, mode='rb', **kwargs):
+        recorded = dict(kwargs)
+        recorded['mode'] = mode
+        self._record('open', path, recorded)
+        return self._inner.open(path, mode, **kwargs)
+
+    def cat_file(self, path, **kwargs):
+        self._record('cat_file', path, kwargs)
+        return self._inner.cat_file(path, **kwargs)
+
+    def read_block(self, path, offset, length, **kwargs):
+        recorded = dict(kwargs)
+        recorded['offset'] = offset
+        recorded['length'] = length
+        self._record('read_block', path, recorded)
+        return self._inner.read_block(path, offset, length, **kwargs)
+
+    def rm(self, path, **kwargs):
+        self._record('rm', path, kwargs)
+        return self._inner.rm(path, **kwargs)
+
+    def mv(self, path1, path2, **kwargs):
+        recorded = dict(kwargs)
+        recorded['dest'] = path2
+        self._record('mv', path1, recorded)
+        return self._inner.mv(path1, path2, **kwargs)
+
+
+def _published_msg_calls(
+    calls: list[tuple[str, str, dict]], access: str
+) -> list[tuple[str, str, dict]]:
+    needle = f'archive-{access}-'
+    return [
+        call for call in calls if needle in call[1] and call[1].endswith('.msg.msg')
+    ]
+
+
+def _published_zip_calls(
+    calls: list[tuple[str, str, dict]], access: str
+) -> list[tuple[str, str, dict]]:
+    needle = f'raw-{access}.plain.zip'
+    return [call for call in calls if call[1].endswith(needle) or needle in call[1]]
+
+
+def _copy_upload_tree_to_memory_fs(
+    upload_files: PublicUploadFiles, memory_fs: MemoryFileSystem
+) -> None:
+    for dirpath, _dirnames, filenames in os.walk(upload_files.os_path):
+        for name in filenames:
+            local_path = os.path.join(dirpath, name)
+            dest = FSUtility.remote_path(local_path)
+            parent, _, _ = dest.rpartition('/')
+            if parent:
+                memory_fs.makedirs(parent, exist_ok=True)
+            memory_fs.put_file(os.path.abspath(local_path), dest)
+
+
 class TestPublicUploadFiles(UploadFilesContract):
+    @pytest.fixture(autouse=True)
+    def _clear_index_memory_caches(self):
+        clear_index_caches()
+        yield
+        clear_index_caches()
+
+    def _setup_recording_archive_fs(
+        self,
+        monkeypatch,
+        tmp_path,
+        test_upload_id,
+        entry_specs='pp',
+        read_mode='remote_then_local',
+    ):
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', None)
+        _, entries, upload_files = create_public_upload(
+            test_upload_id, entry_specs=entry_specs, with_upload=False
+        )
+        memory_fs = MemoryFileSystem()
+        _copy_upload_tree_to_memory_fs(upload_files, memory_fs)
+        proxy = RecordingRemoteFS(memory_fs)
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', 's3')
+        monkeypatch.setattr(config.fs.public_fs, 'read_mode', read_mode)
+        monkeypatch.setattr(
+            type(config.fs.public_fs), 'target_fs', property(lambda _: proxy)
+        )
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
+        )
+        return proxy, entries, upload_files
+
     @staticmethod
     def _create_remote_delete_copy(monkeypatch, upload_files):
         """Configure a unique in-memory remote copy for deletion tests."""
@@ -703,6 +838,120 @@ class TestPublicUploadFiles(UploadFilesContract):
         assert remote_upload_files.storage_fs is remote_fs
         with remote_upload_files.raw_file(entries[0].mainfile) as file_obj:
             assert file_obj.read()
+
+    def test_remote_then_local_caches_positive_artifact_probe(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        proxy, _entries, _upload_files = self._setup_recording_archive_fs(
+            monkeypatch,
+            tmp_path,
+            test_upload_id,
+            entry_specs='p',
+            read_mode='remote_then_local',
+        )
+        first = PublicUploadFiles(test_upload_id)
+        proxy.calls.clear()
+        assert first.storage_fs is proxy
+        zip_calls = _published_zip_calls(proxy.calls, 'public')
+        assert [call[0] for call in zip_calls] == ['exists', 'size']
+        assert not _published_msg_calls(proxy.calls, 'public')
+        first.close()
+
+        proxy.calls.clear()
+        second = PublicUploadFiles(test_upload_id)
+        assert second.storage_fs is proxy
+        assert proxy.calls == []
+        second.close()
+
+    def test_remote_then_local_does_not_cache_negative_artifact_probe(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', None)
+        create_public_upload(test_upload_id, entry_specs='p', with_upload=False)
+        proxy = RecordingRemoteFS(MemoryFileSystem())
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', 's3')
+        monkeypatch.setattr(config.fs.public_fs, 'read_mode', 'remote_then_local')
+        monkeypatch.setattr(
+            type(config.fs.public_fs), 'target_fs', property(lambda _: proxy)
+        )
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
+        )
+
+        first = PublicUploadFiles(test_upload_id)
+        assert isinstance(first.storage_fs, LocalFileSystem)
+        assert proxy.calls
+        first_probe = list(proxy.calls)
+        first.close()
+
+        proxy.calls.clear()
+        second = PublicUploadFiles(test_upload_id)
+        assert isinstance(second.storage_fs, LocalFileSystem)
+        assert proxy.calls == first_probe
+        second.close()
+
+    def test_remote_then_local_repack_invalidates_artifact_probe(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        proxy, _entries, _upload_files = self._setup_recording_archive_fs(
+            monkeypatch,
+            tmp_path,
+            test_upload_id,
+            entry_specs='p',
+            read_mode='remote_then_local',
+        )
+        packed = PublicUploadFiles(test_upload_id)
+        assert packed.storage_fs is proxy
+        packed.re_pack(with_embargo=True)
+        packed.close()
+
+        proxy.calls.clear()
+        after = PublicUploadFiles(test_upload_id)
+        assert after.storage_fs is proxy
+        assert [
+            call[0] for call in _published_zip_calls(proxy.calls, 'restricted')
+        ] == ['exists', 'size']
+        after.close()
+
+    def test_remote_then_local_artifact_probe_error_is_not_cached(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        proxy, _entries, _upload_files = self._setup_recording_archive_fs(
+            monkeypatch,
+            tmp_path,
+            test_upload_id,
+            entry_specs='p',
+            read_mode='remote_then_local',
+        )
+        original = PublicUploadFiles._artifacts_exist
+        attempts = {'n': 0}
+
+        def fail_once(path, fs, *args, **kwargs):
+            attempts['n'] += 1
+            if attempts['n'] == 1:
+                raise OSError('remote probe failed')
+            return original(path, fs, *args, **kwargs)
+
+        monkeypatch.setattr(
+            PublicUploadFiles, '_artifacts_exist', staticmethod(fail_once)
+        )
+
+        with pytest.raises(OSError, match='remote probe failed'):
+            PublicUploadFiles(test_upload_id).storage_fs
+        assert attempts['n'] == 1
+
+        recovered = PublicUploadFiles(test_upload_id)
+        assert recovered.storage_fs is proxy
+        assert attempts['n'] == 2
+        recovered.close()
+
+        proxy.calls.clear()
+        cached = PublicUploadFiles(test_upload_id)
+        assert cached.storage_fs is proxy
+        assert proxy.calls == []
+        assert attempts['n'] == 2
+        cached.close()
 
     @pytest.fixture(scope='function')
     def empty_test_upload(self, test_upload_id: str) -> UploadFiles:

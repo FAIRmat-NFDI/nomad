@@ -54,6 +54,7 @@ import shutil
 import stat
 import tarfile
 import tempfile
+import threading
 import time
 import warnings
 import zipfile
@@ -69,6 +70,7 @@ from typing import IO, Any, Literal, NamedTuple, cast
 import magic
 import yaml
 import zipstream
+from cachetools import TTLCache
 from fsspec import AbstractFileSystem, filesystem
 from fsspec.implementations.cached import SimpleCacheFileSystem
 from fsspec.implementations.local import LocalFileSystem
@@ -2139,6 +2141,28 @@ class ZipRawPathReader(RawPathReader):
     upload_files: PublicUploadFiles
 
 
+# Positive remote-artifact probes for ``remote_then_local``. Negatives are never
+# cached: a local-only upload can appear on the remote while this process runs.
+_ARTIFACTS_EXIST_TTL_SECONDS = 600
+_artifacts_exist_cache: TTLCache = TTLCache(
+    maxsize=16384, ttl=_ARTIFACTS_EXIST_TTL_SECONDS
+)
+_artifacts_exist_cache_lock = threading.Lock()
+
+
+def _forget_artifacts_exist(os_path: str) -> None:
+    """Drop cached positive probes for an upload after rename or delete."""
+    with _artifacts_exist_cache_lock:
+        for access in ('public', 'restricted', None):
+            _artifacts_exist_cache.pop((os_path, access), None)
+
+
+def clear_index_caches() -> None:
+    """Drop process-level artifact-probe caches. Intended for tests."""
+    with _artifacts_exist_cache_lock:
+        _artifacts_exist_cache.clear()
+
+
 class PublicUploadFiles(UploadFiles):
     def __init__(
         self,
@@ -2171,16 +2195,15 @@ class PublicUploadFiles(UploadFiles):
         """
         directory = DirectoryObject(path, fs=fs)
         for access in ('public', 'restricted'):
-            for artifact, minimum_size in (
-                (directory.zip_fp(access), empty_zip_file_size),
-                (
-                    directory.msg_fp(access, fallback=True, fs=fs),
-                    empty_archive_file_size,
-                ),
-                (directory.h5_fp(access), empty_hdf5_file_size),
-            ):
-                if artifact.exists() and artifact.size > minimum_size:
-                    return True
+            zip_artifact = directory.zip_fp(access)
+            if zip_artifact.exists() and zip_artifact.size > empty_zip_file_size:
+                return True
+            msg_artifact = directory.msg_fp(access, fallback=True, fs=fs)
+            if msg_artifact.exists() and msg_artifact.size > empty_archive_file_size:
+                return True
+            h5_artifact = directory.h5_fp(access)
+            if h5_artifact.exists() and h5_artifact.size > empty_hdf5_file_size:
+                return True
         return False
 
     @cached_property
@@ -2191,10 +2214,15 @@ class PublicUploadFiles(UploadFiles):
             return LocalFileSystem()
 
         remote_fs = public_fs.target_fs
-        if public_fs.read_mode == 'remote_then_local' and not self._artifacts_exist(
-            self.os_path, remote_fs
-        ):
-            return LocalFileSystem()
+        if public_fs.read_mode == 'remote_then_local':
+            cache_key = (self.os_path, getattr(self, '_known_access', None))
+            with _artifacts_exist_cache_lock:
+                if _artifacts_exist_cache.get(cache_key):
+                    return remote_fs
+            if not self._artifacts_exist(self.os_path, remote_fs):
+                return LocalFileSystem()
+            with _artifacts_exist_cache_lock:
+                _artifacts_exist_cache[cache_key] = True
         return remote_fs
 
     @cached_property
@@ -2417,6 +2445,7 @@ class PublicUploadFiles(UploadFiles):
         remote error must not leave a readable local fallback behind.
         """
         self.close()
+        _forget_artifacts_exist(self.os_path)
 
         def delete_directory(fs: AbstractFileSystem, cleanup_prefix: bool) -> None:
             PathObject(self.os_path, fs=fs).delete()
@@ -2560,6 +2589,7 @@ class PublicUploadFiles(UploadFiles):
         self.h5_fp(self.access).move_to(self.h5_fp(new_access))
 
         self.__dict__.pop('access', None)  # clear cached_property
+        _forget_artifacts_exist(self.os_path)
 
     def files_to_bundle(
         self, export_settings: BundleExportSettings
