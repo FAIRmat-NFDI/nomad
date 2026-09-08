@@ -1217,3 +1217,19 @@ def test_target_fs_makedirs_does_not_block_other_buckets(monkeypatch):
     ]
 
     reset_target_fs_state()
+
+
+@pytest.mark.parametrize(
+    ('kwargs', 'expected'),
+    [
+        ({}, 'local_only'),
+        ({'protocol': 's3'}, 'remote_only'),
+        ({'write_mode': 'local_then_remote'}, 'local_then_remote'),
+        ({'protocol': 's3', 'write_mode': 'local_only'}, 'local_only'),
+        ({'protocol': 's3', 'write_mode': 'local_then_remote'}, 'local_then_remote'),
+        ({'write_mode': 'remote_only'}, 'remote_only'),
+    ],
+)
+def test_resolved_write_mode(kwargs, expected):
+    public_fs = NOMADFileSystem(**kwargs)
+    assert public_fs.resolved_write_mode == expected

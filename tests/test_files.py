@@ -35,6 +35,7 @@ from fsspec.implementations.memory import MemoryFileSystem
 from nomad import datamodel, utils
 from nomad.archive import to_json
 from nomad.config import config
+from nomad.config.models.config import BundleExportSettings
 from nomad.files import (
     DirectoryObject,
     FSUtility,
@@ -49,6 +50,18 @@ from nomad.files import (
 )
 from nomad.mongo.package import PackageDefinition
 from nomad.processing import Upload
+from nomad.public_storage import (
+    MARKER_FILENAME,
+    ArtifactRecord,
+    RemoteReadyMarker,
+    choose_pack_fs,
+    complete_published_write,
+    copy_to_remote,
+    delete_access_artifacts,
+    detect_published_access,
+    invalidate_ready_cache,
+    write_ready_marker,
+)
 from nomad.zip_index import RangeTailFile
 
 EntryWithFiles = tuple[datamodel.EntryMetadata, str]
@@ -647,22 +660,6 @@ class RecordingRemoteFS:
         return self._inner.mv(path1, path2, **kwargs)
 
 
-def _published_msg_calls(
-    calls: list[tuple[str, str, dict]], access: str
-) -> list[tuple[str, str, dict]]:
-    needle = f'archive-{access}-'
-    return [
-        call for call in calls if needle in call[1] and call[1].endswith('.msg.msg')
-    ]
-
-
-def _published_zip_calls(
-    calls: list[tuple[str, str, dict]], access: str
-) -> list[tuple[str, str, dict]]:
-    needle = f'raw-{access}.plain.zip'
-    return [call for call in calls if call[1].endswith(needle) or needle in call[1]]
-
-
 def _copy_upload_tree_to_memory_fs(
     upload_files: PublicUploadFiles, memory_fs: MemoryFileSystem
 ) -> None:
@@ -674,6 +671,10 @@ def _copy_upload_tree_to_memory_fs(
             if parent:
                 memory_fs.makedirs(parent, exist_ok=True)
             memory_fs.put_file(os.path.abspath(local_path), dest)
+
+
+def _remote_marker_location(upload_os_path: str) -> str:
+    return FSUtility.remote_path(os.path.join(upload_os_path, MARKER_FILENAME))
 
 
 class TestPublicUploadFiles(UploadFilesContract):
@@ -707,7 +708,24 @@ class TestPublicUploadFiles(UploadFilesContract):
         monkeypatch.setattr(
             config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
         )
+        write_ready_marker(upload_files.os_path, test_upload_id, 'public')
         return proxy, entries, upload_files
+
+    def _setup_memory_public_fs(
+        self,
+        monkeypatch,
+        *,
+        read_mode='remote_then_local',
+        write_mode='local_then_remote',
+    ):
+        remote_fs = MemoryFileSystem()
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', 's3')
+        monkeypatch.setattr(config.fs.public_fs, 'read_mode', read_mode)
+        monkeypatch.setattr(config.fs.public_fs, 'write_mode', write_mode)
+        monkeypatch.setattr(
+            type(config.fs.public_fs), 'target_fs', property(lambda _: remote_fs)
+        )
+        return remote_fs
 
     @staticmethod
     def _create_remote_delete_copy(monkeypatch, upload_files):
@@ -732,6 +750,12 @@ class TestPublicUploadFiles(UploadFilesContract):
             upload_files.join_file('local-marker').location, 'wb'
         ) as file:
             file.write(b'local')
+
+    @staticmethod
+    def _calls_for_artifacts(
+        calls: list[tuple[str, str, dict]],
+    ) -> list[tuple[str, str, dict]]:
+        return [call for call in calls if MARKER_FILENAME not in call[1]]
 
     def test_delete_removes_remote_and_local_copies(self, monkeypatch, test_upload_id):
         upload_files = PublicUploadFiles(test_upload_id, create=True)
@@ -834,6 +858,11 @@ class TestPublicUploadFiles(UploadFilesContract):
         remote_fs.makedirs(os.path.dirname(remote_raw), exist_ok=True)
         remote_fs.put_file(local_raw, remote_raw)
 
+        partial_upload_files = PublicUploadFiles(test_upload_id)
+        assert partial_upload_files.storage_fs is not remote_fs
+
+        copy_to_remote(local_upload_files.os_path, test_upload_id, 'public')
+
         remote_upload_files = PublicUploadFiles(test_upload_id)
         assert remote_upload_files.storage_fs is remote_fs
         with remote_upload_files.raw_file(entries[0].mainfile) as file_obj:
@@ -852,15 +881,13 @@ class TestPublicUploadFiles(UploadFilesContract):
         first = PublicUploadFiles(test_upload_id)
         proxy.calls.clear()
         assert first.storage_fs is proxy
-        zip_calls = _published_zip_calls(proxy.calls, 'public')
-        assert [call[0] for call in zip_calls] == ['exists', 'size']
-        assert not _published_msg_calls(proxy.calls, 'public')
         first.close()
 
         proxy.calls.clear()
         second = PublicUploadFiles(test_upload_id)
         assert second.storage_fs is proxy
-        assert proxy.calls == []
+        assert self._calls_for_artifacts(proxy.calls) == []
+        assert any(MARKER_FILENAME in call[1] for call in proxy.calls)
         second.close()
 
     def test_remote_then_local_does_not_cache_negative_artifact_probe(
@@ -909,9 +936,7 @@ class TestPublicUploadFiles(UploadFilesContract):
         proxy.calls.clear()
         after = PublicUploadFiles(test_upload_id)
         assert after.storage_fs is proxy
-        assert [
-            call[0] for call in _published_zip_calls(proxy.calls, 'restricted')
-        ] == ['exists', 'size']
+        assert proxy.calls
         after.close()
 
     def test_remote_then_local_artifact_probe_error_is_not_cached(
@@ -924,18 +949,16 @@ class TestPublicUploadFiles(UploadFilesContract):
             entry_specs='p',
             read_mode='remote_then_local',
         )
-        original = PublicUploadFiles._artifacts_exist
+        original_load = RemoteReadyMarker.load
         attempts = {'n': 0}
 
-        def fail_once(path, fs, *args, **kwargs):
+        def fail_once(cls, upload_os_path, fs):
             attempts['n'] += 1
             if attempts['n'] == 1:
                 raise OSError('remote probe failed')
-            return original(path, fs, *args, **kwargs)
+            return original_load(upload_os_path, fs)
 
-        monkeypatch.setattr(
-            PublicUploadFiles, '_artifacts_exist', staticmethod(fail_once)
-        )
+        monkeypatch.setattr(RemoteReadyMarker, 'load', classmethod(fail_once))
 
         with pytest.raises(OSError, match='remote probe failed'):
             PublicUploadFiles(test_upload_id).storage_fs
@@ -949,9 +972,520 @@ class TestPublicUploadFiles(UploadFilesContract):
         proxy.calls.clear()
         cached = PublicUploadFiles(test_upload_id)
         assert cached.storage_fs is proxy
-        assert proxy.calls == []
-        assert attempts['n'] == 2
+        assert self._calls_for_artifacts(proxy.calls) == []
+        assert attempts['n'] == 3
         cached.close()
+
+    def test_local_then_remote_pack_copies_artifacts_and_writes_marker(
+        self, monkeypatch, test_upload_id
+    ):
+        remote_fs = self._setup_memory_public_fs(monkeypatch)
+        _, entries, staging = create_staging_upload(test_upload_id, entry_specs='p')
+        staging.pack(entries, with_embargo=False)
+        staging.delete()
+
+        public = PublicUploadFiles(test_upload_id)
+        local_fs = LocalFileSystem()
+        local_dir = DirectoryObject(public.os_path, fs=local_fs)
+        zip_file = local_dir.zip_fp('public', fs=local_fs)
+        msg_file = local_dir.msg_fp('public', fs=local_fs)
+        assert zip_file.exists()
+        assert msg_file.exists()
+        assert remote_fs.exists(FSUtility.remote_path(zip_file.os_path))
+        assert remote_fs.exists(FSUtility.remote_path(msg_file.os_path))
+        assert remote_fs.exists(_remote_marker_location(public.os_path))
+        marker = RemoteReadyMarker.load(public.os_path, remote_fs)
+        assert marker is not None
+        assert marker.matches_remote(remote_fs, public.os_path)
+        assert public.storage_fs is remote_fs
+
+    def test_remote_then_local_stale_ready_cache_rechecks_marker(
+        self, monkeypatch, test_upload_id
+    ):
+        remote_fs = self._setup_memory_public_fs(monkeypatch)
+        _, _entries, staging = create_staging_upload(test_upload_id, entry_specs='p')
+        staging.pack(_entries, with_embargo=False)
+        staging.delete()
+
+        warm = PublicUploadFiles(test_upload_id)
+        assert warm.storage_fs is remote_fs
+        warm.close()
+
+        remote_fs.rm(_remote_marker_location(warm.os_path))
+
+        after = PublicUploadFiles(test_upload_id)
+        assert isinstance(after.storage_fs, LocalFileSystem)
+
+    def test_local_then_remote_copy_writes_marker_for_zip_only_publish(
+        self, monkeypatch, test_upload_id
+    ):
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', None)
+        _, _entries, upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        local_dir = DirectoryObject(upload_files.os_path, fs=LocalFileSystem())
+        local_dir.msg_fp('public').delete()
+        if local_dir.h5_fp('public').exists():
+            local_dir.h5_fp('public').delete()
+
+        remote_fs = self._setup_memory_public_fs(monkeypatch)
+        copy_to_remote(upload_files.os_path, test_upload_id, 'public')
+
+        marker = RemoteReadyMarker.load(upload_files.os_path, remote_fs)
+        assert marker is not None
+        names = {item.name for item in marker.artifacts}
+        assert any(
+            name.startswith('raw-') and name.endswith('.plain.zip') for name in names
+        )
+        assert not any(name.endswith('.msg.msg') for name in names)
+        zip_path = local_dir.zip_fp('public').os_path
+        assert remote_fs.exists(FSUtility.remote_path(zip_path))
+
+    def test_published_access_uses_local_write_destination_when_remote_empty(
+        self, monkeypatch, test_upload_id
+    ):
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', None)
+        _, _entries, upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        remote_fs = self._setup_memory_public_fs(
+            monkeypatch, read_mode='remote_only', write_mode='local_then_remote'
+        )
+
+        public = PublicUploadFiles(test_upload_id)
+        assert public.access == 'public'
+        access = detect_published_access(public.os_path, choose_pack_fs())
+        assert access == 'public'
+        complete_published_write(public.os_path, test_upload_id, access)
+
+        zip_path = DirectoryObject(public.os_path).zip_fp('public').os_path
+        assert remote_fs.exists(FSUtility.remote_path(zip_path))
+        marker = RemoteReadyMarker.load(public.os_path, remote_fs)
+        assert marker is not None
+
+    def test_local_then_remote_hydrates_legacy_remote_artifacts(
+        self, monkeypatch, test_upload_id
+    ):
+        remote_fs = self._setup_memory_public_fs(monkeypatch)
+        _, entries, staging = create_staging_upload(test_upload_id, entry_specs='p')
+        staging.pack(entries, with_embargo=False)
+        staging.delete()
+
+        public = PublicUploadFiles(test_upload_id)
+        local_dir = DirectoryObject(public.os_path, fs=LocalFileSystem())
+        local_dir.zip_fp('public').delete()
+        local_dir.msg_fp('public').delete()
+        if local_dir.h5_fp('public').exists():
+            local_dir.h5_fp('public').delete()
+        assert not local_dir.zip_fp('public').exists()
+        assert not local_dir.msg_fp('public').exists()
+
+        complete_published_write(public.os_path, test_upload_id, 'public')
+
+        assert local_dir.zip_fp('public').exists()
+        assert local_dir.msg_fp('public').exists()
+        marker = RemoteReadyMarker.load(public.os_path, remote_fs)
+        assert marker is not None
+        assert marker.matches_remote(remote_fs, public.os_path)
+
+    def test_local_then_remote_hydrate_does_not_overwrite_local_archive(
+        self, monkeypatch, test_upload_id
+    ):
+        remote_fs = self._setup_memory_public_fs(monkeypatch)
+        _, entries, staging = create_staging_upload(test_upload_id, entry_specs='p')
+        staging.pack(entries, with_embargo=False)
+        staging.delete()
+
+        public = PublicUploadFiles(test_upload_id)
+        local_dir = DirectoryObject(public.os_path, fs=LocalFileSystem())
+        local_dir.zip_fp('public').delete()
+        msg = local_dir.msg_fp('public', fs=LocalFileSystem())
+        new_payload = b'n' * (empty_archive_file_size + 50)
+        with open(msg.os_path, 'wb') as file_obj:
+            file_obj.write(new_payload)
+
+        complete_published_write(public.os_path, test_upload_id, 'public')
+
+        with open(msg.os_path, 'rb') as file_obj:
+            assert file_obj.read() == new_payload
+        assert local_dir.zip_fp('public').exists()
+        remote_msg = DirectoryObject(public.os_path, fs=remote_fs).msg_fp(
+            'public', fs=remote_fs
+        )
+        with remote_fs.open(remote_msg.location, 'rb') as file_obj:
+            assert file_obj.read() == new_payload
+
+    def test_hydrate_interrupted_download_is_not_authoritative_on_retry(
+        self, monkeypatch, test_upload_id
+    ):
+        remote_fs = self._setup_memory_public_fs(monkeypatch)
+        _, entries, staging = create_staging_upload(test_upload_id, entry_specs='p')
+        staging.pack(entries, with_embargo=False)
+        staging.delete()
+
+        public = PublicUploadFiles(test_upload_id)
+        local_dir = DirectoryObject(public.os_path, fs=LocalFileSystem())
+        zip_file = local_dir.zip_fp('public')
+        remote_zip = FSUtility.remote_path(zip_file.os_path)
+        original_remote = remote_fs.cat_file(remote_zip)
+        assert len(original_remote) > 100
+        zip_file.delete()
+        local_dir.msg_fp('public').delete()
+        if local_dir.h5_fp('public').exists():
+            local_dir.h5_fp('public').delete()
+
+        original_copy = shutil.copyfileobj
+
+        def interrupt_first_download(src, dst, *args, **kwargs):
+            dst.write(src.read(100))
+            raise OSError('download interrupted')
+
+        monkeypatch.setattr(
+            'nomad.public_storage.shutil.copyfileobj', interrupt_first_download
+        )
+        with pytest.raises(OSError, match='download interrupted'):
+            complete_published_write(public.os_path, test_upload_id, 'public')
+
+        assert not zip_file.exists()
+        assert not os.path.exists(f'{zip_file.os_path}.part')
+        assert remote_fs.cat_file(remote_zip) == original_remote
+        assert RemoteReadyMarker.load(public.os_path, remote_fs) is not None
+
+        monkeypatch.setattr('nomad.public_storage.shutil.copyfileobj', original_copy)
+        complete_published_write(public.os_path, test_upload_id, 'public')
+
+        with open(zip_file.os_path, 'rb') as file_obj:
+            assert file_obj.read() == original_remote
+        assert remote_fs.cat_file(remote_zip) == original_remote
+        marker = RemoteReadyMarker.load(public.os_path, remote_fs)
+        assert marker is not None
+        assert marker.matches_remote(remote_fs, public.os_path)
+
+    def test_local_then_remote_repack_hydrates_legacy_remote_only_upload(
+        self, monkeypatch, test_upload_id
+    ):
+        remote_fs = self._setup_memory_public_fs(monkeypatch)
+        _, entries, staging = create_staging_upload(test_upload_id, entry_specs='p')
+        staging.pack(entries, with_embargo=False)
+        staging.delete()
+
+        public = PublicUploadFiles(test_upload_id)
+        local_dir = DirectoryObject(public.os_path, fs=LocalFileSystem())
+        local_dir.zip_fp('public').delete()
+        local_dir.msg_fp('public').delete()
+        if local_dir.h5_fp('public').exists():
+            local_dir.h5_fp('public').delete()
+
+        public.re_pack(with_embargo=True)
+
+        remote_dir = DirectoryObject(public.os_path, fs=remote_fs)
+        assert local_dir.zip_fp('restricted').exists()
+        assert local_dir.msg_fp('restricted').exists()
+        assert remote_dir.zip_fp('restricted').exists()
+        assert not remote_dir.zip_fp('public').exists()
+        marker = RemoteReadyMarker.load(public.os_path, remote_fs)
+        assert marker is not None
+        assert marker.access == 'restricted'
+
+    def test_local_then_remote_mirror_failure_leaves_no_marker(
+        self, monkeypatch, test_upload_id
+    ):
+        remote_fs = self._setup_memory_public_fs(monkeypatch)
+
+        def fail_put(*args, **kwargs):
+            raise OSError('remote put failed')
+
+        monkeypatch.setattr(remote_fs, 'put_file', fail_put)
+        _, entries, staging = create_staging_upload(test_upload_id, entry_specs='p')
+        with pytest.raises(OSError, match='remote put failed'):
+            staging.pack(entries, with_embargo=False)
+
+        public = PublicUploadFiles(test_upload_id)
+        assert not remote_fs.exists(_remote_marker_location(public.os_path))
+        assert public.storage_fs is not remote_fs
+        assert isinstance(public.storage_fs, LocalFileSystem)
+
+    def test_local_then_remote_size_mismatch_leaves_no_marker(
+        self, monkeypatch, test_upload_id
+    ):
+        remote_fs = self._setup_memory_public_fs(monkeypatch)
+        original_info = remote_fs.info
+
+        def mismatched_info(path, **kwargs):
+            info = dict(original_info(path, **kwargs))
+            if str(path).endswith('.plain.zip'):
+                info['size'] = int(info['size']) + 1
+            return info
+
+        monkeypatch.setattr(remote_fs, 'info', mismatched_info)
+        _, entries, staging = create_staging_upload(test_upload_id, entry_specs='p')
+        with pytest.raises(RuntimeError, match='remote size mismatch'):
+            staging.pack(entries, with_embargo=False)
+
+        public = PublicUploadFiles(test_upload_id)
+        assert not remote_fs.exists(_remote_marker_location(public.os_path))
+        assert isinstance(public.storage_fs, LocalFileSystem)
+
+    def test_remote_then_local_no_marker_with_local_artifacts_stays_local(
+        self, monkeypatch, test_upload_id
+    ):
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', None)
+        _, _entries, upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        remote_fs = MemoryFileSystem()
+        zip_path = DirectoryObject(upload_files.os_path).zip_fp('public').os_path
+        remote_zip = FSUtility.remote_path(zip_path)
+        remote_fs.makedirs(os.path.dirname(remote_zip), exist_ok=True)
+        remote_fs.put_file(os.path.abspath(zip_path), remote_zip)
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', 's3')
+        monkeypatch.setattr(config.fs.public_fs, 'read_mode', 'remote_then_local')
+        monkeypatch.setattr(
+            type(config.fs.public_fs), 'target_fs', property(lambda _: remote_fs)
+        )
+
+        public = PublicUploadFiles(test_upload_id)
+        assert isinstance(public.storage_fs, LocalFileSystem)
+
+    def test_remote_then_local_legacy_remote_when_local_is_empty(
+        self, monkeypatch, test_upload_id
+    ):
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', None)
+        _, _entries, upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        remote_fs = MemoryFileSystem()
+        _copy_upload_tree_to_memory_fs(upload_files, remote_fs)
+        for name in os.listdir(upload_files.os_path):
+            path = os.path.join(upload_files.os_path, name)
+            if os.path.isfile(path):
+                os.remove(path)
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', 's3')
+        monkeypatch.setattr(config.fs.public_fs, 'read_mode', 'remote_then_local')
+        monkeypatch.setattr(
+            type(config.fs.public_fs), 'target_fs', property(lambda _: remote_fs)
+        )
+
+        public = PublicUploadFiles(test_upload_id)
+        assert public.storage_fs is remote_fs
+
+    def test_remote_then_local_valid_marker_selects_remote(
+        self, monkeypatch, test_upload_id
+    ):
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', None)
+        _, _entries, upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        remote_fs = self._setup_memory_public_fs(monkeypatch, write_mode='local_only')
+        _copy_upload_tree_to_memory_fs(upload_files, remote_fs)
+        write_ready_marker(upload_files.os_path, test_upload_id, 'public')
+
+        public = PublicUploadFiles(test_upload_id)
+        assert public.storage_fs is remote_fs
+        marker = RemoteReadyMarker.load(upload_files.os_path, remote_fs)
+        assert marker is not None
+        assert marker.matches_remote(remote_fs, upload_files.os_path)
+
+    def test_remote_then_local_marker_mismatch_stays_local(
+        self, monkeypatch, test_upload_id
+    ):
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', None)
+        _, _entries, upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        remote_fs = self._setup_memory_public_fs(monkeypatch, write_mode='local_only')
+        _copy_upload_tree_to_memory_fs(upload_files, remote_fs)
+        write_ready_marker(upload_files.os_path, test_upload_id, 'public')
+        marker = RemoteReadyMarker.load(upload_files.os_path, remote_fs)
+        assert marker is not None
+        mismatched = RemoteReadyMarker(
+            schema_version=marker.schema_version,
+            upload_id=marker.upload_id,
+            access=marker.access,
+            created_at=marker.created_at,
+            artifacts=tuple(
+                ArtifactRecord(name=item.name, size=item.size, etag='not-the-etag')
+                for item in marker.artifacts
+            ),
+        )
+        mismatched.save(upload_files.os_path, remote_fs)
+        invalidate_ready_cache(upload_files.os_path)
+
+        public = PublicUploadFiles(test_upload_id)
+        assert isinstance(public.storage_fs, LocalFileSystem)
+
+    def test_repack_renames_both_sides_and_rewrites_marker(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        proxy, _entries, upload_files = self._setup_recording_archive_fs(
+            monkeypatch,
+            tmp_path,
+            test_upload_id,
+            entry_specs='p',
+            read_mode='remote_then_local',
+        )
+        local_dir = DirectoryObject(upload_files.os_path, fs=LocalFileSystem())
+        remote_dir = DirectoryObject(upload_files.os_path, fs=proxy)
+        assert local_dir.zip_fp('public').exists()
+        assert remote_dir.zip_fp('public').exists()
+
+        packed = PublicUploadFiles(test_upload_id)
+        packed.re_pack(with_embargo=True)
+        packed.close()
+
+        assert not local_dir.zip_fp('public').exists()
+        assert local_dir.zip_fp('restricted').exists()
+        assert not remote_dir.zip_fp('public').exists()
+        assert remote_dir.zip_fp('restricted').exists()
+
+        old_marker = RemoteReadyMarker.load(upload_files.os_path, proxy)
+        assert old_marker is not None
+        names = {item.name for item in old_marker.artifacts}
+        assert 'raw-restricted.plain.zip' in names
+        assert 'raw-public.plain.zip' not in names
+        assert any(name.endswith('.msg.msg') and 'restricted' in name for name in names)
+
+        after = PublicUploadFiles(test_upload_id)
+        assert after.storage_fs is proxy
+        after.close()
+
+    def test_delete_removes_remote_ready_marker_and_artifacts(
+        self, monkeypatch, test_upload_id
+    ):
+        remote_fs = self._setup_memory_public_fs(monkeypatch)
+        _, entries, staging = create_staging_upload(test_upload_id, entry_specs='p')
+        staging.pack(entries, with_embargo=False)
+        staging.delete()
+
+        public = PublicUploadFiles(test_upload_id)
+        marker_location = _remote_marker_location(public.os_path)
+        zip_location = FSUtility.remote_path(
+            DirectoryObject(public.os_path).zip_fp('public').os_path
+        )
+        assert remote_fs.exists(marker_location)
+        assert remote_fs.exists(zip_location)
+
+        public.delete()
+
+        assert not remote_fs.exists(marker_location)
+        assert not remote_fs.exists(zip_location)
+        assert not public.exists()
+
+    def test_delete_access_artifacts_clears_local_and_remote(
+        self, monkeypatch, test_upload_id
+    ):
+        remote_fs = self._setup_memory_public_fs(monkeypatch)
+        _, entries, staging = create_staging_upload(test_upload_id, entry_specs='p')
+        staging.pack(entries, with_embargo=False)
+        staging.delete()
+
+        public = PublicUploadFiles(test_upload_id)
+        local_dir = DirectoryObject(public.os_path, fs=LocalFileSystem())
+        remote_dir = DirectoryObject(public.os_path, fs=remote_fs)
+        for directory, fs in (
+            (local_dir, LocalFileSystem()),
+            (remote_dir, remote_fs),
+        ):
+            for artifact in (
+                directory.zip_fp('restricted', fs=fs),
+                directory.msg_fp('restricted', fs=fs),
+            ):
+                artifact._fs.makedirs(
+                    os.path.dirname(artifact.location).replace('\\', '/'),
+                    exist_ok=True,
+                )
+                with artifact._fs.open(artifact.location, 'wb') as file_obj:
+                    file_obj.write(b'stale-restricted-artifact')
+
+        delete_access_artifacts(
+            public.os_path, 'restricted', include_raw=True, include_archive=True
+        )
+
+        assert not local_dir.zip_fp('restricted').exists()
+        assert not local_dir.msg_fp('restricted').exists()
+        assert not remote_dir.zip_fp('restricted').exists()
+        assert not remote_dir.msg_fp('restricted').exists()
+        assert local_dir.zip_fp('public').exists()
+        assert remote_dir.zip_fp('public').exists()
+
+    def test_files_to_bundle_uses_selected_backend(self, monkeypatch, test_upload_id):
+        remote_fs = self._setup_memory_public_fs(monkeypatch)
+        _, entries, staging = create_staging_upload(test_upload_id, entry_specs='p')
+        staging.pack(entries, with_embargo=False)
+        staging.delete()
+
+        public = PublicUploadFiles(test_upload_id)
+        assert public.storage_fs is remote_fs
+        sources = list(public.files_to_bundle(BundleExportSettings()))
+        assert sources
+        assert all(source._fs is remote_fs for source in sources)
+
+    def test_files_to_bundle_stays_local_when_mirror_fails(
+        self, monkeypatch, test_upload_id
+    ):
+        remote_fs = self._setup_memory_public_fs(monkeypatch)
+
+        def fail_put(*args, **kwargs):
+            raise OSError('remote put failed')
+
+        monkeypatch.setattr(remote_fs, 'put_file', fail_put)
+        _, entries, staging = create_staging_upload(test_upload_id, entry_specs='p')
+        with pytest.raises(OSError, match='remote put failed'):
+            staging.pack(entries, with_embargo=False)
+
+        public = PublicUploadFiles(test_upload_id)
+        sources = list(public.files_to_bundle(BundleExportSettings()))
+        assert sources
+        assert all(isinstance(source._fs, LocalFileSystem) for source in sources)
+
+    def test_to_staging_after_failed_copy_extracts_local_zip(
+        self, monkeypatch, test_upload_id
+    ):
+        remote_fs = self._setup_memory_public_fs(monkeypatch)
+
+        def fail_put(*args, **kwargs):
+            raise OSError('remote put failed')
+
+        monkeypatch.setattr(remote_fs, 'put_file', fail_put)
+        _, entries, staging = create_staging_upload(test_upload_id, entry_specs='p')
+        with pytest.raises(OSError, match='remote put failed'):
+            staging.pack(entries, with_embargo=False)
+        staging.delete()
+
+        public = PublicUploadFiles(test_upload_id)
+        assert isinstance(public.storage_fs, LocalFileSystem)
+        restored = public.to_staging(create=True)
+        with restored.raw_file(entries[0].mainfile) as file_obj:
+            assert file_obj.read()
+
+    def test_repack_after_partial_copy_recopies_from_local(
+        self, monkeypatch, test_upload_id
+    ):
+        remote_fs = self._setup_memory_public_fs(monkeypatch)
+        original_put = remote_fs.put_file
+
+        def put_zip_only(lpath, rpath, **kwargs):
+            if str(rpath).endswith('.msg.msg'):
+                raise OSError('remote put failed')
+            return original_put(lpath, rpath, **kwargs)
+
+        monkeypatch.setattr(remote_fs, 'put_file', put_zip_only)
+        _, entries, staging = create_staging_upload(test_upload_id, entry_specs='p')
+        with pytest.raises(OSError, match='remote put failed'):
+            staging.pack(entries, with_embargo=False)
+
+        public = PublicUploadFiles(test_upload_id)
+        assert isinstance(public.storage_fs, LocalFileSystem)
+        monkeypatch.setattr(remote_fs, 'put_file', original_put)
+        public.re_pack(with_embargo=True)
+
+        remote_dir = DirectoryObject(public.os_path, fs=remote_fs)
+        assert remote_dir.zip_fp('restricted').exists()
+        assert remote_dir.msg_fp('restricted').exists()
+        marker = RemoteReadyMarker.load(public.os_path, remote_fs)
+        assert marker is not None
+        assert marker.matches_remote(remote_fs, public.os_path)
+        assert public.storage_fs is remote_fs
 
     @pytest.fixture(scope='function')
     def empty_test_upload(self, test_upload_id: str) -> UploadFiles:

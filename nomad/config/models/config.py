@@ -740,10 +740,29 @@ public/ex/examples_template_985dc9d7/raw-public.plain.zip
         description="""Controls reads of public files when a remote filesystem is configured.
 
 ``remote_only`` reads published files only from the configured remote filesystem.
-``remote_then_local`` reads from remote storage first and falls back to the local public
-filesystem only when no published artifacts are present remotely. The selected backend is
-used consistently for an upload; artifacts are never mixed between the two backends.
+``remote_then_local`` reads from remote storage when a matching
+``.nomad-remote-ready.json`` completion marker is present, and falls back to the local
+public filesystem otherwise (including while a dual-write copy is still running).
+Legacy publishes without a marker select remote only when the local public directory
+has no published artifacts. The selected backend is used consistently for an upload;
+artifacts are never mixed between the two backends.
 """,
+    )
+    write_mode: Literal['local_only', 'remote_only', 'local_then_remote'] | None = (
+        Field(
+            None,
+            description="""Controls writes of published files when a remote filesystem is configured.
+
+``local_only`` packs published artifacts only onto the local public filesystem.
+``remote_only`` packs published artifacts only onto the configured remote filesystem
+(historical behaviour when ``protocol`` is set).
+``local_then_remote`` packs onto the local public filesystem, copies the finished
+objects to remote storage, then writes a ``.nomad-remote-ready.json`` completion
+marker. The marker is the read gate for ``remote_then_local``.
+
+If unset, defaults to ``remote_only`` when ``protocol`` is set, otherwise ``local_only``.
+""",
+        )
     )
     redirect_downloads: bool = Field(
         False,
@@ -784,6 +803,19 @@ all workers on the node.""",
             raise ValueError('Only support S3 for the moment.')
 
         return values
+
+    @property
+    def resolved_write_mode(
+        self,
+    ) -> Literal['local_only', 'remote_only', 'local_then_remote']:
+        """Effective published-write destination.
+
+        An explicit ``write_mode`` wins. Otherwise ``remote_only`` when
+        ``protocol`` is set, else ``local_only``.
+        """
+        if self.write_mode is not None:
+            return self.write_mode
+        return 'remote_only' if self.protocol is not None else 'local_only'
 
     def ensure_buffer_size(self):
         if self.protocol == 's3':
