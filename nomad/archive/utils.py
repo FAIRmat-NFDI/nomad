@@ -59,8 +59,15 @@ def write_archive(path_or_file: str | BinaryIO, data: dict) -> None:
         dump(FSUtility.upath(path_or_file), data, backend='rust')
 
 
-def combine_archive(target_fp, data: Iterable[tuple]):
-    from nomad.files import FSUtility
+def combine_archive(target_fp, data: Iterable[tuple], *, fs=None):
+    """Combine per-entry archives into ``target_fp``.
+
+    ``fs`` selects the destination filesystem. When omitted, the historical
+    ``FSUtility.upath`` mapping is used (public paths go to remote when
+    ``protocol`` is set). Pack passes an explicit local filesystem for
+    ``local_only`` / ``local_then_remote`` writes.
+    """
+    from nomad.files import FSUtility, PathObject
 
     def _kernel():
         for uuid, msg_fp in data:
@@ -78,8 +85,17 @@ def combine_archive(target_fp, data: Iterable[tuple]):
                 with read_archive(msg_path, detected_version=msg_version) as reader:
                     yield FileInfo(None, uuid, obj=to_json(reader[uuid]))
 
-    upath = FSUtility.upath(target_fp)
-    combine(upath.path, _kernel(), fs=upath.fs, backend='rust')
+    os_path = getattr(target_fp, 'os_path', target_fp)
+    if not isinstance(os_path, str):
+        os_path = str(os_path)
+
+    if fs is None:
+        upath = FSUtility.upath(os_path)
+        dest_fs, location = upath.fs, upath.path
+    else:
+        dest_fs = fs
+        location = PathObject(os_path, fs=fs).location
+    combine(location, _kernel(), fs=dest_fs, backend='rust')
 
 
 def read_archive(file_or_path: str | BinaryIO, **kwargs):

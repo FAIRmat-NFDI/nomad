@@ -56,6 +56,11 @@ from nomad.metainfo.util import MDefNotFound
 from nomad.mongo.package import PackageDefinition
 from nomad.processing.base import ProcessStatus
 from nomad.processing.data import Entry, Upload, mongo_entry_metadata
+from nomad.public_storage import (
+    choose_pack_fs,
+    complete_published_write,
+    detect_published_access,
+)
 from nomad.schemas import get_schema
 
 
@@ -1024,6 +1029,13 @@ class BundleImporter:
                 # Repack the upload
                 PublicUploadFiles(self.upload.upload_id).re_pack(
                     with_embargo=self.embargo_length > 0
+                )
+            if self.upload.published:
+                published_files = PublicUploadFiles(self.upload.upload_id)
+                complete_published_write(
+                    published_files.os_path,
+                    published_files.upload_id,
+                    detect_published_access(published_files.os_path, choose_pack_fs()),
                 )
         except Exception:
             # Something went wrong. Delete the files and re-raise the original exception

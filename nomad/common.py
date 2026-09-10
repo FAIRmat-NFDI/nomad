@@ -21,6 +21,8 @@ source code. Notably, this module should be importable anywhere in the NOMAD
 source code without circular imports.
 """
 
+from __future__ import annotations
+
 import importlib.util
 import os
 import re
@@ -31,7 +33,10 @@ import zipfile
 from datetime import datetime, timedelta, timezone
 from glob import has_magic
 from tempfile import TemporaryDirectory
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from fsspec import AbstractFileSystem
 
 import httpx2
 
@@ -119,7 +124,9 @@ decompress_file_extensions = {
 }
 
 
-def get_compression_format(path: str) -> Literal['zip', 'tar', 'error'] | None:
+def get_compression_format(
+    path: str, *, fs: AbstractFileSystem | None = None
+) -> Literal['zip', 'tar', 'error'] | None:
     """
     Returns the decompression format ('zip', 'tar' or 'error') if `path` specifies a file
     which should be automatically decompressed before adding it to an upload. If `path`
@@ -133,14 +140,30 @@ def get_compression_format(path: str) -> Literal['zip', 'tar', 'error'] | None:
     Note, some files, like for example excel files, are actually zip files, and we don't want
     to extract such files. Therefore, we only auto decompress if the file has an extension
     we recognize as decompressable, like ".zip", ".tar" etc.
+
+    ``path`` is the nominal path (used for the extension). ``fs`` is the filesystem that
+    actually holds the bytes. When omitted, ``FSUtility.upath`` is used (public paths
+    go to remote when ``protocol`` is set).
     """
+    from fsspec.implementations.local import LocalFileSystem
+
     from nomad.files import FSUtility
 
-    upath = FSUtility.upath(path)
-    if upath.is_dir():
-        return None
+    if fs is None:
+        source = FSUtility.upath(path)
+        if source.is_dir():
+            return None
+        file_cm = source.open('rb')
+    else:
+        location = (
+            path if isinstance(fs, LocalFileSystem) else FSUtility.remote_path(path)
+        )
+        if fs.isdir(location):
+            return None
+        file_cm = fs.open(location, 'rb')
+
     basename_lower = os.path.basename(path).lower()
-    with upath.open('rb') as file:
+    with file_cm as file:
         for extension, format in decompress_file_extensions.items():
             if basename_lower.endswith(extension):
                 if format == 'tar':
