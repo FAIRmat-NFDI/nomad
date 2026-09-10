@@ -27,7 +27,14 @@ from typing import Any, cast
 import pint
 
 from nomad.config import config
-from nomad.metainfo.data_type import Enum, m_str, to_json_schema_type
+from nomad.metainfo.data_type import (
+    Enum,
+    m_complex,
+    m_complex128,
+    m_float32,
+    m_str,
+    to_json_schema_type,
+)
 from nomad.units import ureg
 
 __hash_method = 'sha1'  # choose from hashlib.algorithms_guaranteed
@@ -688,8 +695,6 @@ def metainfo_to_json_schema(
         properties: dict = {}
         all_of: list = []
         any_of: list = []
-        if add_unit_value and _top_level:
-            _defs['UnitValue'] = UNIT_VALUE_SCHEMA
 
         # Add Quantities inline
         for quantity in getattr(m_def, 'quantities', []):
@@ -809,6 +814,22 @@ def metainfo_to_json_schema(
     )
 
 
+def create_complex_type_schema(base_schema: dict[str, Any]) -> dict[str, Any]:
+    """
+    Create a JSON Schema for complex types, including both the real and imaginary parts.
+
+    Args:
+        base_schema (dict): The base schema for the complex type.
+
+    Returns:
+        dict: A JSON Schema representation for complex types.
+    """
+    complex_schema = to_json_schema_type(m_complex128())
+    complex_schema['properties']['re'] = base_schema
+    complex_schema['properties']['im'] = base_schema
+    return complex_schema
+
+
 def quantity_to_json_schema(
     quantity, add_unit_value: bool = False, add_property_subtypes: bool = False
 ) -> dict[str, Any]:
@@ -886,6 +907,34 @@ def quantity_to_json_schema(
 
         return build(shape)
 
+    def handle_default_value(quantity, base_type, add_unit_value):
+        default_value = getattr(quantity, 'default', None)
+        if default_value is not None:
+            try:
+                default_value = quantity.type.serialize(
+                    quantity.type.normalize(default_value)
+                )
+            except Exception:
+                if base_type == 'string':
+                    if isinstance(default_value, list):
+                        default_value = [str(v) for v in default_value]
+                    else:
+                        default_value = str(default_value)
+                else:
+                    raise ValueError(
+                        f'Cannot serialize default value {default_value} for quantity {quantity.name}.'
+                    )
+        if (
+            default_value is not None
+            and add_unit_value
+            and getattr(quantity, 'unit', None)
+        ):
+            default_value = {
+                'value': default_value,
+                'unit': str(quantity.unit),
+            }
+        return default_value
+
     schema: dict[str, Any] = {
         '$schema': JSON_SCHEMA_VERSION,
         'title': getattr(quantity, 'title', None),
@@ -895,6 +944,11 @@ def quantity_to_json_schema(
         # 'categories': getattr(quantity, 'categories', []),
     }
 
+    schema['nomad_type'] = (
+        quantity.type.standard_type()
+        if hasattr(quantity.type, 'standard_type')
+        else str(quantity.type.__class__.__name__)
+    )
     for k, v in list(schema.items()):
         if v is None or (isinstance(v, list) and not v):
             schema.pop(k)
@@ -902,9 +956,20 @@ def quantity_to_json_schema(
     # Determine base type
     if isinstance(quantity.type, Reference):
         base_schema = to_json_schema_type(m_str())
+        try:
+            reference_section = f'{quantity.type.target_section_def.qualified_name()}@{quantity.type.target_section_def.definition_id}'
+        except Exception:
+            reference_section = quantity.type.target_section_def.m_path()
+        schema['reference_section_def'] = reference_section
+    elif isinstance(quantity.type, m_complex):
+        base_schema = to_json_schema_type(m_float32())
     else:
         base_schema = to_json_schema_type(quantity.type)
-    base_type = base_schema['type']
+
+    base_type = base_schema.get('type', None)
+    default_value = handle_default_value(quantity, base_type, add_unit_value)
+    if default_value is not None:
+        schema['default'] = default_value
 
     name = get_id_name(quantity.qualified_name())
     definition_id = quantity.definition_id
@@ -920,8 +985,6 @@ def quantity_to_json_schema(
     value_schema: dict[str, Any] = base_schema.copy()
     if getattr(quantity, 'unit', None):
         value_schema['unit'] = str(quantity.unit)
-    if getattr(quantity, 'default', None) is not None:
-        value_schema['default'] = quantity.default
     if isinstance(quantity.type, MEnum):
         value_schema['enum'] = quantity.type._list
 
@@ -932,20 +995,22 @@ def quantity_to_json_schema(
         if eln_annotation.props.get('maxValue', None) is not None:
             value_schema['maximum'] = eln_annotation.props.get('maxValue', None)
 
+    if not quantity.is_scalar:
+        value_schema = shape_to_json_schema(quantity.shape, base_type, value_schema)
+
+    if isinstance(quantity.type, m_complex):
+        value_schema = create_complex_type_schema(value_schema.copy())
+
     if add_unit_value and getattr(quantity, 'unit', None):
         value_schema = {
+            'type': 'object',
             'properties': {
                 'value': value_schema.copy(),
-                'unit': {'type': 'string', 'enum': [value_schema['unit']]},
-            }
+                'unit': {'type': 'string', 'enum': [str(quantity.unit)]},
+            },
         }
-        value_schema['allOf'] = [{'$ref': UNIT_VALUE_SCHEMA['$id']}]
-        schema['$defs'] = {'UnitValue': UNIT_VALUE_SCHEMA}
 
-    if quantity.is_scalar:
-        schema.update(value_schema)
-    else:
-        schema.update(shape_to_json_schema(quantity.shape, base_type, value_schema))
+    schema.update(value_schema)
     return schema
 
 

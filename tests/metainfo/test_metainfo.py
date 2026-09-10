@@ -21,6 +21,7 @@
 
 import json
 import math
+from datetime import datetime
 
 import jsonschema
 import numpy as np
@@ -28,6 +29,7 @@ import pandas as pd
 import pint
 import pytest
 
+from nomad.datamodel.hdf5 import HDF5Dataset, HDF5Reference
 from nomad.datamodel.metainfo.eln import ELNAnnotation
 from nomad.metainfo import (
     Annotation,
@@ -35,7 +37,7 @@ from nomad.metainfo import (
     DefinitionAnnotation,
     SectionAnnotation,
 )
-from nomad.metainfo.data_type import JSON, Datetime
+from nomad.metainfo.data_type import JSON, Bytes, Datetime
 from nomad.metainfo.example import SCC, Parsing, Run, System, SystemHash, VaspRun
 from nomad.metainfo.example import m_package as example_package
 from nomad.metainfo.metainfo import (
@@ -46,6 +48,7 @@ from nomad.metainfo.metainfo import (
     MSection,
     Package,
     Quantity,
+    Reference,
     Section,
     SectionProxy,
     SubSection,
@@ -1454,16 +1457,33 @@ class TestToJsonSchema:
                     )
 
         assert_subdict(schema, expected_subschema)
+        complex_quantity = Quantity(type=complex, shape=shape)
+        complex_schema = complex_quantity.m_to_json_schema()
+        jsonschema.Draft202012Validator.check_schema(complex_schema)
+        assert_subdict(complex_schema['properties']['re'], expected_subschema)
+        assert_subdict(complex_schema['properties']['im'], expected_subschema)
 
     @pytest.mark.parametrize(
         'm_types, expected_type',
         [
             pytest.param(MTypes.int, 'integer', id='integer'),
             pytest.param(MTypes.float, 'number', id='number'),
-            pytest.param(MTypes.str | {MEnum('test')}, 'string', id='string'),
+            pytest.param(
+                MTypes.str
+                | {
+                    MEnum('test'),
+                    Bytes,
+                    HDF5Dataset,
+                    HDF5Reference,
+                    Reference(unit_quantity),
+                },
+                'string',
+                id='string',
+            ),
             pytest.param(MTypes.bool, 'boolean', id='boolean'),
             pytest.param({Datetime}, 'date-time', id='datetime'),
             pytest.param({JSON}, 'object', id='json'),
+            pytest.param(MTypes.complex, 'object', id='complex'),
         ],
     )
     def test_quantity_type(self, m_types, expected_type):
@@ -1477,8 +1497,61 @@ class TestToJsonSchema:
             if expected_type == 'date-time':
                 assert schema['type'] == 'string'
                 assert schema.get('format') == 'date-time'
+            elif isinstance(type_, Reference):
+                assert schema['type'] == 'string'
+                assert (
+                    schema['reference_section_def']
+                    == f'{unit_quantity.qualified_name()}@{unit_quantity.definition_id}'
+                )
+            elif type_ in MTypes.complex:
+                assert schema['type'] == 'object'
+                assert 'properties' in schema
+                assert 're' in schema['properties']
+                assert 'im' in schema['properties']
+                assert schema['properties']['re']['type'] == 'number'
+                assert schema['properties']['im']['type'] == 'number'
             else:
                 assert schema['type'] == expected_type
+
+    @pytest.mark.parametrize(
+        'mtype, default, expected_default',
+        [
+            pytest.param(MTypes.int, 42, 42, id='int'),
+            pytest.param(
+                MTypes.float, 1.125, 1.125, id='float'
+            ),  # 1.125 is representable by float16
+            pytest.param(
+                MTypes.str
+                | {
+                    MEnum('test'),
+                    HDF5Dataset,
+                    HDF5Reference,
+                    Reference(quantity),
+                },
+                'test',
+                'test',
+                id='str',
+            ),
+            pytest.param(MTypes.bool, True, True, id='bool'),
+            pytest.param(
+                {Datetime},
+                datetime(2023, 1, 1),
+                '2023-01-01T00:00:00+00:00',
+                id='datetime',
+            ),
+            pytest.param({JSON}, {'key': 'value'}, {'key': 'value'}, id='json'),
+            pytest.param(MTypes.complex, 1 + 2j, {'re': 1.0, 'im': 2.0}, id='complex'),
+            pytest.param({Bytes}, b'test', 'dGVzdA==', id='bytes'),
+        ],
+    )
+    def test_quantity_default(self, mtype, default, expected_default):
+        for type_ in mtype:
+            quantity = Quantity(type=type_, default=default)
+            schema = quantity.m_to_json_schema()
+            jsonschema.Draft202012Validator.check_schema(schema)
+
+            json.dumps(schema)
+            assert schema['default'] == expected_default
 
     @pytest.mark.parametrize(
         'quantity, expected',
@@ -1490,6 +1563,7 @@ class TestToJsonSchema:
                     '$id': f'{SCHEMA_ENDPOINT}/nomad.metainfo.metainfo.Quantity@{quantity.definition_id}?unit_value=true',
                     'description': 'Quantity for test.',
                     'type': 'string',
+                    'nomad_type': 'str',
                 },
                 id='quantity-with-no-unit',
             ),
@@ -1499,19 +1573,11 @@ class TestToJsonSchema:
                     '$schema': 'https://json-schema.org/draft/2020-12/schema',
                     '$id': f'{SCHEMA_ENDPOINT}/nomad.metainfo.metainfo.Quantity@{unit_quantity.definition_id}?unit_value=true',
                     'description': 'Quantity with unit for test.',
+                    'nomad_type': 'float64',
+                    'type': 'object',
                     'properties': {
                         'value': {'type': 'number', 'unit': 'meter'},
                         'unit': {'type': 'string', 'enum': ['meter']},
-                    },
-                    'allOf': [{'$ref': 'https://schema.local/definitions/UnitValue'}],
-                    '$defs': {
-                        'UnitValue': {
-                            '$id': 'https://schema.local/definitions/UnitValue',
-                            'properties': {
-                                'value': {'type': 'number'},
-                                'unit': {'type': 'string'},
-                            },
-                        }
                     },
                 },
                 id='quantity-with-unit',
@@ -1522,32 +1588,20 @@ class TestToJsonSchema:
                     '$schema': 'https://json-schema.org/draft/2020-12/schema',
                     '$id': f'{SCHEMA_ENDPOINT}/nomad.metainfo.metainfo.Quantity@{array_unit_quantity.definition_id}?unit_value=true',
                     'description': 'Array quantity for test.',
-                    'type': 'array',
-                    'items': {
-                        'type': 'array',
-                        'items': {
+                    'nomad_type': 'float64',
+                    'type': 'object',
+                    'properties': {
+                        'value': {
                             'type': 'array',
                             'items': {
-                                'properties': {
-                                    'value': {'type': 'number', 'unit': 'meter'},
-                                    'unit': {'type': 'string', 'enum': ['meter']},
+                                'type': 'array',
+                                'items': {
+                                    'type': 'array',
+                                    'items': {'type': 'number', 'unit': 'meter'},
                                 },
-                                'allOf': [
-                                    {
-                                        '$ref': 'https://schema.local/definitions/UnitValue'
-                                    }
-                                ],
                             },
                         },
-                    },
-                    '$defs': {
-                        'UnitValue': {
-                            '$id': 'https://schema.local/definitions/UnitValue',
-                            'properties': {
-                                'value': {'type': 'number'},
-                                'unit': {'type': 'string'},
-                            },
-                        }
+                        'unit': {'type': 'string', 'enum': ['meter']},
                     },
                 },
                 id='3d-array-quantity-with-unit',
@@ -1569,20 +1623,45 @@ class TestToJsonSchema:
         assert schema['items']['items']['type'] == 'number'
         assert schema['items']['items']['unit'] == 'meter'
 
+        complex_quantity = Quantity(
+            type=complex, shape=['*', '*'], unit='m', description='Test'
+        )
+        complex_schema = complex_quantity.m_to_json_schema()
+        jsonschema.Draft202012Validator.check_schema(complex_schema)
+        json.dumps(complex_schema)
+
+        assert complex_schema['properties']['re']['items'] == schema['items']
+        assert complex_schema['properties']['im']['items'] == schema['items']
+
         quantity = Quantity(type=float, shape=['*', '*'], unit='m', description='Test')
         schema = quantity.m_to_json_schema(add_unit_value=True)
         jsonschema.Draft202012Validator.check_schema(schema)
         json.dumps(schema)
 
-        sub_schema = schema['items']['items']
-        assert (
-            sub_schema['allOf'][0]['$ref']
-            == 'https://schema.local/definitions/UnitValue'
+        sub_schema = schema['properties']['value']['items']['items']
+
+        assert sub_schema['type'] == 'number'
+        assert sub_schema['unit'] == 'meter'
+        assert schema['properties']['unit']['type'] == 'string'
+        assert schema['properties']['unit']['enum'] == ['meter']
+
+        complex_quantity = Quantity(
+            type=complex, shape=['*', '*'], unit='m', description='Test'
         )
-        assert sub_schema['properties']['value']['type'] == 'number'
-        assert sub_schema['properties']['value']['unit'] == 'meter'
-        assert sub_schema['properties']['unit']['type'] == 'string'
-        assert sub_schema['properties']['unit']['enum'] == ['meter']
+        complex_schema = complex_quantity.m_to_json_schema(add_unit_value=True)
+        jsonschema.Draft202012Validator.check_schema(complex_schema)
+        json.dumps(complex_schema)
+
+        assert (
+            complex_schema['properties']['value']['properties']['re']['items']['items']
+            == sub_schema
+        )
+        assert (
+            complex_schema['properties']['value']['properties']['im']['items']['items']
+            == sub_schema
+        )
+        assert complex_schema['properties']['unit']['type'] == 'string'
+        assert complex_schema['properties']['unit']['enum'] == ['meter']
 
     @pytest.mark.parametrize(
         'section, expected',
@@ -1600,6 +1679,7 @@ class TestToJsonSchema:
                             '$id': f'{SCHEMA_ENDPOINT}/tests.metainfo.test_metainfo.QuantityOnly.quantity@{QuantityOnly.quantity.definition_id}',
                             'type': 'string',
                             'description': 'Quantity for test.',
+                            'nomad_type': 'str',
                         }
                     },
                 },
@@ -1639,6 +1719,7 @@ class TestToJsonSchema:
                                     '$id': f'{SCHEMA_ENDPOINT}/tests.metainfo.test_metainfo.Simulation.program_name@{Simulation.program_name.definition_id}',
                                     'type': 'string',
                                     'description': 'Quantity for test.',
+                                    'nomad_type': 'str',
                                 }
                             },
                         }
@@ -1659,6 +1740,7 @@ class TestToJsonSchema:
                             '$id': f'{SCHEMA_ENDPOINT}/tests.metainfo.test_metainfo.SectionWithBoth.quantity@{SectionWithBoth.quantity.definition_id}',
                             'type': 'string',
                             'description': 'Quantity for test.',
+                            'nomad_type': 'str',
                         },
                         'subsection_repeat': {
                             'type': 'array',
@@ -1685,6 +1767,7 @@ class TestToJsonSchema:
                                     '$id': f'{SCHEMA_ENDPOINT}/tests.metainfo.test_metainfo.Simulation.program_name@{Simulation.program_name.definition_id}',
                                     'type': 'string',
                                     'description': 'Quantity for test.',
+                                    'nomad_type': 'str',
                                 }
                             },
                         }
@@ -1709,6 +1792,7 @@ class TestToJsonSchema:
                     'properties': {
                         'quantity': {
                             '$id': f'{SCHEMA_ENDPOINT}/tests.metainfo.test_metainfo.SectionWithInheritance.quantity@{SectionWithInheritance.quantity.definition_id}',
+                            'nomad_type': 'float64',
                             'type': 'number',
                             'description': 'Overridden quantity for test.',
                         },
@@ -1724,6 +1808,7 @@ class TestToJsonSchema:
                                     '$id': f'{SCHEMA_ENDPOINT}/tests.metainfo.test_metainfo.Simulation.program_name@{Simulation.program_name.definition_id}',
                                     'type': 'string',
                                     'description': 'Quantity for test.',
+                                    'nomad_type': 'str',
                                 }
                             },
                         },
@@ -1737,6 +1822,7 @@ class TestToJsonSchema:
                                     '$id': f'{SCHEMA_ENDPOINT}/tests.metainfo.test_metainfo.SectionWithBoth.quantity@{SectionWithBoth.quantity.definition_id}',
                                     'type': 'string',
                                     'description': 'Quantity for test.',
+                                    'nomad_type': 'str',
                                 },
                                 'subsection_repeat': {
                                     'type': 'array',
@@ -1770,6 +1856,7 @@ class TestToJsonSchema:
                             '$id': f'{SCHEMA_ENDPOINT}/tests.metainfo.test_metainfo.SectionWithSelfReference.quantity@{SectionWithSelfReference.quantity.definition_id}',
                             'type': 'string',
                             'description': 'Quantity for test.',
+                            'nomad_type': 'str',
                         },
                         'subsection': {
                             '$ref': f'{SCHEMA_ENDPOINT}/tests.metainfo.test_metainfo.SectionWithSelfReference@{SectionWithSelfReference.m_def.definition_id}',
@@ -1822,6 +1909,7 @@ class TestToJsonSchema:
                                     '$id': f'{SCHEMA_ENDPOINT}/tests.metainfo.test_metainfo.SectionWithBoth.quantity@{SectionWithBoth.quantity.definition_id}',
                                     'type': 'string',
                                     'description': 'Quantity for test.',
+                                    'nomad_type': 'str',
                                 },
                             },
                         },
@@ -1873,6 +1961,7 @@ class TestToJsonSchema:
                                     'description': 'Quantity for test.',
                                     '$id': f'{SCHEMA_ENDPOINT}/tests.metainfo.test_metainfo.SectionWithBoth.quantity@{SectionWithBoth.quantity.definition_id}?property_subtypes=true',
                                     'type': 'string',
+                                    'nomad_type': 'str',
                                 },
                                 'subsection_repeat': {
                                     'type': 'array',
@@ -1917,6 +2006,7 @@ class TestToJsonSchema:
                                     'description': 'Quantity for test.',
                                     '$id': f'{SCHEMA_ENDPOINT}/tests.metainfo.test_metainfo.Simulation.program_name@{Simulation.program_name.definition_id}?property_subtypes=true',
                                     'type': 'string',
+                                    'nomad_type': 'str',
                                 }
                             },
                         },
@@ -1948,6 +2038,7 @@ class TestToJsonSchema:
                                     'description': 'Overridden quantity for test.',
                                     '$id': f'{SCHEMA_ENDPOINT}/tests.metainfo.test_metainfo.SectionWithInheritance.quantity@{SectionWithInheritance.quantity.definition_id}?property_subtypes=true',
                                     'type': 'number',
+                                    'nomad_type': 'float64',
                                 }
                             },
                         },
@@ -1987,6 +2078,7 @@ class TestToJsonSchema:
                                     'description': 'Quantity for test.',
                                     '$id': f'{SCHEMA_ENDPOINT}/tests.metainfo.test_metainfo.SectionWithBoth.quantity@{SectionWithBoth.quantity.definition_id}',
                                     'type': 'string',
+                                    'nomad_type': 'str',
                                 },
                                 'subsection_repeat': {
                                     'type': 'array',
@@ -2013,6 +2105,7 @@ class TestToJsonSchema:
                                     'description': 'Quantity for test.',
                                     '$id': f'{SCHEMA_ENDPOINT}/tests.metainfo.test_metainfo.Simulation.program_name@{Simulation.program_name.definition_id}',
                                     'type': 'string',
+                                    'nomad_type': 'str',
                                 }
                             },
                         },
@@ -2032,6 +2125,7 @@ class TestToJsonSchema:
                                     'description': 'Overridden quantity for test.',
                                     '$id': f'{SCHEMA_ENDPOINT}/tests.metainfo.test_metainfo.SectionWithInheritance.quantity@{SectionWithInheritance.quantity.definition_id}',
                                     'type': 'number',
+                                    'nomad_type': 'float64',
                                 }
                             },
                         },
@@ -2054,6 +2148,7 @@ class TestToJsonSchema:
                             'description': 'Quantity for test.',
                             '$id': f'{SCHEMA_ENDPOINT}/tests.metainfo.test_metainfo.SectionWithBoth.quantity@{SectionWithBoth.quantity.definition_id}?property_subtypes=true',
                             'type': 'string',
+                            'nomad_type': 'str',
                         },
                         'subsection_repeat': {
                             'type': 'array',
@@ -2098,6 +2193,7 @@ class TestToJsonSchema:
                                     'description': 'Quantity for test.',
                                     '$id': f'{SCHEMA_ENDPOINT}/tests.metainfo.test_metainfo.Simulation.program_name@{Simulation.program_name.definition_id}?property_subtypes=true',
                                     'type': 'string',
+                                    'nomad_type': 'str',
                                 }
                             },
                         },
