@@ -23,6 +23,7 @@ import pytest
 
 from nomad.common import now
 from nomad.config import config
+from nomad.mongo.notifications import Notification
 from nomad.mongo.users import OwnershipTransferRecord
 from nomad.processing import Upload
 from tests.app.v1.routers.common import assert_response
@@ -102,6 +103,11 @@ def test_transfer_create_and_list_basic(
     assert transfer_id
     assert created['resource_type'] == resource_type
     assert created['resource_id'] == resource_id
+    notification = Notification.objects(
+        id=f'ownership-transfer-request-{transfer_id}'
+    ).get()
+    assert notification.user_id == users_dict['user2'].user_id
+    assert notification.data['resource_name'] == created.get('resource_name')
 
     list_incoming_response = client.get(
         f'ownership-transfers?direction=incoming&resource_type={resource_type}',
@@ -258,6 +264,19 @@ async def test_transfer_respond(
                     users_dict['user1'].user_id not in group_response.json()['members']
                 )
 
+        assert (
+            Notification.objects(id=f'ownership-transfer-request-{transfer_id}').first()
+            is None
+        )
+        refused_notification = Notification.objects(
+            id=f'ownership-transfer-refused-{transfer_id}'
+        ).first()
+        if action == 'refuse':
+            assert refused_notification is not None
+            assert refused_notification.user_id == users_dict['user1'].user_id
+        else:
+            assert refused_notification is None
+
     pending_record = OwnershipTransferRecord.objects(
         resource_type=_resource_record_type(resource_type),
         resource_id=resource_id,
@@ -330,6 +349,10 @@ async def test_transfer_cancel(
         assert response_data['resource_id'] == resource_id
         assert response_data['result'][resource_id_key] == resource_id
         assert response_data['result']['data'][resource_id_key] == resource_id
+        assert (
+            Notification.objects(id=f'ownership-transfer-request-{transfer_id}').first()
+            is None
+        )
 
     pending_record = OwnershipTransferRecord.objects(
         resource_type=_resource_record_type(resource_type),

@@ -1426,7 +1426,7 @@ class TestTransferUploadOwnershipWorkflow:
     def ownership_transfer_mock_data_layer(self, mock_data_layer, monkeypatch):
         """Setup mocks specific to ownership transfer workflow tests."""
         # Mock OwnershipTransferRecord queryset delete behavior in nomad.mongo.users
-        mock_record_queryset = Mock()
+        mock_record_queryset = MagicMock()
         mock_record_class = Mock()
         mock_record_class.objects.return_value = mock_record_queryset
         monkeypatch.setattr(

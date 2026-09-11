@@ -17,55 +17,57 @@
 #
 
 import json
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from pydantic import ValidationError
 
 from nomad.app.v1.routers import notifications
+from nomad.notifications import NotificationRecord
+
+
+def _record(source='user'):
+    created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    return NotificationRecord(
+        id='ownership-transfer-request-1',
+        user_id='user-1',
+        source=source,
+        notification_type='ownership_transfer',
+        created_at=created_at,
+        expires_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        actor_user_id=None,
+        data={},
+    )
 
 
 def test_collect_notifications_defaults_to_all_sources(monkeypatch):
-    ownership = [
+    list_for_user = MagicMock(return_value=[_record()])
+    monkeypatch.setattr(
+        notifications.notification_service, 'list_for_user', list_for_user
+    )
+    user = MagicMock(user_id='user-1')
+
+    assert notifications.collect_notifications(user) == [
         {
-            'id': 'ownership-1',
+            'id': 'ownership-transfer-request-1',
             'source': 'user',
             'type': 'ownership_transfer',
-            'created_at': '2026-01-01T00:00:00Z',
+            'created_at': '2026-01-01T00:00:00+00:00',
             'data': {},
         }
     ]
-    monkeypatch.setattr(
-        notifications, '_ownership_notifications', lambda user: ownership
-    )
-
-    assert notifications.collect_notifications(MagicMock()) == ownership
+    list_for_user.assert_called_once_with(user_id='user-1', source=None)
 
 
 def test_collect_notifications_filters_by_source(monkeypatch):
-    ownership = [
-        {
-            'id': 'ownership-1',
-            'source': 'user',
-            'type': 'ownership_transfer',
-            'created_at': '2026-01-01T00:00:00Z',
-            'data': {},
-        }
-    ]
+    list_for_user = MagicMock(return_value=[_record()])
     monkeypatch.setattr(
-        notifications, '_ownership_notifications', lambda user: ownership
+        notifications.notification_service, 'list_for_user', list_for_user
     )
+    user = MagicMock(user_id='user-1')
 
-    assert notifications.collect_notifications(MagicMock(), 'user') == ownership
-
-
-def test_collect_notifications_validates_records(monkeypatch):
-    monkeypatch.setattr(
-        notifications, '_ownership_notifications', lambda user: [{'id': 'invalid'}]
-    )
-
-    with pytest.raises(ValidationError):
-        notifications.collect_notifications(MagicMock())
+    notifications.collect_notifications(user, 'user')
+    list_for_user.assert_called_once_with(user_id='user-1', source='user')
 
 
 @pytest.mark.asyncio
@@ -85,7 +87,9 @@ async def test_notification_events_emit_json_payload(monkeypatch):
 
     request = MagicMock()
     request.is_disconnected = AsyncMock(side_effect=[False, True])
-    event = await anext(notifications._events(request, MagicMock(), 'all'))
+    events = notifications._events(request, MagicMock(), 'all')
+    event = await anext(events)
+    await events.aclose()
 
     assert event.startswith('event: notifications\n')
     payload = json.loads(event.split('data: ', 1)[1])
