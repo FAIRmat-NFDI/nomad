@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from typing import Annotated, Literal, cast
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import StreamingResponse
@@ -30,12 +30,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from nomad.app.v1.models import User
 from nomad.app.v1.routers.auth import get_current_user
 from nomad.auth.scopes import Scope
-from nomad.mongo.groups import get_mongo_user_group
-from nomad.processing import Upload
-
-from .ownership_transfers import _list_ownership_transfers
+from nomad.notifications import notification_service
 
 router = APIRouter()
+NotificationSourceFilter = Literal['all', 'system', 'user']
 
 
 class Notification(BaseModel):
@@ -51,86 +49,29 @@ class Notification(BaseModel):
     data: dict[str, object] = Field(default_factory=dict)
 
 
-def _ownership_notifications(user: User) -> list[dict]:
-    records = []
-    sources = (
-        (
-            'upload',
-            Upload.get,
-            lambda resource: resource.main_author,
-            lambda resource: resource.upload_name,
-        ),
-        (
-            'group',
-            get_mongo_user_group,
-            lambda resource: resource.owner,
-            lambda resource: resource.group_name,
-        ),
+def collect_notifications(
+    user: User, source: NotificationSourceFilter = 'all'
+) -> list[dict]:
+    """Read the user's materialized inbox in the stable SSE wire format."""
+    records = notification_service.list_for_user(
+        user_id=user.user_id,
+        source=None if source == 'all' else source,
     )
-    for resource_type, get_resource, get_owner, get_name in sources:
-        for state, direction, event in (
-            ('pending', 'incoming', 'request'),
-            ('refused', 'outgoing', 'refused'),
-        ):
-            typed_direction = cast(Literal['incoming', 'outgoing'], direction)
-            response = _list_ownership_transfers(
-                resource_type,
-                typed_direction,
-                None,
-                state,
-                user,
-                get_resource,
-                get_owner,
-                get_name,
-            )
-            for transfer in response.transfers:
-                timestamp = (
-                    transfer.requested_at if event == 'request' else transfer.updated_at
-                )
-                actor_user_id = (
-                    transfer.source_user_id
-                    if event == 'request'
-                    else transfer.actor_user_id or transfer.target_user_id
-                )
-                records.append(
-                    {
-                        'id': f'ownership-transfer-{event}-{transfer.transfer_id}',
-                        'source': 'user',
-                        'type': 'ownership_transfer',
-                        'created_at': timestamp,
-                        'actor_user_id': actor_user_id,
-                        'data': {
-                            'resource_type': resource_type,
-                            'event': event,
-                            'resource_id': transfer.resource_id,
-                            'resource_name': transfer.resource_name,
-                        },
-                    }
-                )
-    return records
-
-
-def collect_notifications(user: User, source: str = 'all') -> list[dict]:
-    """Collect all notification sources into one stable wire format."""
-    all_collectors = {
-        'user': [_ownership_notifications],
-        'system': [],
-    }
-    if source == 'all':
-        collectors = [
-            item for collector in all_collectors.values() for item in collector
-        ]
-    else:
-        collectors = all_collectors.get(source, [])
     return [
-        Notification.model_validate(item).model_dump(mode='json', exclude_none=True)
-        for collector in collectors
-        for item in collector(user)
+        Notification(
+            id=record.id,
+            source=record.source,
+            type=record.notification_type,
+            created_at=record.created_at.isoformat(),
+            actor_user_id=record.actor_user_id,
+            data=record.data,
+        ).model_dump(mode='json', exclude_none=True)
+        for record in records
     ]
 
 
 async def _events(
-    request: Request, user: User, source: str | None
+    request: Request, user: User, source: NotificationSourceFilter
 ) -> AsyncIterator[str]:
     previous: str | None = None
     while not await request.is_disconnected():
@@ -166,7 +107,7 @@ async def stream_notifications(
         User, Depends(get_current_user([Scope.UPLOADS_READ], allow_anonymous=False))
     ],
     source: Annotated[
-        Literal['all', 'system', 'user'],
+        NotificationSourceFilter,
         Query(
             description=(
                 'Notification source filter. Defaults to all sources.'

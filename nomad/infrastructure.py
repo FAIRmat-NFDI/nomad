@@ -100,9 +100,11 @@ def setup_mongo():
     db.get_collection('cache').drop()
 
     from nomad.mongo.groups import MongoUserGroup
+    from nomad.mongo.notifications import Notification
     from nomad.processing import Entry, Upload
 
     MongoUserGroup.ensure_indexes()
+    Notification.ensure_indexes()
     Upload.ensure_indexes()
     Entry.ensure_indexes()
 
@@ -167,6 +169,7 @@ def check_mongo():
         'd_o_i',  # auto-named from class DOI
         'entry',
         'package_definition',
+        'notifications',
         'ownership_transfer',
         'upload',
         'user_group',

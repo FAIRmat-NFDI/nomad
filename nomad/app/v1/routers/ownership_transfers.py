@@ -43,6 +43,7 @@ from nomad.config import config
 from nomad.datamodel import User as DatamodelUser
 from nomad.mongo.groups import get_mongo_user_group
 from nomad.mongo.users import OwnershipTransferRecord
+from nomad.notifications import notification_service
 from nomad.processing import Upload
 from nomad.uploads import add_upload_reviewers, remove_upload_reviewers
 
@@ -199,6 +200,48 @@ def _map_ownership_transfer_resource(
     )
 
 
+def _ownership_notification_dedup_key(transfer_id: str, event: str) -> str:
+    return f'ownership-transfer-{event}-{transfer_id}'
+
+
+def _emit_ownership_transfer_notification(
+    record: OwnershipTransferRecord,
+    event: Literal['request', 'refused'],
+    resource_name: str | None,
+) -> None:
+    transfer_id = str(record.id)
+    is_request = event == 'request'
+    created_at = record.requested_at if is_request else record.updated_at
+    notification_service.emit(
+        user_id=record.target_user_id if is_request else record.source_user_id,
+        source='user',
+        notification_type='ownership_transfer',
+        actor_user_id=(
+            record.source_user_id
+            if is_request
+            else record.actor_user_id or record.target_user_id
+        ),
+        data={
+            'resource_type': record.resource_type,
+            'event': event,
+            'resource_id': record.resource_id,
+            'resource_name': resource_name,
+        },
+        dedup_key=_ownership_notification_dedup_key(transfer_id, event),
+        created_at=created_at,
+        expires_at=created_at
+        + timedelta(seconds=config.mongo.ownership_transfer_record_ttl),
+    )
+
+
+def _retract_ownership_transfer_notification(
+    record: OwnershipTransferRecord, event: Literal['request', 'refused'] = 'request'
+) -> None:
+    notification_service.retract(
+        _ownership_notification_dedup_key(str(record.id), event)
+    )
+
+
 def _get_ownership_transfer_expiry_cutoff():
     return now() - timedelta(seconds=config.mongo.ownership_transfer_record_ttl)
 
@@ -236,6 +279,7 @@ def _delete_stale_pending_ownership_transfer_records(
 
         stale_records.append(record)
         record.delete()
+        _retract_ownership_transfer_notification(record)
 
     return stale_records
 
@@ -300,7 +344,9 @@ def _create_upload_ownership_transfer(
     )
 
     upload.reload()
-    return _map_ownership_transfer_resource(record, upload.upload_name)
+    result = _map_ownership_transfer_resource(record, upload.upload_name)
+    _emit_ownership_transfer_notification(record, 'request', upload.upload_name)
+    return result
 
 
 def _list_ownership_transfers(
@@ -405,6 +451,7 @@ def _respond_to_upload_ownership_transfer(
     upload = Upload.get(record.resource_id)
     if upload is None:
         record.delete()
+        _retract_ownership_transfer_notification(record)
         _raise_resource_not_found('Upload')
 
     try:
@@ -419,6 +466,7 @@ def _respond_to_upload_ownership_transfer(
 
     if _is_stale_ownership_transfer_record(record, upload.main_author):
         record.delete()
+        _retract_ownership_transfer_notification(record)
         _raise_transfer_pending_request_missing()
 
     if request.action == 'accept':
@@ -455,6 +503,8 @@ def _respond_to_upload_ownership_transfer(
     else:
         remove_upload_reviewers(user.user_id, upload=upload)
         record.refuse(actor_user_id=user.user_id)
+        _retract_ownership_transfer_notification(record)
+        _emit_ownership_transfer_notification(record, 'refused', upload.upload_name)
         extra_log = dict(owner_user_id=upload.main_author)
 
     logger.info(
@@ -509,10 +559,9 @@ def _cancel_upload_ownership_transfer(
 
     if _is_stale_ownership_transfer_record(record, upload.main_author):
         record.delete()
+        _retract_ownership_transfer_notification(record)
         _raise_transfer_pending_request_missing()
 
-    canceled_user_ids = [record.target_user_id]
-    record.delete()
     duplicate_pending_records = list(
         OwnershipTransferRecord.objects(
             resource_type=OwnershipTransferRecord.RESOURCE_TYPE_UPLOAD,
@@ -520,14 +569,18 @@ def _cancel_upload_ownership_transfer(
             state=OwnershipTransferRecord.STATE_PENDING,
         )
     )
-    if duplicate_pending_records:
-        canceled_user_ids.extend(r.target_user_id for r in duplicate_pending_records)
-        for duplicate_record in duplicate_pending_records:
-            duplicate_record.delete()
+    canceled_records = [record, *duplicate_pending_records]
+    for canceled_record in canceled_records:
+        canceled_record.delete()
 
-    reviewer_access_removed = remove_upload_reviewers(canceled_user_ids, upload=upload)
+    reviewer_access_removed = remove_upload_reviewers(
+        [canceled_record.target_user_id for canceled_record in canceled_records],
+        upload=upload,
+    )
     if reviewer_access_removed > 0:
         upload.reload()
+    for canceled_record in canceled_records:
+        _retract_ownership_transfer_notification(canceled_record)
 
     logger.info(
         'upload transfer canceled',
@@ -591,7 +644,9 @@ def _create_group_ownership_transfer(
         new_owner_user_id=new_owner.user_id,
     )
 
-    return _map_ownership_transfer_resource(record, group.group_name)
+    result = _map_ownership_transfer_resource(record, group.group_name)
+    _emit_ownership_transfer_notification(record, 'request', group.group_name)
+    return result
 
 
 def _get_group_ownership_transfer(
@@ -642,11 +697,13 @@ def _respond_to_group_ownership_transfer(
     group = get_mongo_user_group(record.resource_id)
     if group is None:
         record.delete()
+        _retract_ownership_transfer_notification(record)
         _raise_resource_not_found('User group')
 
     _cleanup_stale_group_ownership_transfer_records(group)
     if _is_stale_ownership_transfer_record(record, group.owner):
         record.delete()
+        _retract_ownership_transfer_notification(record)
         _raise_transfer_pending_request_missing()
 
     if request.action == 'accept':
@@ -669,12 +726,15 @@ def _respond_to_group_ownership_transfer(
 
         group.clean_update_reload(UserGroupEdit(members_info=updated_members_info))
         record.delete()
+        _retract_ownership_transfer_notification(record)
         extra_log = dict(
             previous_owner_user_id=previous_owner_user_id,
             new_owner_user_id=user.user_id,
         )
     else:
         record.refuse(actor_user_id=user.user_id)
+        _retract_ownership_transfer_notification(record)
+        _emit_ownership_transfer_notification(record, 'refused', group.group_name)
         extra_log = dict(owner_user_id=group.owner)
 
     logger.info(
@@ -713,13 +773,16 @@ def _cancel_group_ownership_transfer(
     group = get_mongo_user_group(record.resource_id)
     if group is None:
         record.delete()
+        _retract_ownership_transfer_notification(record)
         _raise_resource_not_found('User group')
 
     _cleanup_stale_group_ownership_transfer_records(group)
     if _is_stale_ownership_transfer_record(record, group.owner):
         record.delete()
+        _retract_ownership_transfer_notification(record)
         _raise_transfer_pending_request_missing()
 
+    canceled_records = [record]
     record.delete()
     duplicate_pending_records = list(
         OwnershipTransferRecord.objects(
@@ -730,6 +793,9 @@ def _cancel_group_ownership_transfer(
     )
     for duplicate_record in duplicate_pending_records:
         duplicate_record.delete()
+    canceled_records.extend(duplicate_pending_records)
+    for canceled_record in canceled_records:
+        _retract_ownership_transfer_notification(canceled_record)
 
     logger.info(
         'group transfer canceled',

@@ -380,14 +380,18 @@ def complete_upload_ownership_transfer_activity(
 ):
     with activity_heartbeat(HEARTBEAT_FREQUENCY):
         from nomad.mongo.users import OwnershipTransferRecord
+        from nomad.notifications import notification_service
 
         upload = Upload.get(input.upload_id)
         reviewers_to_remove = {input.new_owner_user_id, input.previous_owner_user_id}
         remove_upload_reviewers(reviewers_to_remove, upload=upload)
-        OwnershipTransferRecord.objects(
+        transfer_records = OwnershipTransferRecord.objects(
             resource_type='upload',
             resource_id=input.upload_id,
-        ).delete()
+        )
+        for record in transfer_records:
+            notification_service.retract(f'ownership-transfer-request-{record.id}')
+        transfer_records.delete()
 
 
 @activity.defn
