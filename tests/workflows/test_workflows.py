@@ -192,6 +192,11 @@ def mock_data_layer(monkeypatch):
     mock_delete_upload = Mock()
     monkeypatch.setattr('nomad.workflows.activities.delete_upload', mock_delete_upload)
 
+    mock_notification_service = Mock()
+    monkeypatch.setattr(
+        'nomad.workflows.activities.notification_service', mock_notification_service
+    )
+
     # Mock config
     mock_config = Mock()
     mock_reprocess = Mock()
@@ -235,6 +240,7 @@ def mock_data_layer(monkeypatch):
         'public_files': mock_public_files,
         'public_files_instance': mock_public_files_instance,
         'delete_upload': mock_delete_upload,
+        'notification_service': mock_notification_service,
         'config': mock_config,
     }
 
@@ -682,6 +688,11 @@ class TestProcessUploadWorkflow:
         temporal_worker,
     ):
         """Test complete upload processing workflow."""
+        upload = mock_data_layer['upload_instance']
+        upload.upload_id = TEST_UPLOAD_ID
+        upload.main_author = TEST_USER_ID
+        upload.upload_name = 'Test project'
+        upload.current_process = '_process_upload'
 
         # Mock next_level_entries to return entries first, then empty
         def mock_next_level_entries_side_effect(*args, **kwargs):
@@ -718,6 +729,10 @@ class TestProcessUploadWorkflow:
         mock_data_layer['upload_instance'].update_files.assert_called_once()
         mock_data_layer['upload_instance'].match_all.assert_called_once()
         mock_data_layer['upload_instance'].cleanup.assert_called_once()
+        mock_data_layer['notification_service'].emit.assert_called_once()
+        notification = mock_data_layer['notification_service'].emit.call_args.kwargs
+        assert notification['user_id'] == TEST_USER_ID
+        assert notification['data']['result'] == 'success'
 
     @pytest.mark.asyncio
     async def test_processing_loop_multiple_levels(
@@ -1439,6 +1454,9 @@ class TestTransferUploadOwnershipWorkflow:
 
         # Configure upload instance for ownership transfer
         mock_data_layer['upload_instance'].main_author = TEST_USER_ID
+        mock_data_layer[
+            'upload_instance'
+        ].current_process = '_transfer_upload_ownership'
         mock_data_layer['upload_instance'].reviewers = [
             'reviewer-1',
             'new-owner-user-id',
@@ -1491,6 +1509,9 @@ class TestTransferUploadOwnershipWorkflow:
                 ownership_transfer_mock_data_layer['upload_instance'].process_status
                 == ProcessStatus.SUCCESS
             )
+            ownership_transfer_mock_data_layer[
+                'notification_service'
+            ].emit.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_ownership_transfer_removes_reviewers(

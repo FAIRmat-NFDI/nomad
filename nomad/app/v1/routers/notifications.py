@@ -82,7 +82,7 @@ async def _events(
             previous = payload
         else:
             yield ': keep-alive\n\n'
-        await asyncio.sleep(15)
+        await asyncio.sleep(5)
 
 
 @router.get(

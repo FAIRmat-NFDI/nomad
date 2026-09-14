@@ -31,6 +31,7 @@ from nomad.actions.heartbeat import activity_heartbeat
 from nomad.common import now
 from nomad.config import config
 from nomad.files import PublicUploadFiles, StagingUploadFiles
+from nomad.notifications import notification_service
 from nomad.parsing.parsers import parsers
 from nomad.processing.base import ProcessFailure, ProcessStatus
 from nomad.processing.data import Entry, Upload
@@ -380,7 +381,6 @@ def complete_upload_ownership_transfer_activity(
 ):
     with activity_heartbeat(HEARTBEAT_FREQUENCY):
         from nomad.mongo.users import OwnershipTransferRecord
-        from nomad.notifications import notification_service
 
         upload = Upload.get(input.upload_id)
         reviewers_to_remove = {input.new_owner_user_id, input.previous_owner_user_id}
@@ -434,6 +434,41 @@ def finalize_upload_processing_activity(input: FinalizeUploadProcessingInput):
 
     if input.workflow_tmp_dir and os.path.exists(input.workflow_tmp_dir):
         shutil.rmtree(input.workflow_tmp_dir, ignore_errors=True)
+
+    # Deferred processing and ownership transfers do not produce job inbox rows.
+    # Run IDs distinguish reused workflow IDs while keeping activity retries idempotent.
+    if (
+        upload.main_author
+        and upload.current_process
+        and upload.current_process != '_transfer_upload_ownership'
+        # Notify failures even if processing was disabled; skip deferred-processing successes.
+        and (input.result != 'success' or input.trigger_processing)
+    ):
+        try:
+            workflow_run_id = activity.info().workflow_run_id
+            assert workflow_run_id is not None
+            notification_service.emit(
+                user_id=upload.main_author,
+                source='user',
+                notification_type='upload_process',
+                dedup_key=workflow_run_id,
+                data={
+                    'resource_type': 'upload',
+                    'resource_id': upload.upload_id,
+                    'resource_name': upload.upload_name,
+                    'process': upload.current_process,
+                    'result': input.result,
+                    'message': (
+                        input.failure_message or 'Process upload failed'
+                        if input.result == 'failure'
+                        else 'Process completed successfully'
+                    ),
+                },
+            )
+        except Exception:
+            upload.get_logger().warning(
+                'could not emit process notification', exc_info=True
+            )
 
 
 @activity.defn
