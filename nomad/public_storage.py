@@ -96,8 +96,10 @@ class RemoteReadyMarker:
     """S3 is safe to read only while this marker matches live HEAD size/etag.
 
     Written last after a successful remote pack or local-to-remote copy.
-    Deleted first before mutating published artifacts. Remote is authoritative;
-    a copy on the local prefix is best-effort so a restore includes it.
+    Deleted first before mutating published artifacts. Remote is authoritative.
+    ``local_then_remote`` also copies the marker onto the local prefix so an
+    NFS restore still includes it. ``remote_only`` does not; reads never load
+    the local copy.
     """
 
     schema_version: int
@@ -607,13 +609,14 @@ def _save_marker(
         return False
     marker = RemoteReadyMarker.create(upload_id, access, records)
     marker.save(upload_os_path, remote_fs)
-    try:
-        marker.save(upload_os_path, LocalFileSystem())
-    except Exception:
-        logger.warning(
-            'could not copy remote-ready marker to local prefix for %s',
-            upload_id,
-            exc_info=True,
-        )
+    if config.fs.public_fs.resolved_write_mode == 'local_then_remote':
+        try:
+            marker.save(upload_os_path, LocalFileSystem())
+        except Exception:
+            logger.warning(
+                'could not copy remote-ready marker to local prefix for %s',
+                upload_id,
+                exc_info=True,
+            )
     invalidate_ready_cache(upload_os_path)
     return True
