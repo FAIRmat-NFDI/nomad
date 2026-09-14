@@ -3,7 +3,6 @@ keycloak:
   realm_name: "fairdi_nomad_test"
 elastic:
   entries_index: "nomad_entries_v1_test"
-  materials_index: "nomad_materials_v1_test"
 mongo:
   db_name: "nomad_v1_test"
 fs:

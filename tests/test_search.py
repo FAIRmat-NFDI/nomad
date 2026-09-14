@@ -23,7 +23,6 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
-from elasticsearch_dsl import Q
 
 from nomad import infrastructure, utils
 from nomad.app.v1.models import (
@@ -328,8 +327,8 @@ def test_search_query(indices, example_data, api_query, total):
     ],
 )
 def test_any_query(api_query, is_terms):
-    query = normalize_api_query(api_query, doc_type=entry_type)
-    es_query = _api_to_es_query(query, doc_type=entry_type, owner_query=Q())
+    query = normalize_api_query(api_query)
+    es_query = _api_to_es_query(query)
     if is_terms:
         assert es_query.to_dict() == {'terms': {'entry_id': ['id-1', 'id-2']}}
     else:

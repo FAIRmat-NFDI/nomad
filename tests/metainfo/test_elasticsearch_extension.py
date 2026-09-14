@@ -33,10 +33,7 @@ from nomad.metainfo.elasticsearch_extension import (
     create_searchable_quantity,
     entry_index,
     entry_type,
-    index_entries_with_materials,
-    material_entry_type,
-    material_index,
-    material_type,
+    index_entries,
 )
 from nomad.utils.exampledata import ExampleData
 from tests.app.v1.routers.common import perform_quantity_search_test
@@ -134,20 +131,20 @@ def test_keyword_ignore(example_data_large_keyword):
 
 
 class Material(MSection):
-    material_id = Quantity(type=str, a_elasticsearch=Elasticsearch(material_type))
+    material_id = Quantity(type=str, a_elasticsearch=Elasticsearch())
 
     formula = Quantity(
         type=str,
         a_elasticsearch=[
-            Elasticsearch(material_type),
-            Elasticsearch(material_type, field='text', mapping='text'),
+            Elasticsearch(),
+            Elasticsearch(field='text', mapping='text'),
         ],
     )
 
     springer_labels = Quantity(
         type=str,
         shape=['*'],
-        a_elasticsearch=(Elasticsearch(material_type, mapping=Keyword())),
+        a_elasticsearch=(Elasticsearch(mapping=Keyword())),
     )
 
 
@@ -155,7 +152,7 @@ class Data(MSection):
     n_points = Quantity(
         type=int,
         derived=lambda data: len(data.points[0]) if data.points is not None else 0,
-        a_elasticseach=Elasticsearch(material_entry_type),
+        a_elasticseach=Elasticsearch(),
     )
 
     points = Quantity(type=np.dtype(np.float64), shape=['*', '*'])
@@ -169,19 +166,17 @@ class Data(MSection):
 
 
 class Dos(MSection):
-    channel = Quantity(type=int, a_elasticsearch=Elasticsearch(material_entry_type))
+    channel = Quantity(type=int, a_elasticsearch=Elasticsearch())
 
 
 class Properties(MSection):
     available_properties = Quantity(
-        type=str, shape=['*'], a_elasticsearch=Elasticsearch(material_entry_type)
+        type=str, shape=['*'], a_elasticsearch=Elasticsearch()
     )
 
-    band_gap = Quantity(
-        type=float, unit='J', a_elasticsearch=Elasticsearch(material_entry_type)
-    )
+    band_gap = Quantity(type=float, unit='J', a_elasticsearch=Elasticsearch())
 
-    data = Quantity(type=Data, a_elasticsearch=Elasticsearch(material_entry_type))
+    data = Quantity(type=Data, a_elasticsearch=Elasticsearch())
 
     n_series = Quantity(type=Data.n_series, a_elasticsearch=Elasticsearch())
 
@@ -201,13 +196,11 @@ class User(MSection):
 
 
 class Entry(MSection):
-    entry_id = Quantity(type=str, a_elasticsearch=Elasticsearch(material_entry_type))
+    entry_id = Quantity(type=str, a_elasticsearch=Elasticsearch())
 
     upload_id = Quantity(
         type=str,
-        a_elasticsearch=Elasticsearch(
-            material_entry_type, metrics=dict(uploads='cardinality')
-        ),
+        a_elasticsearch=Elasticsearch(metrics=dict(uploads='cardinality')),
     )
 
     mainfile = Quantity(
@@ -263,69 +256,37 @@ def assert_mapping(
 def assert_entry_indexed(entry: Entry):
     entry_doc = entry_index.get(id=entry.entry_id)['_source']
     assert entry_doc['entry_id'] == entry.entry_id
-    material_doc = material_index.get(id=entry.results.material.material_id)['_source']
-    assert material_doc['material_id'] == entry.results.material.material_id
-    assert any(
-        entry_doc['entry_id'] == entry.entry_id for entry_doc in material_doc['entries']
+    assert (
+        entry_doc['results']['material']['material_id']
+        == entry.results.material.material_id
     )
 
 
 def assert_entries_indexed(entries: list[Entry]):
     """
-    Assert that the given entries and only the given entries and their materials are
-    indexed.
+    Assert that the given entries and only the given entries are indexed, and that
+    their material data is up to date.
     """
-    entry_docs = [
-        hit['_source']
+    entry_docs = {
+        hit['_source']['entry_id']: hit['_source']
         for hit in entry_index.search(body=dict(query=dict(match_all={})))['hits'][
             'hits'
         ]
-    ]
+    }
 
-    entry_ids = sorted([entry.entry_id for entry in entries])
-    entry_doc_ids = sorted([entry_doc['entry_id'] for entry_doc in entry_docs])
-    assert entry_doc_ids == entry_ids
+    assert sorted(entry_docs) == sorted(entry.entry_id for entry in entries)
 
-    material_docs = [
-        hit['_source']
-        for hit in material_index.search(body=dict(query=dict(match_all={})))['hits'][
-            'hits'
-        ]
-    ]
-
-    material_docs_based_entry_specs = sorted(
-        [
-            entry['entry_id'] + '-' + material['material_id']
-            for material in material_docs
-            for entry in material['entries']
-        ]
-    )
-
-    entry_specs = sorted(
-        [
-            entry.entry_id + '-' + entry.results.material.material_id
-            for entry in entries
-            if entry.results is not None and entry.results.material is not None
-        ]
-    )
-
-    assert material_docs_based_entry_specs == entry_specs
-
-    for material_doc in material_docs:
-        material = next(
-            entry.results.material
-            for entry in entries
-            if entry.results is not None
-            and entry.results.material is not None
-            and entry.results.material.material_id == material_doc['material_id']
-        )
-
-        assert Material.m_def is not None
+    assert Material.m_def is not None
+    for entry in entries:
+        if entry.results is None or entry.results.material is None:
+            continue
+        material = entry.results.material
+        material_doc = entry_docs[entry.entry_id]['results']['material']
         for quantity in Material.m_def.quantities:
             if material.m_is_set(quantity):
                 assert material_doc[quantity.name] == getattr(material, quantity.name)
             else:
-                quantity.name not in material_doc
+                assert quantity.name not in material_doc
 
 
 @pytest.fixture
@@ -344,18 +305,17 @@ def indices(elastic_infra, elastic_test_indices):
 
     try:
         elastic_client.indices.delete(index=config.elastic.entries_index)
-        elastic_client.indices.delete(index=config.elastic.materials_index)
     except Exception:
         pass
 
-    create_indices(Entry.m_def, Material.m_def)
+    create_indices(Entry.m_def)
     yield
     # re-establish the default elasticsearch setup.
     clear_elastic_infra(elastic_test_indices)
 
 
 def test_mappings(indices):
-    entry_mapping, material_mapping = entry_type.mapping, material_type.mapping
+    entry_mapping = entry_type.mapping
 
     assert_mapping(entry_mapping, 'entry_id', 'keyword')
     assert_mapping(entry_mapping, 'mainfile', 'keyword', index=False)
@@ -373,23 +333,6 @@ def test_mappings(indices):
     assert_mapping(entry_mapping, 'files', 'keyword', 'keyword')
     assert_mapping(entry_mapping, 'results.properties.dos', 'nested')
     assert_mapping(entry_mapping, 'results.properties.dos.channel', 'integer')
-
-    assert_mapping(material_mapping, 'material_id', 'keyword')
-    assert_mapping(material_mapping, 'formula', 'keyword')
-    assert_mapping(material_mapping, 'formula', 'text', 'text')
-    assert_mapping(material_mapping, 'entries', 'nested')
-    assert_mapping(material_mapping, 'entries.entry_id', 'keyword')
-    assert_mapping(material_mapping, 'entries.upload_create_time', None)
-    assert_mapping(
-        material_mapping, 'entries.results.properties.available_properties', 'keyword'
-    )
-    assert_mapping(
-        material_mapping, 'entries.results.properties.data.n_points', 'integer'
-    )
-    assert_mapping(material_mapping, 'entries.results.properties.dos', 'nested')
-    assert_mapping(
-        material_mapping, 'entries.results.properties.dos.channel', 'integer'
-    )
 
     formula_annotations = Material.formula.m_get_annotations(Elasticsearch)
     assert (
@@ -415,8 +358,6 @@ def test_mappings(indices):
     assert 'viewers.user_id' in entry_type.quantities
     assert Entry.viewers in entry_type.indexed_properties
     assert User.user_id in entry_type.indexed_properties
-    assert Entry.viewers not in material_entry_type.indexed_properties
-    assert User.user_id not in material_entry_type.indexed_properties
 
 
 def test_index_docs(indices):
@@ -444,7 +385,6 @@ def test_index_docs(indices):
     )
 
     entry_doc = entry_type.create_index_doc(entry)
-    material_entry_doc = material_entry_type.create_index_doc(entry)
 
     assert entry_doc == {
         'entry_id': 'test_entry_id',
@@ -468,20 +408,9 @@ def test_index_docs(indices):
         },
     }
 
-    assert material_entry_doc == {
-        'entry_id': 'test_entry_id',
-        'results': {
-            'properties': {
-                'available_properties': ['data', 'band_gap'],
-                'band_gap': 1e-12,
-                'data': {'n_points': 2},
-            }
-        },
-    }
-
 
 def test_index_entry(elastic_function, indices, example_entry):
-    index_entries_with_materials([example_entry], refresh=True)
+    index_entries([example_entry], refresh=True)
     assert_entry_indexed(example_entry)
 
 
@@ -549,32 +478,10 @@ def create_entries(spec: str):
     ],
 )
 def test_index_entries(elastic_function, indices, before, to_index, after):
-    index_entries_with_materials(create_entries(before), refresh=True)
-    index_entries_with_materials(create_entries(to_index), refresh=True)
+    index_entries(create_entries(before), refresh=True)
+    index_entries(create_entries(to_index), refresh=True)
 
     assert_entries_indexed(create_entries(after))
-
-
-@pytest.mark.parametrize(
-    'cap, entries',
-    [pytest.param(2, 1, id='below-cap'), pytest.param(2, 3, id='above-cap')],
-)
-def test_index_materials_capped(elastic_function, indices, monkeypatch, cap, entries):
-    monkeypatch.setattr('nomad.config.elastic.entries_per_material_cap', cap)
-    index_entries_with_materials(
-        create_entries(','.join([f'{i}-1' for i in range(1, entries + 1)])),
-        refresh=True,
-    )
-
-    material_docs = [
-        hit['_source']
-        for hit in material_index.search(body=dict(query=dict(match_all={})))['hits'][
-            'hits'
-        ]
-    ]
-    for material_doc in material_docs:
-        assert len(material_doc['entries']) <= cap
-        assert material_doc['n_entries'] == entries
 
 
 class ClassA(MSection):

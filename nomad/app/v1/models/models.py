@@ -44,11 +44,7 @@ from pydantic_core import PydanticCustomError
 from nomad import datamodel, metainfo  # noqa: F401
 from nomad.app.v1.utils import parameter_dependency_from_model
 from nomad.config import config
-from nomad.metainfo.elasticsearch_extension import (
-    DocumentType,
-    material_entry_type,
-    material_type,
-)
+from nomad.metainfo.elasticsearch_extension import entry_type
 from nomad.utils import strip
 
 from .pagination import Pagination, PaginationResponse
@@ -438,9 +434,6 @@ def _validate_query(query: Query):
 
 
 class QueryParameters:
-    def __init__(self, doc_type: DocumentType):
-        self.doc_type = doc_type
-
     def __call__(
         self,
         request: Request,
@@ -486,28 +479,13 @@ class QueryParameters:
             name_op, value = '__'.join(fragments[:-1]), fragments[-1]
             quantity_name = name_op.split('__', maxsplit=1)[0]
 
-            doc_type = self.doc_type
-            if quantity_name.startswith('entries.'):
-                if self.doc_type == material_type:
-                    doc_type = material_entry_type
-                else:
-                    raise HTTPException(
-                        status.HTTP_422_UNPROCESSABLE_CONTENT,
-                        detail=[
-                            {
-                                'loc': ['query', parameter],
-                                'msg': f'entries can only be nested into material queries',
-                            }
-                        ],
-                    )
-
-            if quantity_name not in doc_type.quantities:
+            if quantity_name not in entry_type.quantities:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=[
                         {
                             'loc': ['query', parameter],
-                            'msg': f'{quantity_name} is not a {doc_type} quantity',
+                            'msg': f'{quantity_name} is not a {entry_type} quantity',
                         }
                     ],
                 )
@@ -523,10 +501,7 @@ class QueryParameters:
             else:
                 quantity_name = key
 
-            if quantity_name.startswith('entries.'):
-                quantity = material_entry_type.quantities.get(quantity_name[8:])
-            else:
-                quantity = self.doc_type.quantities.get(quantity_name)
+            quantity = entry_type.quantities.get(quantity_name)
 
             if quantity is None:
                 continue

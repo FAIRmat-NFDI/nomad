@@ -2671,7 +2671,7 @@ class Upload(Proc):
         # Delete existing unmatched entries
         if entry_ids_to_delete:
             for entry_id in entry_ids_to_delete:
-                search.delete_entry(entry_id=entry_id, update_materials=False)
+                search.delete_entry(entry_id=entry_id)
                 old_entries_dict[entry_id].delete()
 
         if processing_failed:
@@ -3028,9 +3028,7 @@ class Upload(Proc):
                     ):
                         old_entries_list = list(old_entries)
                         for entry_id in old_entries_list:
-                            search.delete_entry(
-                                entry_id=entry_id, update_materials=False
-                            )
+                            search.delete_entry(entry_id=entry_id)
                         Entry.objects(
                             upload_id=self.upload_id,
                             entry_id__in=old_entries_list,
@@ -3265,13 +3263,9 @@ class Upload(Proc):
         self, entries: list[EntryMetadata], refresh: bool = True
     ):
         logger = self.get_logger()
-        with utils.timer(logger, 'upload entries and materials indexed'):
+        with utils.timer(logger, 'upload entries indexed'):
             archives = cast(list[EntryArchive], [entry.m_parent for entry in entries])
-            indexing_errors = search.index(
-                archives,
-                update_materials=config.process.index_materials,
-                refresh=refresh,
-            )
+            indexing_errors = search.index(archives, refresh=refresh)
 
             if indexing_errors:
                 with utils.timer(logger, 'updated mongo entries failing to index'):
@@ -3315,11 +3309,7 @@ class Upload(Proc):
                                 )
 
                 with utils.timer(logger, 're-indexed failed entries'):
-                    indexing_errors = search.index(
-                        failed_archives,
-                        update_materials=config.process.index_materials,
-                        refresh=refresh,
-                    )
+                    indexing_errors = search.index(failed_archives, refresh=refresh)
                     if indexing_errors:
                         logger.warn(
                             'some failed entries could not be re-indexed',
@@ -3666,9 +3656,7 @@ class Upload(Proc):
         # Update ES
         if updated_metadata:
             with utils.timer(logger, 'ES updated', nupdates=len(updated_metadata)):
-                failed_es = es_update_metadata(
-                    updated_metadata, update_materials=False, refresh=True
-                )
+                failed_es = es_update_metadata(updated_metadata, refresh=True)
                 assert not failed_es, (
                     f'Failed to update ES, there were {failed_es} fails'
                 )

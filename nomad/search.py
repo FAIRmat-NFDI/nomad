@@ -20,16 +20,12 @@
 This module provides an interface to elasticsearch. Other parts of NOMAD must not
 interact with elasticsearch to maintain a clear coherent interface and allow for change.
 
-Currently NOMAD uses one entry index and two distinct materials indices. The entries
-index is based on two different mappings, once used by the old flask api (v0) and one
-used by the new fastapi api (v1). The mappings are used at the same time and the documents
-are merged. Write operations (index, publish, edit, lift embargo, delete) are common; defined
-here in the module ``__init__.py``. Read operations are different and
-should be used as per use-case directly from the ``v0`` and ``v1`` submodules.
-
-Most common functions also take an ``update_materials`` keyword arg with allows to
-update the v1 materials index according to the performed changes. TODO this is only
-partially implemented.
+Currently NOMAD uses a single entry index. The entries index is based on two different
+mappings, once used by the old flask api (v0) and one used by the new fastapi api (v1).
+The mappings are used at the same time and the documents are merged. Write operations
+(index, publish, edit, lift embargo, delete) are common; defined here in the module
+``__init__.py``. Read operations are different and should be used as per use-case
+directly from the ``v0`` and ``v1`` submodules.
 """
 
 import json
@@ -83,20 +79,15 @@ from nomad.config import config
 from nomad.datamodel import AuthorReference, EntryArchive, EntryMetadata, UserReference
 from nomad.metainfo import Datetime, Package, Quantity
 from nomad.metainfo.elasticsearch_extension import (
-    DocumentType,
     Elasticsearch,
-    Index,
     SearchQuantity,
     create_dynamic_quantity_annotation,
     entry_index,
     entry_type,
     index_entries,
-    material_entry_type,
-    material_type,
     nexus_prefix,
     parse_quantity_name,
     schema_separator,
-    update_materials,
     yaml_prefix,
 )
 from nomad.mongo.groups import MongoUserGroup
@@ -139,9 +130,12 @@ def update_by_query(
     if query is None:
         query = {}
 
-    es_query_normalized = normalize_api_query(cast(Query, query), doc_type=entry_type)
-    owner_query = _owner_es_query(owner=owner, user_id=user_id, doc_type=entry_type)
-    es_query_validated = _api_to_es_query(es_query_normalized, entry_type, owner_query)
+    es_query_normalized = normalize_api_query(cast(Query, query))
+    # Validates the owner/user_id combination (raises if not permitted). The
+    # resulting owner query is intentionally not applied: these operations are
+    # scoped by the caller-provided query.
+    _owner_es_query(owner=owner, user_id=user_id)
+    es_query_validated = _api_to_es_query(es_query_normalized)
 
     body = {
         'script': {'source': update_script, 'lang': 'painless'},
@@ -172,7 +166,6 @@ def delete_by_query(
     query: dict,
     owner: str | None = None,
     user_id: str | None = None,
-    update_materials: bool = False,
     refresh: bool = False,
 ):
     """
@@ -181,9 +174,12 @@ def delete_by_query(
     if query is None:
         query = {}
 
-    es_query_normalized = normalize_api_query(cast(Query, query), doc_type=entry_type)
-    owner_query = _owner_es_query(owner=owner, user_id=user_id, doc_type=entry_type)
-    es_query_validated = _api_to_es_query(es_query_normalized, entry_type, owner_query)
+    es_query_normalized = normalize_api_query(cast(Query, query))
+    # Validates the owner/user_id combination (raises if not permitted). The
+    # resulting owner query is intentionally not applied: these operations are
+    # scoped by the caller-provided query.
+    _owner_es_query(owner=owner, user_id=user_id)
+    es_query_validated = _api_to_es_query(es_query_normalized)
 
     body = {'query': es_query_validated.to_dict()}
 
@@ -199,10 +195,6 @@ def delete_by_query(
 
     if refresh:
         _refresh()
-
-    if update_materials:
-        # TODO update the matrials index at least for v1
-        pass
 
     return result
 
@@ -228,7 +220,6 @@ _refresh = refresh
 
 def index(
     entries: EntryArchive | list[EntryArchive],
-    update_materials: bool = False,
     refresh: bool = False,
 ) -> dict[str, str]:
     """
@@ -240,49 +231,28 @@ def index(
     if not isinstance(entries, list):
         entries = [entries]
 
-    errors = index_entries(entries, refresh=refresh or update_materials)
-    if update_materials:
-        index_materials(entries, refresh=refresh)
-    return errors
-
-
-def index_materials(entries: EntryArchive | list[EntryArchive], **kwargs):
-    """
-    Index the materials within the given entries based on their archive. The entries
-    have to be indexed first.
-    """
-
-    if not isinstance(entries, list):
-        entries = [entries]
-
-    update_materials(entries=entries, **kwargs)
+    return index_entries(entries, refresh=refresh)
 
 
 # TODO this depends on how we merge section metadata
-def publish(entries: Iterable[EntryMetadata], index: str | None = None) -> int:
+def publish(entries: Iterable[EntryMetadata]) -> int:
     """
     Publishes the given entries based on their entry metadata. Sets publishes to true,
     and updates most user provided metadata with a partial update. Returns the number
     of failed updates.
     """
-    return update_metadata(
-        entries, index=index, published=True, update_materials=False, refresh=True
-    )
+    return update_metadata(entries, published=True, refresh=True)
 
 
 def unpublish(entries: Iterable[EntryMetadata]) -> int:
     """
     Simply set published flag to false for the given entries.
     """
-    return update_metadata(
-        entries, published=False, update_materials=False, refresh=True
-    )
+    return update_metadata(entries, published=False, refresh=True)
 
 
 def update_metadata(
     entries: Iterable[EntryMetadata],
-    index: str | None = None,
-    update_materials: bool = False,
     refresh: bool = False,
     **kwargs,
 ) -> int:
@@ -313,10 +283,6 @@ def update_metadata(
         infrastructure.elastic_client, updates, stats_only=True
     )
     failed = cast(int, failed)
-
-    if update_materials:
-        # TODO update the matrials index at least for v1
-        pass
 
     if refresh:
         _refresh()
@@ -376,7 +342,7 @@ _all_author_quantities = [
 
 
 def _api_to_es_required(
-    required: MetadataRequired, pagination: MetadataPagination, doc_type: DocumentType
+    required: MetadataRequired, pagination: MetadataPagination
 ) -> tuple[list[str] | None, list[str] | None, bool]:
     """
     Translates an API include/exclude argument into the appropriate ES
@@ -400,7 +366,7 @@ def _api_to_es_required(
         for list_ in [required.include, required.exclude]:
             for quantity in [] if list_ is None else list_:
                 if '*' not in quantity:
-                    validate_quantity(quantity, doc_type=doc_type, loc=['required'])
+                    validate_quantity(quantity, loc=['required'])
 
         if required.include is not None and pagination.order_by not in required.include:
             required.include.append(pagination.order_by)
@@ -408,11 +374,11 @@ def _api_to_es_required(
         if required.exclude is not None and pagination.order_by in required.exclude:
             required.exclude.remove(pagination.order_by)
 
-        if required.include is not None and doc_type.id_field not in required.include:
-            required.include.append(doc_type.id_field)
+        if required.include is not None and entry_type.id_field not in required.include:
+            required.include.append(entry_type.id_field)
 
-        if required.exclude is not None and doc_type.id_field in required.exclude:
-            required.exclude.remove(doc_type.id_field)
+        if required.exclude is not None and entry_type.id_field in required.exclude:
+            required.exclude.remove(entry_type.id_field)
 
         if required.include:
             includes = list(required.include)
@@ -442,7 +408,6 @@ def _es_to_api_pagination(
     es_response,
     pagination: MetadataPagination,
     order_quantity: SearchQuantity,
-    doc_type,
 ) -> PaginationResponse:
     """
     Translates an ES pagination response into a pagination response that is
@@ -455,14 +420,14 @@ def _es_to_api_pagination(
         and len(es_response.hits) >= pagination.page_size
     ):
         last = es_response.hits[-1]
-        if order_quantity.search_field == doc_type.id_field:
-            next_page_after_value = last[doc_type.id_field]
+        if order_quantity.search_field == entry_type.id_field:
+            next_page_after_value = last[entry_type.id_field]
         else:
             # after_value is not necessarily the value stored in the field
             # itself: internally ES can perform the sorting on a different
             # value which is reported under meta.sort.
             after_value = last.meta.sort[0]
-            next_page_after_value = f'{after_value}:{last[doc_type.id_field]}'
+            next_page_after_value = f'{after_value}:{last[entry_type.id_field]}'
 
     # For dynamic YAML quantities the field name is normalized to not include
     # the data type
@@ -562,15 +527,9 @@ def _es_to_entry_dict(
     return entry_dict
 
 
-def _owner_es_query(
-    owner: str | None,
-    user_id: str | None = None,
-    doc_type: DocumentType = entry_type,
-):
+def _owner_es_query(owner: str | None, user_id: str | None = None):
     def query(query_type='term', **kwargs):
-        prefix = '' if doc_type == entry_type else 'entries.'
-        query_dict = {(prefix + field): value for field, value in kwargs.items()}
-        return Q(query_type, **query_dict)
+        return Q(query_type, **kwargs)
 
     def viewers_query(user_id: str | None, *, force_groups: bool = False) -> Q:
         """Filter for user viewers and group viewers.
@@ -632,9 +591,9 @@ class QueryValidationError(Exception):
         self.errors = [CustomErrorWrapper(Exception(error), loc=loc)]
 
 
-def get_quantity(definition, path, schema, doc_type):
+def get_quantity(definition, path, schema):
     """Creates a SearchQuantity definition for the given quantity definition."""
-    annotation = create_dynamic_quantity_annotation(definition, doc_type)
+    annotation = create_dynamic_quantity_annotation(definition)
     qualified_name = f'{path}{schema_separator}{schema}' if schema else path
     quantity = SearchQuantity(annotation, qualified_name=qualified_name)
     return quantity
@@ -659,11 +618,10 @@ def get_definition(path):
 
 def validate_quantity(
     quantity_name: str,
-    doc_type: DocumentType | None = None,
     loc: list[str] | None = None,
 ) -> SearchQuantity:
     """
-    Validates the given quantity name against the given document type.
+    Validates the given quantity name against the entry document type.
 
     Returns:
         A metainfo elasticsearch extension SearchQuantity object.
@@ -672,18 +630,9 @@ def validate_quantity(
     """
     assert quantity_name is not None
 
-    if doc_type == material_entry_type and not quantity_name.startswith('entries'):
-        quantity_name = f'entries.{quantity_name}'
-
-    if doc_type == material_type and quantity_name.startswith('entries'):
-        doc_type = material_entry_type
-
-    if doc_type is None:
-        doc_type = entry_type
-
     # Primarily, look for the definition in the pre-registered static search
     # quantities.
-    quantity = doc_type.quantities.get(quantity_name)
+    quantity = entry_type.quantities.get(quantity_name)
 
     if quantity is None:
         path, schema, dtype = parse_quantity_name(quantity_name)
@@ -706,19 +655,17 @@ def validate_quantity(
                     ),
                     loc=[quantity_name] if loc is None else loc,
                 )
-            quantity = get_quantity(Quantity(type=datatype), path, schema, doc_type)
+            quantity = get_quantity(Quantity(type=datatype), path, schema)
         else:
             raise QueryValidationError(
-                f'{quantity_name} is not a {doc_type} quantity',
+                f'{quantity_name} is not a {entry_type} quantity',
                 loc=[quantity_name] if loc is None else loc,
             )
 
     return quantity
 
 
-def normalize_api_query(
-    query: Query, doc_type: DocumentType, prefix: str | None = None
-) -> Query:
+def normalize_api_query(query: Query, prefix: str | None = None) -> Query:
     """
     Normalizes the given query. Should be applied before _api_to_es_query, which
     expects a normalized query. Normalization will
@@ -740,7 +687,7 @@ def normalize_api_query(
         nested_prefix = None
 
         # If targeting nested key, add the nested filter
-        for nested_key in doc_type.nested_object_keys:
+        for nested_key in entry_type.nested_object_keys:
             if nested_key == prefix:
                 continue
 
@@ -782,7 +729,7 @@ def normalize_api_query(
         return query
 
     def normalize_query(query: Query):
-        return normalize_api_query(query, doc_type=doc_type, prefix=prefix)
+        return normalize_api_query(query, prefix=prefix)
 
     if isinstance(query, dict):
         if len(query) is None:
@@ -813,7 +760,7 @@ def normalize_api_query(
     if isinstance(query, models.Nested):
         return models.Nested(
             prefix=query.prefix,
-            query=normalize_api_query(query, doc_type=doc_type, prefix=query.prefix),
+            query=normalize_api_query(query, prefix=query.prefix),
         )
 
     if isinstance(query, models.Empty | models.Criteria):
@@ -876,8 +823,6 @@ def remove_quantity_from_query(query: Query, quantity: str, prefix=None):
 
 def _api_to_es_query(
     query: Query,
-    doc_type: DocumentType,
-    owner_query: EsQuery,
     prefix: str | None = None,
 ) -> EsQuery:
     """
@@ -890,12 +835,6 @@ def _api_to_es_query(
 
     Arguments:
         query: The api query object.
-        doc_type:
-            The elasticsearch metainfo extension document type that this query needs to
-            be verified against.
-        owner_query:
-            A prebuild ES query that is added to nested entries query. Only for
-            materials queries.
         prefix:
             An optional prefix that is added to all quantity names. Used for recursion.
 
@@ -922,13 +861,11 @@ def _api_to_es_query(
                 )
 
         # TODO non keyword quantities, type checks
-        quantity = validate_quantity(name, doc_type=doc_type)
+        quantity = validate_quantity(name)
         return quantity.get_query(value)
 
     def validate_query(query: Query) -> EsQuery:
-        return _api_to_es_query(
-            query, doc_type=doc_type, owner_query=owner_query, prefix=prefix
-        )
+        return _api_to_es_query(query, prefix=prefix)
 
     def any_query(name: str, values: list[Any]) -> EsQuery:
         """
@@ -946,7 +883,7 @@ def _api_to_es_query(
         else:
             full_name = name
 
-        quantity = validate_quantity(full_name, doc_type=doc_type)
+        quantity = validate_quantity(full_name)
         mapping = quantity.annotation.mapping or {}
         mapping_type = mapping.get('type') if isinstance(mapping, dict) else None
         supports_terms = mapping_type in {
@@ -983,7 +920,7 @@ def _api_to_es_query(
         elif isinstance(value, models.Range):
             if prefix is not None:
                 name = f'{prefix}.{name}'
-            quantity = validate_quantity(name, doc_type=doc_type)
+            quantity = validate_quantity(name)
             return quantity.get_query(value.model_dump(exclude_unset=True), 'range')
 
         elif isinstance(value, models.And | models.Or | models.Not):
@@ -1009,16 +946,7 @@ def _api_to_es_query(
         return Q('bool', must_not=validate_query(query.op))
 
     if isinstance(query, models.Nested):
-        sub_doc_type = material_entry_type if query.prefix == 'entries' else doc_type
-        sub_query = _api_to_es_query(
-            query.query,
-            doc_type=sub_doc_type,
-            prefix=query.prefix,
-            owner_query=owner_query,
-        )
-
-        if query.prefix == 'entries':
-            sub_query &= owner_query
+        sub_query = _api_to_es_query(query.query, prefix=query.prefix)
 
         return Q('nested', path=query.prefix, query=sub_query)
 
@@ -1031,23 +959,18 @@ def _api_to_es_query(
     raise NotImplementedError(f'Query type {query.__class__} is not supported')
 
 
-def validate_pagination(
-    pagination: Pagination, doc_type: DocumentType, loc: list[str] | None = None
-):
+def validate_pagination(pagination: Pagination, loc: list[str] | None = None):
     order_quantity = None
     if pagination.order_by is not None:
         # When sorting by _score, or by _doc is requested, we create a dummy
         # order_quantity
         if pagination.order_by == '_score' or pagination.order_by == '_doc':
-            dummy_annotation = Elasticsearch(
-                definition=Quantity(type=float), doc_type=doc_type
-            )
+            dummy_annotation = Elasticsearch(definition=Quantity(type=float))
             order_quantity = SearchQuantity(dummy_annotation)
             order_quantity.search_field = pagination.order_by
         else:
             order_quantity = validate_quantity(
                 pagination.order_by,
-                doc_type=doc_type,
                 loc=(loc if loc else []) + ['pagination', 'order_by'],
             )
             if not order_quantity.definition.is_scalar:
@@ -1060,7 +983,7 @@ def validate_pagination(
     if (
         page_after_value is not None
         and pagination.order_by is not None
-        and pagination.order_by != doc_type.id_field
+        and pagination.order_by != entry_type.id_field
         and ':' not in page_after_value
     ):
         pagination.page_after_value = f'{page_after_value}:'
@@ -1069,17 +992,16 @@ def validate_pagination(
 
 
 def _api_to_es_sort(
-    pagination: Pagination, doc_type: DocumentType, loc: list[str] | None = None
+    pagination: Pagination, loc: list[str] | None = None
 ) -> tuple[dict[str, Any], SearchQuantity, str]:
     """
     Creates an ES sort based on the API's pagination model.
 
     Args:
         pagination: The API pagination setup.
-        doc_type: The document type to target
         loc: Request location information for validation error messages
     """
-    order_quantity, page_after_value = validate_pagination(pagination, doc_type, loc)
+    order_quantity, page_after_value = validate_pagination(pagination, loc)
 
     sort: dict[str, Any] = {}
     if order_quantity.dynamic:
@@ -1101,8 +1023,8 @@ def _api_to_es_sort(
         sort = {order_quantity.search_field: pagination.order}
 
     # Add secondary sorting based on doc id
-    if path != doc_type.id_field:
-        sort[doc_type.id_field] = pagination.order
+    if path != entry_type.id_field:
+        sort[entry_type.id_field] = pagination.order
 
     return sort, order_quantity, page_after_value
 
@@ -1111,7 +1033,6 @@ def _api_to_es_aggregation(
     es_search: Search,
     name: str,
     agg: AggregationBase,
-    doc_type: DocumentType,
     post_agg_query: models.Query,
     create_es_query: Callable[[models.Query], EsQuery],
 ) -> A:
@@ -1141,9 +1062,7 @@ def _api_to_es_aggregation(
 
     if isinstance(agg, StatisticsAggregation):
         for metric_name in agg.metrics:
-            metrics = doc_type.metrics
-            if metric_name not in metrics and doc_type == material_type:
-                metrics = material_entry_type.metrics
+            metrics = entry_type.metrics
             if metric_name not in metrics:
                 raise QueryValidationError(
                     'metric must be the qualified name of a suitable search quantity',
@@ -1159,15 +1078,13 @@ def _api_to_es_aggregation(
 
     # Get quantity aggregation details
     agg = cast(QuantityAggregation, agg)
-    quantity = validate_quantity(
-        agg.quantity, doc_type=doc_type, loc=['aggregation', 'quantity']
-    )
+    quantity = validate_quantity(agg.quantity, loc=['aggregation', 'quantity'])
 
     # When targeting nested fields, add nested aggregation
     longest_nested_key = None
     is_nested = False
     outer_es_aggs = es_aggs
-    for nested_key in doc_type.nested_object_keys:
+    for nested_key in entry_type.nested_object_keys:
         if agg.quantity.startswith(nested_key):
             es_aggs = es_aggs.bucket(f'nested_agg:{name}', 'nested', path=nested_key)
             longest_nested_key = nested_key
@@ -1208,7 +1125,7 @@ def _api_to_es_aggregation(
                 )
 
             order_quantity, page_after_value = validate_pagination(
-                agg.pagination, doc_type=doc_type, loc=['aggregation']
+                agg.pagination, loc=['aggregation']
             )
 
             # We are using elastic searchs 'composite aggregations' here. We do not really
@@ -1406,7 +1323,6 @@ def _api_to_es_aggregation(
         if agg.group_by is not None:
             group_quantity = validate_quantity(
                 agg.group_by,
-                doc_type=doc_type,
                 loc=['aggregation', name, 'percentiles', 'group_by'],
             )
             if not group_quantity.annotation.aggregatable:
@@ -1466,9 +1382,7 @@ def _api_to_es_aggregation(
 
     if isinstance(agg, BucketAggregation):
         for metric_name in agg.metrics:
-            metrics = doc_type.metrics
-            if longest_nested_key == 'entries':
-                metrics = material_entry_type.metrics
+            metrics = entry_type.metrics
             if metric_name not in metrics:
                 raise QueryValidationError(
                     'metric must be the qualified name of a suitable search quantity',
@@ -1487,7 +1401,6 @@ def _es_to_api_aggregation(
     agg: AggregationBase,
     histogram_responses: dict[str, HistogramAggregation],
     bucket_values: dict[str, float],
-    doc_type: DocumentType,
 ):
     """
     Creates a AggregationResponse from elasticsearch response on a request executed with
@@ -1518,10 +1431,10 @@ def _es_to_api_aggregation(
 
     # If targeting nested object resolve nested aggregation result
     agg = cast(QuantityAggregation, agg)
-    quantity = validate_quantity(agg.quantity, doc_type=doc_type)
+    quantity = validate_quantity(agg.quantity)
     longest_nested_key = None
     outer_es_aggs = es_aggs
-    for nested_key in doc_type.nested_object_keys:
+    for nested_key in entry_type.nested_object_keys:
         if agg.quantity.startswith(nested_key):
             es_aggs = es_aggs[f'nested_agg:{name}']
             longest_nested_key = nested_key
@@ -1676,7 +1589,6 @@ def _es_to_api_aggregation(
         if agg.group_by is not None:
             group_quantity = validate_quantity(
                 agg.group_by,
-                doc_type=doc_type,
                 loc=['aggregation', name, 'percentiles', 'group_by'],
             )
             if group_quantity.dynamic:
@@ -1789,7 +1701,6 @@ def _buckets_to_interval(
     query: Query | EsQuery | None = None,
     aggregations: dict[str, Aggregation] = {},
     user_id: str | None = None,
-    index: Index = entry_index,
 ) -> tuple[dict[str, Aggregation], dict[str, HistogramAggregation], dict[str, float]]:
     """Converts any histogram aggregations with the number of buckets into a
     query with an interval. This is required because elasticsearch does not yet
@@ -1832,7 +1743,6 @@ def _buckets_to_interval(
         None,
         min_max_aggregations,
         user_id,
-        index,
     )
 
     # Calculate interval and return the modified aggregations
@@ -1852,7 +1762,7 @@ def _buckets_to_interval(
             else:
                 max_value = extended_bounds.max if max_value is None else max_value
         if min_value is not None and max_value is not None:
-            quantity = validate_quantity(agg.quantity, doc_type=index.doc_type)
+            quantity = validate_quantity(agg.quantity)
 
             # Discretized fields require a 'ceiled' interval in order to not
             # return bins with floating point values and in order to prevent
@@ -1901,32 +1811,28 @@ def search(
     required: MetadataRequired | None = None,
     aggregations: dict[str, Aggregation] = {},
     user_id: str | None = None,
-    index: Index = entry_index,
 ) -> MetadataResponse:
     # If histogram aggregations only provide the number of buckets, we need to
     # separately query the min/max values before forming the histogram
     # aggregation
     aggregations, histogram_responses, bucket_values = _buckets_to_interval(
-        owner, query, aggregations, user_id, index
+        owner, query, aggregations, user_id
     )
 
-    doc_type = index.doc_type
     skip_sort = False
 
     # The first half of this method creates the ES query. Then the query is run on ES.
     # The second half is about transforming the ES response to a MetadataResponse.
 
     # owner
-    owner_query = _owner_es_query(owner=owner, user_id=user_id, doc_type=doc_type)
+    owner_query = _owner_es_query(owner=owner, user_id=user_id)
 
     # query
     if query is None:
         query = {}
 
     def create_es_query(query: Query):
-        return _api_to_es_query(
-            cast(Query, query), doc_type=doc_type, owner_query=owner_query
-        )
+        return _api_to_es_query(cast(Query, query))
 
     if isinstance(query, EsQuery):
         es_query = cast(EsQuery, query)
@@ -1937,27 +1843,22 @@ def search(
         # In this case, there wil always be just one result and sorting is not necessary.
         # This catches a lot of problematic queries as a hot-fix.
         skip_sort = isinstance(query, dict) and isinstance(
-            query.get(doc_type.id_field, None), str
+            query.get(entry_type.id_field, None), str
         )
-        query = normalize_api_query(cast(Query, query), doc_type=doc_type)
+        query = normalize_api_query(cast(Query, query))
         es_query = create_es_query(cast(Query, query))
 
-    nested_owner_query = owner_query
-    if doc_type != entry_type:
-        nested_owner_query = Q('nested', path='entries', query=owner_query)
-    es_query &= nested_owner_query
+    es_query &= owner_query
 
-    search = Search(index=index.index_name)
+    search = Search(index=entry_index.index_name)
 
     # pagination
     if pagination is None:
         pagination = MetadataPagination()
     if pagination.order_by is None:
-        pagination.order_by = doc_type.id_field
+        pagination.order_by = entry_type.id_field
 
-    sort, order_quantity, page_after_value = _api_to_es_sort(
-        pagination, doc_type=doc_type
-    )
+    sort, order_quantity, page_after_value = _api_to_es_sort(pagination)
     if not skip_sort:
         search = search.sort(sort)
     search = search.extra(size=pagination.page_size, track_total_hits=True)
@@ -1973,9 +1874,7 @@ def search(
         search = search.extra(search_after=page_after_value.rsplit(':', 1))
 
     # required
-    includes, excludes, requires_filtering = _api_to_es_required(
-        required, pagination, doc_type
-    )
+    includes, excludes, requires_filtering = _api_to_es_required(required, pagination)
     search = search.source(includes=includes, excludes=excludes)  # pylint: disable=no-member
 
     # aggregations
@@ -1995,11 +1894,7 @@ def search(
             and and_clause.name not in excluded_agg_quantities
         ]
 
-        pre_agg_es_query = _api_to_es_query(
-            models.And(**{'and': list(pre_clauses)}),
-            doc_type=doc_type,
-            owner_query=owner_query,
-        )
+        pre_agg_es_query = _api_to_es_query(models.And(**{'and': list(pre_clauses)}))
         post_agg_query = models.And(
             **{
                 'and': [
@@ -2009,12 +1904,10 @@ def search(
                 ]
             }
         )
-        post_agg_es_query = _api_to_es_query(
-            post_agg_query, doc_type=doc_type, owner_query=owner_query
-        )
+        post_agg_es_query = _api_to_es_query(post_agg_query)
 
         search = search.post_filter(post_agg_es_query)
-        search = search.query(pre_agg_es_query & nested_owner_query)
+        search = search.query(pre_agg_es_query & owner_query)
     else:
         search = search.query(es_query)  # pylint: disable=no-member
         post_agg_query = None
@@ -2024,7 +1917,6 @@ def search(
             search,
             name,
             agg,
-            doc_type=doc_type,
             post_agg_query=post_agg_query,
             create_es_query=create_es_query,
         )
@@ -2037,9 +1929,7 @@ def search(
     more_response_data = {}
 
     # pagination
-    pagination_response = _es_to_api_pagination(
-        es_response, pagination, order_quantity, doc_type
-    )
+    pagination_response = _es_to_api_pagination(es_response, pagination, order_quantity)
 
     # aggregations
     if len(aggregations) > 0:
@@ -2052,7 +1942,6 @@ def search(
                     _specific_agg(agg),
                     histogram_responses,
                     bucket_values,
-                    doc_type=doc_type,
                 )
                 for name, agg in aggregations.items()
             },
@@ -2102,7 +1991,6 @@ def search_iterator(
     required: MetadataRequired | None = None,
     aggregations: dict[str, Aggregation] = {},
     user_id: str | None = None,
-    index: Index = entry_index,
 ) -> Iterator[dict[str, Any]]:
     """
     Works like :func:`search`, but returns an iterator for iterating over the results.
@@ -2119,7 +2007,6 @@ def search_iterator(
             required=required,
             aggregations=aggregations,
             user_id=user_id,
-            index=index,
         )
 
         page_after_value = response.pagination.next_page_after_value

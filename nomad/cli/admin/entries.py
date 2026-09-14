@@ -43,7 +43,7 @@ def rm(entries, skip_es, skip_mongo):
 
     if not skip_es:
         for entry in entries:
-            search.delete_entry(entry_id=entry, refresh=True, update_materials=False)
+            search.delete_entry(entry_id=entry, refresh=True)
 
     if not skip_mongo:
         proc.Entry.objects(entry_id__in=entries).delete()  # type: ignore

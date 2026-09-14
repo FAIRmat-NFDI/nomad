@@ -1111,11 +1111,7 @@ class BundleImporter:
     def _index_search(self, entry_data_to_index: list[datamodel.EntryArchive]) -> None:
         """Index imported archive data in Elasticsearch."""
         if entry_data_to_index:
-            search.index(
-                entry_data_to_index,
-                update_materials=config.process.index_materials,
-                refresh=True,
-            )
+            search.index(entry_data_to_index, refresh=True)
 
     def _reprocess_upload(self) -> str | None:
         """Trigger local reprocessing for the imported upload."""
