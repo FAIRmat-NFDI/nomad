@@ -58,7 +58,14 @@ from .util import parse_path
 m_package = Package()
 
 from .results import Results  # noqa: I001
-from .data import EntryData, ArchiveSection, User, UserReference, AuthorReference
+from .data import (
+    Author,
+    EntryData,
+    ArchiveSection,
+    User,
+    UserReference,
+    AuthorReference,
+)
 from .optimade import OptimadeEntry
 from .metainfo.simulation.legacy_workflows import Workflow as LegacySimulationWorkflow
 from .metainfo.workflow import Workflow
@@ -1033,6 +1040,77 @@ class EntryMetadata(MSection):
         search_quantities = []
         keywords_set = set()
 
+        # Metadata quantities that are human-readable, descriptive information
+        # (e.g. names, comments, author references) rather than internal
+        # identifiers, hashes, paths, or purely derived/duplicate values. Only
+        # these are useful for free text search and therefore included in
+        # `text_search_contents`.
+        metadata_text_search_includes = {
+            'upload_name',
+            'description',
+            'entry_name',
+            'comment',
+            'origin',
+            'main_author',
+            'coauthors',
+            'entry_coauthors',
+            'reviewers',
+            'authors',
+            'datasets',
+            'domain',
+        }
+        # Lists longer than this are considered too technical/bulky to be useful
+        # for free text search (e.g. `references`) and are skipped. Small, but
+        # important lists, like the list of authors, are still indexed.
+        metadata_text_search_max_list_size = 20
+
+        def add_text_search_keywords(
+            _section, _property_def, max_list_size: int | None = None
+        ):
+            """
+            Extracts text keywords from the given quantity and adds them to
+            `keywords_set`, unless too many unique values are already stored. String
+            and enum quantities are added directly. Reference quantities that point
+            to authors/users or datasets are resolved and their human-readable
+            name/DOI is added instead of the (non-descriptive) reference itself.
+            """
+            if len(keywords_set) >= 10000:
+                return
+
+            prop_type = _property_def.type
+            if isinstance(prop_type, MEnum | m_str):
+                values = _section.m_get(_property_def)
+                if not values:
+                    return
+                if not _property_def.shape:
+                    values = [values]
+            elif isinstance(
+                prop_type, UserReference | AuthorReference | DatasetReference
+            ):
+                references = _section.m_get(_property_def)
+                if not references:
+                    return
+                if not _property_def.shape:
+                    references = [references]
+
+                values = []
+                for ref in references:
+                    if isinstance(ref, User) or isinstance(ref, Author):
+                        values.append(ref.name)
+                    elif isinstance(ref, Dataset):
+                        values.append(ref.dataset_name)
+                        values.append(ref.doi)
+                values = [v for v in values if v is not None]
+
+            else:
+                return
+
+            if max_list_size is not None and len(values) > max_list_size:
+                return
+
+            for val in values:
+                keywords_set.add(str(val)[0:500].strip())
+
         _check_mongo_connection()
 
         def get_section_path(_section):
@@ -1162,26 +1240,31 @@ class EntryMetadata(MSection):
 
             collect_references(section, property_def, quantity_path)
 
-            if section_path.startswith('data') and isinstance(property_def, Quantity):
-                # From each string dtype, we get a truncated sample to put into
-                # the keywords field, unless we are already storing too many unique values.
-                if (isinstance(property_def.type, MEnum | m_str)) and len(
-                    keywords_set
-                ) < 10000:
-                    keyword = section.m_get(property_def)
-                    if keyword:
-                        if not property_def.shape:
-                            keyword = [keyword]
-                        for val in keyword:
-                            keywords_set.add(str(val)[0:500].strip())
-                if searchable_quantity := create_searchable_quantity(
-                    property_def,
-                    quantity_path,
-                    sections,
-                    '.'.join([str(x) for x in location]),
-                    schema_name,
+            if isinstance(property_def, Quantity):
+                if section_path.startswith('data'):
+                    # From each string dtype, we get a truncated sample to put into
+                    # the keywords field, unless we are already storing too many unique values.
+                    add_text_search_keywords(section, property_def)
+                    if searchable_quantity := create_searchable_quantity(
+                        property_def,
+                        quantity_path,
+                        sections,
+                        '.'.join([str(x) for x in location]),
+                        schema_name,
+                    ):
+                        search_quantities.append(searchable_quantity)
+                elif (
+                    section_path == 'metadata'
+                    and property_def.name in metadata_text_search_includes
                 ):
-                    search_quantities.append(searchable_quantity)
+                    # Also cover "regular" items directly on archive.metadata (e.g.
+                    # author names, dataset names/DOIs, comments, descriptions, ...)
+                    # so they can be found through the free text search bar.
+                    add_text_search_keywords(
+                        section,
+                        property_def,
+                        max_list_size=metadata_text_search_max_list_size,
+                    )
 
         # We collected entry_references, quantities, and sections before adding these
         # data to the archive itself. We manually add them here.

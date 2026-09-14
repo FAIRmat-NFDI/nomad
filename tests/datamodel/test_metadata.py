@@ -22,7 +22,13 @@ import numpy as np
 import pytest
 
 from nomad.datamodel import EntryData
-from nomad.datamodel.datamodel import EntryArchive, EntryMetadata, SearchableQuantity
+from nomad.datamodel.data import Author, User
+from nomad.datamodel.datamodel import (
+    Dataset,
+    EntryArchive,
+    EntryMetadata,
+    SearchableQuantity,
+)
 from nomad.metainfo import Datetime, MEnum, MSection, Quantity, SubSection
 from nomad.metainfo.elasticsearch_extension import schema_separator
 from tests.variables import python_schema_name
@@ -339,7 +345,7 @@ def test_text_search_contents():
     archive.data.children.append(MySubSection(str_scalar='  scalar1  '))
 
     archive.metadata.apply_archive_metadata(archive)
-    assert len(archive.metadata.text_search_contents) == 8
+    assert len(archive.metadata.text_search_contents) == 9
     for value in [
         'scalar1',
         'scalar2',
@@ -349,5 +355,78 @@ def test_text_search_contents():
         'array3',
         'enum1',
         'enum2',
+        'test',  # from metadata.entry_name
     ]:
         assert value in archive.metadata.text_search_contents
+
+
+def test_text_search_contents_metadata():
+    """Test that text search contents are also extracted from "regular" items
+    directly on archive.metadata, including dereferenced author names and
+    dataset names/DOIs, while internal identifiers/paths and purely technical
+    fields are excluded."""
+    main_author = User(first_name='Ada', last_name='Lovelace')
+    coauthor = Author(first_name='Grace', last_name='Hopper')
+    dataset = Dataset(dataset_name='My dataset', doi='10.17172/nomad/test')
+
+    archive = EntryArchive(
+        metadata=EntryMetadata(
+            upload_id='some-upload-id',
+            entry_id='some-entry-id',
+            mainfile='raw/some/path/file.out',
+            entry_name='file.out',
+            upload_name='My upload',
+            description='A user provided description',
+            comment='A user provided comment',
+            main_author=main_author,
+            coauthors=[coauthor],
+            datasets=[dataset],
+            license='CC BY 4.0',
+            external_id='external-id-123',
+            references=['http://a.example.com', 'http://b.example.com'],
+        )
+    )
+
+    archive.metadata.apply_archive_metadata(archive)
+    contents = archive.metadata.text_search_contents
+
+    for value in [
+        'file.out',
+        'My upload',
+        'A user provided description',
+        'A user provided comment',
+        'Ada Lovelace',
+        'Grace Hopper',
+        'My dataset',
+        '10.17172/nomad/test',
+    ]:
+        assert value in contents
+
+    # Internal identifiers, paths and purely technical fields must not leak
+    # into the free text search contents.
+    for value in [
+        'some-upload-id',
+        'some-entry-id',
+        'raw/some/path/file.out',
+        'CC BY 4.0',
+        'external-id-123',
+        'http://a.example.com',
+        'http://b.example.com',
+    ]:
+        assert value not in contents
+
+
+def test_text_search_contents_metadata_large_list_excluded():
+    """Lists on archive.metadata that exceed the small-list-size limit should
+    not be indexed, to avoid polluting the free text search with bulky lists,
+    while small lists (e.g. a handful of coauthors) are still indexed."""
+    small_coauthors = [Author(first_name='Grace', last_name='Hopper')]
+    large_coauthors = [Author(first_name='Person', last_name=str(i)) for i in range(25)]
+
+    small_archive = EntryArchive(metadata=EntryMetadata(coauthors=small_coauthors))
+    small_archive.metadata.apply_archive_metadata(small_archive)
+    assert 'Grace Hopper' in small_archive.metadata.text_search_contents
+
+    large_archive = EntryArchive(metadata=EntryMetadata(coauthors=large_coauthors))
+    large_archive.metadata.apply_archive_metadata(large_archive)
+    assert 'Person 0' not in large_archive.metadata.text_search_contents
