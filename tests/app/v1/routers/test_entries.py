@@ -1750,7 +1750,7 @@ def test_entries_get_query_dynamic(
 
 
 @pytest.mark.parametrize(
-    'owner, user, status_code, total_entries, total_mainfiles, total_materials',
+    'owner, user, status_code, total_entries, total_mainfiles',
     owner_test_parameters(),
 )
 @pytest.mark.parametrize('http_method', ['post', 'get'])
@@ -1773,7 +1773,6 @@ def test_entries_owner(
     status_code,
     total_entries,
     total_mainfiles,
-    total_materials,
     http_method,
     test_method,
 ):

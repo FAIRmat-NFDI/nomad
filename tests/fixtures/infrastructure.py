@@ -272,31 +272,19 @@ def elastic_test_entries_index(worker_id):
 
 
 @pytest.fixture(scope='session')
-def elastic_test_materials_index(worker_id):
-    return f'nomad_materials_v1_test_{worker_id}'
+def elastic_test_indices(elastic_test_entries_index):
+    return [elastic_test_entries_index]
 
 
 @pytest.fixture(scope='session')
-def elastic_test_indices(elastic_test_entries_index, elastic_test_materials_index):
-    return [elastic_test_entries_index, elastic_test_materials_index]
-
-
-@pytest.fixture(scope='session')
-def elastic_infra(
-    monkeysession, elastic_test_entries_index, elastic_test_materials_index
-):
+def elastic_infra(monkeysession, elastic_test_entries_index):
     """Provides elastic infrastructure to the session"""
     monkeysession.setattr(
         'nomad.config.elastic.entries_index', elastic_test_entries_index
     )
-    monkeysession.setattr(
-        'nomad.config.elastic.materials_index', elastic_test_materials_index
-    )
 
     # attempt to remove and recreate all indices
-    return clear_elastic_infra(
-        [elastic_test_entries_index, elastic_test_materials_index]
-    )
+    return clear_elastic_infra([elastic_test_entries_index])
 
 
 def clear_elastic_infra(indices):

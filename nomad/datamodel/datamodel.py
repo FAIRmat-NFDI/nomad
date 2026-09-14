@@ -30,9 +30,7 @@ from nomad.datamodel.metainfo.common import FastAccess
 from nomad.metainfo.elasticsearch_extension import (
     Elasticsearch,
     create_searchable_quantity,
-    material_entry_type,
 )
-from nomad.metainfo.elasticsearch_extension import entry_type as es_entry_type
 from nomad.metainfo.mongoengine_extension import Mongo, MongoDocument
 from nomad.metainfo.pydantic_extension import PydanticModel
 
@@ -133,9 +131,8 @@ quantity_analyzer = analyzer(
 
 def QuantitySearch():
     return [
-        Elasticsearch(material_entry_type, _es_field='keyword'),
+        Elasticsearch(_es_field='keyword'),
         Elasticsearch(
-            material_entry_type,
             mapping=dict(type='text', analyzer=path_analyzer.to_dict()),
             field='path',
             _es_field='',
@@ -174,13 +171,13 @@ class Dataset(MSection):
     dataset_id = Quantity(
         type=str,
         a_mongo=Mongo(primary_key=True),
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
     dataset_name = Quantity(
         type=str,
         a_mongo=Mongo(index=True),
         a_elasticsearch=[
-            Elasticsearch(material_entry_type),
+            Elasticsearch(),
             Elasticsearch(suggestion='default'),
         ],
     )
@@ -188,7 +185,7 @@ class Dataset(MSection):
     doi = Quantity(
         type=str,
         a_mongo=Mongo(index=True),
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
     pid = Quantity(type=str, a_mongo=Mongo(index=True))
     dataset_create_time = Quantity(
@@ -294,17 +291,17 @@ class CompatibleSectionDef(MSection):
     definition_qualified_name = Quantity(
         type=str,
         description='The qualified name of the compatible section.',
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
     definition_id = Quantity(
         type=str,
         description='The definition id of the compatible section.',
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
     used_directly = Quantity(
         type=bool,
         description='If the compatible section is directly used as base section.',
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
 
@@ -529,9 +526,7 @@ class EntryMetadata(MSection):
         type=str,
         categories=[MongoUploadMetadata],
         description='The persistent and globally unique identifier for the upload of the entry',
-        a_elasticsearch=Elasticsearch(
-            material_entry_type, metrics=dict(n_uploads='cardinality')
-        ),
+        a_elasticsearch=Elasticsearch(metrics=dict(n_uploads='cardinality')),
     )
 
     upload_name = Quantity(
@@ -539,7 +534,7 @@ class EntryMetadata(MSection):
         categories=[MongoUploadMetadata, EditableUserMetadata],
         description='The user provided upload name',
         a_elasticsearch=[
-            Elasticsearch(material_entry_type),
+            Elasticsearch(),
             Elasticsearch(suggestion='default'),
         ],
     )
@@ -549,7 +544,7 @@ class EntryMetadata(MSection):
         categories=[MongoUploadMetadata, EditableUserMetadata],
         description='The date and time when the upload was created in nomad',
         a_auth_level=AuthLevel.admin,
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     description = Quantity(
@@ -557,7 +552,7 @@ class EntryMetadata(MSection):
         categories=[MongoUploadMetadata, EditableUserMetadata],
         description='Further information about the upload.',
         a_elasticsearch=[
-            Elasticsearch(material_entry_type),
+            Elasticsearch(),
             Elasticsearch(suggestion='default'),
         ],
     )
@@ -566,19 +561,16 @@ class EntryMetadata(MSection):
         type=str,
         description='A persistent and globally unique identifier for the entry',
         categories=[MongoEntryMetadata, MongoSystemMetadata],
-        a_elasticsearch=Elasticsearch(
-            material_entry_type, metrics=dict(n_entries='cardinality')
-        ),
+        a_elasticsearch=Elasticsearch(metrics=dict(n_entries='cardinality')),
     )
 
     entry_name = Quantity(
         type=str,
         description='A brief human readable name for the entry.',
         a_elasticsearch=[
-            Elasticsearch(material_entry_type, _es_field='keyword'),
+            Elasticsearch(_es_field='keyword'),
             Elasticsearch(suggestion='default'),
             Elasticsearch(
-                material_entry_type,
                 field='prefix',
                 es_query='match_phrase_prefix',
                 mapping='text',
@@ -590,14 +582,14 @@ class EntryMetadata(MSection):
     entry_type = Quantity(
         type=str,
         description='The main schema definition. This is the name of the section used for data.',
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     calc_id = Quantity(
         type=str,
         description='Legacy field name, use `entry_id` instead.',
         derived=lambda entry: entry.entry_id,
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     entry_hash = Quantity(
@@ -616,7 +608,7 @@ class EntryMetadata(MSection):
         categories=[MongoEntryMetadata, MongoSystemMetadata, EditableUserMetadata],
         description='The date and time when the entry was created in nomad',
         a_auth_level=AuthLevel.admin,
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     last_edit_time = Quantity(
@@ -677,7 +669,7 @@ class EntryMetadata(MSection):
             NOMAD CoE. It allows to resolve URLs of the old NOMAD CoE Repository.
         """,
         categories=[MongoEntryMetadata],
-        a_elasticsearch=Elasticsearch(es_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     raw_id = Quantity(
@@ -686,7 +678,7 @@ class EntryMetadata(MSection):
             The code specific identifier extracted from the entry's raw files by the parser,
             if supported.
         """,
-        a_elasticsearch=Elasticsearch(es_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     external_id = Quantity(
@@ -704,7 +696,7 @@ class EntryMetadata(MSection):
         default=False,
         description='Indicates if the entry is published',
         categories=[MongoUploadMetadata],
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     publish_time = Quantity(
@@ -712,7 +704,7 @@ class EntryMetadata(MSection):
         categories=[MongoUploadMetadata, EditableUserMetadata],
         description='The date and time when the upload was published in nomad',
         a_auth_level=AuthLevel.admin,
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     with_embargo = Quantity(
@@ -720,7 +712,7 @@ class EntryMetadata(MSection):
         default=False,
         categories=[MongoUploadMetadata, MongoSystemMetadata],
         description='Indicated if this entry is under an embargo',
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     embargo_length = Quantity(
@@ -827,7 +819,7 @@ class EntryMetadata(MSection):
         ),
         categories=[MongoUploadMetadata, EditableUserMetadata],
         description='The repository or external database where the original data resides',
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     origin = Quantity(
@@ -837,7 +829,7 @@ class EntryMetadata(MSection):
             handle of an external database/repository or the name of the main author.
         """,
         derived=derive_origin,
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     main_author = Quantity(
@@ -845,7 +837,7 @@ class EntryMetadata(MSection):
         categories=[MongoUploadMetadata, EditableUserMetadata],
         description='The main author of the entry',
         a_auth_level=AuthLevel.admin,
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     coauthors = Quantity(
@@ -911,9 +903,7 @@ class EntryMetadata(MSection):
         shape=['0..*'],
         description='All authors (main author and co-authors)',
         derived=derive_authors,
-        a_elasticsearch=Elasticsearch(
-            material_entry_type, metrics=dict(n_authors='cardinality')
-        ),
+        a_elasticsearch=Elasticsearch(metrics=dict(n_authors='cardinality')),
     )
 
     writers = Quantity(
@@ -924,7 +914,7 @@ class EntryMetadata(MSection):
             ([entry.main_author] if entry.main_author is not None else [])
             + entry.coauthors
         ),
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     writer_groups = Quantity(
@@ -932,7 +922,7 @@ class EntryMetadata(MSection):
         shape=['0..*'],
         description='Groups with write access (= coauthor groups).',
         derived=lambda entry: entry.coauthor_groups,
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     viewers = Quantity(
@@ -944,7 +934,7 @@ class EntryMetadata(MSection):
             + entry.coauthors
             + entry.reviewers
         ),
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     viewer_groups = Quantity(
@@ -952,7 +942,7 @@ class EntryMetadata(MSection):
         shape=['0..*'],
         description='Groups with read access (= coauthor groups + reviewer groups).',
         derived=lambda entry: entry.coauthor_groups + entry.reviewer_groups,
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     datasets = Quantity(
@@ -961,19 +951,19 @@ class EntryMetadata(MSection):
         default=[],
         categories=[MongoEntryMetadata, EditableUserMetadata],
         description='A list of user curated datasets this entry belongs to.',
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     optimade = SubSection(
         sub_section=OptimadeEntry,
         description='Metadata used for the optimade API.',
-        a_elasticsearch=Elasticsearch(es_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     domain = Quantity(
         type=MEnum('dft', 'ems', 'nexus'),
         description='The material science domain',
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     n_quantities = Quantity(
@@ -994,14 +984,14 @@ class EntryMetadata(MSection):
         type=str,
         shape=['*'],
         description='All sections that are present in this entry. This field is deprecated and will be removed.',
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     section_defs = SubSection(
         sub_section=CompatibleSectionDef,
         repeats=True,
         description='All sections that are compatible with the present sections in this entry.',
-        a_elasticsearch=Elasticsearch(material_entry_type, nested=True),
+        a_elasticsearch=Elasticsearch(nested=True),
     )
 
     entry_references = SubSection(
@@ -1020,7 +1010,7 @@ class EntryMetadata(MSection):
         type=bool,
         default=False,
         description='Indicates if the entry shall not be edited manually',
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
     def apply_archive_metadata(self, archive):

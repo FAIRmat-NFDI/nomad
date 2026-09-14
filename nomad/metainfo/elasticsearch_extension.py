@@ -20,30 +20,15 @@
 This elasticsearch extension for the Metainfo allows to define how quantities are
 added to Elasticsearch indices.
 
-This extension supports two search indices: ``entry_index`` and ``material_index``.
-There are three different types of "searchable documents": ``entry_type``, ``material_type``,
-``material_entry_type``. Entry documents are indexed in the entry index; material documents
-in the material index. The material entry documents are nested documents in material documents.
+This extension supports a single search index: ``entry_index``, holding documents of the
+``entry_type`` document type.
 
-The document types are subsets of the metainfo schema; documents have the exact same
+The document type is a subset of the metainfo schema; documents have the exact same
 structure as archives, but with only some of the quantities. Which quantities are in these
 documents can be defined in the metainfo by using the :class:`Elasticsearch` annotation on
 quantity definitions.
 
-Entry and material entry documents start with the metainfo entry root section.
-Material documents start with the ``results.material`` sub-section. Nested material entry
-documents are placed under the ``entries`` key within a material document. This is the only
-exception, where the material document structure deviates from the metainfo/archive structure.
-
-A quantity can appear in multiple document types. All indexed quantities
-appear by default in entry documents. If specified quantities are also put in either
-the material document or a nested material entry document within the material document.
-The material quantities describe the material itself
-(e.g. formula, elements, system type, symmetries). These quantities are always in all
-entries of the same material. Material entry quantities describe individual results
-and metadata that are contributed by the entries of this material (e.g. published, embargo,
-band gap, available properties). The values contributed by different entries of the same
-material may vary.
+Entry documents start with the metainfo entry root section.
 
 Here is a small metainfo example:
 
@@ -53,7 +38,7 @@ Here is a small metainfo example:
 
         entry_id = Quantity(
             type=str,
-            a_elasticsearch=Elasticsearch(material_entry_type))
+            a_elasticsearch=Elasticsearch())
 
         upload_create_time = Quantity(
             type=Datetime,
@@ -72,27 +57,27 @@ Here is a small metainfo example:
 
         material_id = Quantity(
             type=str,
-            a_elasticsearch=Elasticsearch(material_type))
+            a_elasticsearch=Elasticsearch())
 
         formula = Quantity(
             type=str,
             a_elasticsearch=[
-                Elasticsearch(material_type),
-                Elasticsearch(material_type, field='text', mapping='text')])
+                Elasticsearch(),
+                Elasticsearch(field='text', mapping='text')])
 
 
     class Properties(MSection):
 
         available_properties = Quantity(
             type=str, shape=['*'],
-            a_elasticsearch=Elasticsearch(material_entry_type))
+            a_elasticsearch=Elasticsearch())
 
         band_gap = Quantity(
             type=float, unit='J',
-            a_elasticsearch=Elasticsearch(material_entry_type))
+            a_elasticsearch=Elasticsearch())
 
 
-The resulting indices with a single entry in them would look like this. Entry index:
+The resulting index with a single entry in it would look like this:
 
 .. code-block:: json
 
@@ -113,35 +98,8 @@ The resulting indices with a single entry in them would look like this. Entry in
         }
     ]
 
-
-And material index:
-
-.. code-block:: json
-
-    [
-        {
-            "material_id": "23a8bf",
-            "formula": "H2O"
-            "entries": [
-                {
-                    "entry_id": "de54f1",
-                    "results": {
-                        "properties": {
-                            "available_properties": ["dos", "bs", "band_gap", "energy_total_0"],
-                            "band_gap": 0.283e-12
-                        }
-                    }
-                }
-            ]
-        }
-    ]
-
-You can freely define sub-sections and quantities. The only fixed structures that are
-required from the metainfo are:
-- the root section has an ``entry_id``
-- materials are placed in ``results.material``
-- the ``results.material`` sub-section has a ``material_id``
-- the ``results.material`` sub-section has no property called ``entries``
+You can freely define sub-sections and quantities. The only fixed structure that is
+required from the metainfo is that the root section has an ``entry_id``.
 
 This extension resolves references during indexing and basically treats referenced
 sub-sections as if they were direct sub-sections.
@@ -283,14 +241,6 @@ class DocumentType:
             for elasticsearch_annotation in elasticsearch_annotations:
                 if elasticsearch_annotation.field is None:
                     if elasticsearch_annotation.suggestion:
-                        # The suggestions may have a different doc_type: we
-                        # don't serialize them if the doc types don't match.
-                        if (
-                            self != entry_type
-                            and elasticsearch_annotation.doc_type != self
-                        ):
-                            continue
-
                         # The suggestion values are saved into a temporary
                         # dictionary. The actual path of the data in the
                         # metainfo is used as a key. The suggestions will also
@@ -402,16 +352,11 @@ class DocumentType:
     ):
         mappings: dict[str, Any] = {}
 
-        if self == material_type and prefix is None:
-            mappings['n_entries'] = {'type': 'integer'}
-
         for quantity_def in section_def.all_quantities.values():
             elasticsearch_annotations = quantity_def.m_get_annotations(
                 Elasticsearch, as_list=True
             )
             for elasticsearch_annotation in elasticsearch_annotations:
-                if self != entry_type and elasticsearch_annotation.doc_type != self:
-                    continue
                 if elasticsearch_annotation.dynamic:
                     continue
                 if prefix is None:
@@ -504,9 +449,6 @@ class DocumentType:
     def reload_quantities_dynamic(self) -> None:
         """Reloads the dynamically mapped quantities from the plugin schemas."""
         from nomad.datamodel.data import EntryData
-
-        if self != entry_type:
-            return None
 
         # Remove existing dynamic quantities
         for name, quantity in list(self.quantities.items()):
@@ -660,8 +602,7 @@ class DocumentType:
                 assert name not in self.metrics, f'Metric names must be unique: {name}'
                 self.metrics[name] = (metric, search_quantity)
 
-        if self == entry_type:
-            annotation.search_quantity = search_quantity
+        annotation.search_quantity = search_quantity
 
     def __repr__(self):
         return self.name
@@ -776,11 +717,8 @@ class Index:
 # TODO type 'doc' because it's the default used by elasticsearch_dsl and the v0 entries index.
 # 'entry' would be more descriptive.
 entry_type = DocumentType('doc', id_field='entry_id')
-material_type = DocumentType('material', id_field='material_id')
-material_entry_type = DocumentType('material_entry', id_field='entry_id')
 
 entry_index = Index(entry_type, index_config_key='entries_index')
-material_index = Index(material_type, index_config_key='materials_index')
 
 
 def get_tokenizer(regex):
@@ -821,8 +759,6 @@ class Elasticsearch(DefinitionAnnotation):
     arguments are ignored.
 
     Arguments:
-        doc_type: An additional document type: ``material_type`` or ``material_entry_type``.
-            All quantities with this annotation are automatically placed in ``entry_type``.
         mapping: The Elasticsearch mapping for the underlying elasticsearch field. The
             default depends on the quantity type. You can provide the elasticsearch type
             name, a full dictionary with additional elasticsearch mapping parameters, or
@@ -899,7 +835,6 @@ class Elasticsearch(DefinitionAnnotation):
 
     def __init__(
         self,
-        doc_type: DocumentType = entry_type,
         mapping: str | dict[str, Any] | None = None,
         field: str | None = None,
         es_field: str | None = None,
@@ -922,10 +857,6 @@ class Elasticsearch(DefinitionAnnotation):
         # TODO remove _es_field if it is not necessary anymore to enforce a specific mapping
         # for v0 compatibility
         if suggestion:
-            if doc_type != entry_type:
-                raise ValueError(
-                    'Suggestions should only be stored in the entry index.'
-                )
             for arg in [field, mapping, es_field, _es_field]:
                 if arg is not None:
                     raise ValueError(
@@ -957,7 +888,6 @@ class Elasticsearch(DefinitionAnnotation):
         self.field = field
         self.es_query = es_query
         self._es_field = field if _es_field is None else _es_field
-        self.doc_type = doc_type
         self.value = value
         self.index = index
         self._mapping: dict[str, Any] = None
@@ -1235,65 +1165,31 @@ class SearchQuantity:
         return getattr(self.annotation, name)
 
 
-def create_indices(
-    entry_section_def: Section | None = None,
-    material_section_def: Section | None = None,
-):
+def create_indices(entry_section_def: Section | None = None):
     """
-    Creates the mapping for all document types and creates the indices in Elasticsearch.
-    The indices must not exist already. Prior created mappings will be replaced.
+    Creates the mapping for the entry document type and creates the index in
+    Elasticsearch. A prior created mapping will be replaced.
     """
     if entry_section_def is None:
         from nomad.datamodel import EntryArchive
 
         entry_section_def = EntryArchive.m_def
 
-    if material_section_def is None:
-        from nomad.datamodel.results import Material
-
-        material_section_def = Material.m_def
-
     entry_type._reset()
-    material_type._reset()
-    material_entry_type._reset()
-
     entry_type.create_mapping(entry_section_def)
-    material_type.create_mapping(material_section_def, auto_include_subsections=True)
-    material_entry_type.create_mapping(entry_section_def, prefix='entries')
-
-    # Here we manually add the material_entry_type mapping as a nested field
-    # inside the material index. We also need to manually specify the
-    # additional nested fields that come with this: the entries + all
-    # nested_object_keys from material_entry_type. Notice that we need to sort
-    # the list: the API expects a list sorted by name length in ascending
-    # order.
-    material_entry_type.mapping['type'] = 'nested'
-    material_type.mapping['properties']['entries'] = material_entry_type.mapping
-    material_type.nested_object_keys += [
-        'entries'
-    ] + material_entry_type.nested_object_keys
-    material_type.nested_object_keys.sort(key=len)
 
     entry_index.create_index(upsert=True)  # TODO update the existing v0 index
-    material_index.create_index()
 
 
 def delete_indices():
     entry_index.delete()
-    material_index.delete()
 
 
 def index_entry(entry: MSection, **kwargs):
     """
-    Upserts the given entry in the entry index. Optionally updates the materials index
-    as well.
+    Upserts the given entry in the entry index.
     """
     index_entries([entry], **kwargs)
-
-
-def index_entries_with_materials(entries: list, refresh: bool = False):
-    index_entries(entries, refresh=refresh)
-    update_materials(entries, refresh=refresh)
 
 
 def _generate_entry_batches(
@@ -1431,258 +1327,6 @@ def index_entries(entries: list, refresh: bool = False) -> dict[str, str]:
     return rv
 
 
-def update_materials(entries: list, refresh: bool = False):
-    # split into reasonably sized problems
-    if len(entries) > config.elastic.bulk_size:
-        for entries_part in [
-            entries[i : i + config.elastic.bulk_size]
-            for i in range(0, len(entries), config.elastic.bulk_size)
-        ]:
-            update_materials(entries_part, refresh=refresh)
-        return
-
-    if len(entries) == 0:
-        return
-
-    logger = utils.get_logger('nomad.search', n_entries=len(entries))
-
-    def get_material_id(entry):
-        material_id = None
-        try:
-            material_id = entry.results.material.material_id
-        except AttributeError:
-            pass
-        return material_id
-
-    # Get all entry and material ids.
-    entry_ids, material_ids = set(), set()
-    entries_dict = {}
-    for entry in entries:
-        entries_dict[entry.entry_id] = entry
-        entry_ids.add(entry.entry_id)
-        material_id = get_material_id(entry)
-        if material_id is not None:
-            material_ids.add(material_id)
-
-    logger = logger.bind(n_materials=len(material_ids))
-
-    # Get existing materials for entries' material ids (i.e. the entry needs to be added
-    # or updated).
-    with utils.timer(
-        logger, 'get existing materials', lnr_event='failed to get existing materials'
-    ):
-        if material_ids:
-            elasticsearch_results = material_index.mget(
-                body={'docs': [dict(_id=material_id) for material_id in material_ids]},
-                request_timeout=config.elastic.bulk_timeout,
-            )
-            existing_material_docs = [
-                doc['_source']
-                for doc in elasticsearch_results['docs']
-                if '_source' in doc
-            ]
-        else:
-            existing_material_docs = []
-
-    # Get old materials that still have one of the entries, but the material id has changed
-    # (i.e. the materials where entries need to be removed due entries having different
-    # materials now).
-    with utils.timer(
-        logger, 'get old materials', lnr_event='failed to get old materials'
-    ):
-        elasticsearch_results = material_index.search(
-            body={
-                'size': len(entry_ids),
-                'query': {
-                    'bool': {
-                        'must': {
-                            'nested': {
-                                'path': 'entries',
-                                'query': {
-                                    'terms': {'entries.entry_id': list(entry_ids)}
-                                },
-                            }
-                        },
-                        'must_not': {'terms': {'material_id': list(material_ids)}},
-                    }
-                },
-            }
-        )
-        old_material_docs = [
-            hit['_source'] for hit in elasticsearch_results['hits']['hits']
-        ]
-
-    # Compare and create the appropriate materials index actions
-    # First, we go through the existing materials. The following cases need to be covered:
-    # - an entry needs to be updated within its existing material (standard case)
-    # - an entry needs to be added to an existing material (new entry case)
-    # - there is an entry with no existing material (new material case)
-    # - there is an entry that moves from one existing material to another (super rare
-    #   case where an entry's material id changed within the set of other entries' material ids)
-    # This n + m complexity with n=number of materials and m=number of entries
-
-    # We create lists of bulk operations. Each list only contains enough materials to
-    # have the ammount of entries in all these materials roughly match the desired bulk size.
-    # Using materials as a measure might not be good enough, if a single material has
-    # lots of nested entries.
-    _actions_and_docs_bulks: list[list[Any]] = []
-    _n_entries_in_bulk = [0]
-
-    def add_action_or_doc(action_or_doc):
-        if (
-            len(_actions_and_docs_bulks) == 0
-            or _n_entries_in_bulk[0] > config.elastic.bulk_size
-        ):
-            _n_entries_in_bulk[0] = 0
-            _actions_and_docs_bulks.append([])
-        _actions_and_docs_bulks[-1].append(action_or_doc)
-        if 'entries' in action_or_doc:
-            _n_entries_in_bulk[0] = _n_entries_in_bulk[0] + len(
-                action_or_doc['entries']
-            )
-
-    material_docs = []
-    material_docs_dict = {}
-    remaining_entry_ids = set(entry_ids)
-    for material_doc in existing_material_docs:
-        material_id = material_doc['material_id']
-        material_docs_dict[material_id] = material_doc
-        material_entries = material_doc['entries']
-        material_entries_to_remove = []
-        for index, material_entry in enumerate(material_entries):
-            entry_id = material_entry['entry_id']
-            entry = entries_dict.get(entry_id)
-            if entry is None:
-                # The entry was not changed.
-                continue
-            else:
-                # Update the material, there might be slight changes even if it is made
-                # from entry properties that are "material defining", e.g. changed external
-                # material quantities like new AFLOW prototypes
-                try:
-                    material_doc.update(
-                        **material_type.create_index_doc(entry.results.material)
-                    )
-                except Exception as e:
-                    logger.error('could not create material index doc', exc_info=e)
-
-            new_material_id = get_material_id(entry)
-            if new_material_id != material_id:
-                # Remove the entry, it moved to another material. But the material cannot
-                # run empty, because another entry had this material id.
-                material_entries_to_remove.append(index)
-            else:
-                # Update the entry.
-                try:
-                    material_entries[index] = material_entry_type.create_index_doc(
-                        entry
-                    )
-                except Exception as e:
-                    logger.error('could not create material index doc', exc_info=e)
-                remaining_entry_ids.remove(entry_id)
-        for index in reversed(material_entries_to_remove):
-            del material_entries[index]
-
-        add_action_or_doc(dict(index=dict(_id=material_id)))
-        add_action_or_doc(material_doc)
-        material_docs.append(material_doc)
-
-    for entry_id in remaining_entry_ids:
-        entry = entries_dict.get(entry_id)
-        material_id = get_material_id(entry)
-        if material_id is not None:
-            material_doc = material_docs_dict.get(material_id)
-            if material_doc is None:
-                # The material does not yet exist. Create it.
-                try:
-                    material_doc = material_type.create_index_doc(
-                        entry.results.material
-                    )
-                except Exception as e:
-                    logger.error('could not create material index doc', exc_info=e)
-                material_docs_dict[material_id] = material_doc
-                add_action_or_doc(dict(create=dict(_id=material_id)))
-                add_action_or_doc(material_doc)
-                material_docs.append(material_doc)
-            # The material does exist (now), but the entry is new.
-            try:
-                material_doc.setdefault('entries', []).append(
-                    material_entry_type.create_index_doc(entry)
-                )
-            except Exception as e:
-                logger.error('could not create material entry index doc', exc_info=e)
-
-    # Second, we go through the old materials. The following cases need to be covered:
-    # - the old materials are empty (standard case)
-    # - an entry needs to be removed but the material still has entries (new material id case 1)
-    # - an entry needs to be removed and the material is now "empty" (new material id case 2)
-    for material_doc in old_material_docs:
-        material_id = material_doc['material_id']
-        material_entries = material_doc['entries']
-        material_entries_to_remove = []
-        for index, material_entry in enumerate(material_entries):
-            entry_id = material_entry['entry_id']
-            if entry_id in entry_ids:
-                # The entry does not belong to this material anymore and needs to be removed.
-                material_entries_to_remove.append(index)
-        for index in reversed(material_entries_to_remove):
-            del material_entries[index]
-        if len(material_entries) == 0:
-            # The material is empty now and needs to be removed.
-            add_action_or_doc(dict(delete=dict(_id=material_id)))
-        else:
-            # The material needs to be updated
-            add_action_or_doc(dict(index=dict(_id=material_id)))
-            add_action_or_doc(material_doc)
-            material_docs.append(material_doc)
-
-    # Third, we potentially cap the number of entries in a material. We ensure that only
-    # a certain amounts of entries are stored with all metadata. The rest will only
-    # have their entry id.
-    all_n_entries_capped = 0
-    all_n_entries = 0
-    for material_doc in material_docs:
-        material_entries = material_doc.get('entries', [])
-        material_doc['n_entries'] = len(material_entries)
-        if len(material_entries) > config.elastic.entries_per_material_cap:
-            material_doc['entries'] = material_entries[
-                0 : config.elastic.entries_per_material_cap
-            ]
-
-        all_n_entries_capped += len(material_entries)
-        all_n_entries += material_doc['n_entries']
-
-    # Execute the created actions in bulk.
-    timer_kwargs: dict[str, Any] = {}
-    try:
-        import json
-
-        timer_kwargs['size'] = len(json.dumps(_actions_and_docs_bulks))
-        timer_kwargs['n_actions'] = sum([len(bulk) for bulk in _actions_and_docs_bulks])
-        timer_kwargs['n_entries'] = all_n_entries
-        timer_kwargs['n_entries_capped'] = all_n_entries_capped
-    except Exception:
-        pass
-
-    with utils.timer(
-        logger,
-        'perform bulk index of materials',
-        lnr_event='failed to bulk index materials',
-        **timer_kwargs,
-    ):
-        for bulk in _actions_and_docs_bulks:
-            material_index.bulk(
-                body=bulk,
-                refresh=False,
-                timeout=f'{config.elastic.bulk_timeout}s',
-                request_timeout=config.elastic.bulk_timeout,
-            )
-
-    if refresh:
-        entry_index.refresh()
-        material_index.refresh()
-
-
 def get_searchable_quantity_value_field(
     annotation: Elasticsearch, aggregation: bool = False
 ):
@@ -1712,18 +1356,14 @@ def get_searchable_quantity_value_field(
     return None
 
 
-def create_dynamic_quantity_annotation(
-    quantity_def: Quantity, doc_type: DocumentType | None = None
-) -> Elasticsearch | None:
+def create_dynamic_quantity_annotation(quantity_def: Quantity) -> Elasticsearch | None:
     """Given a quantity definition, this function will return the corresponding
     ES annotation if one can be built.
     """
     if quantity_def.shape != []:
         return None
     try:
-        annotation = Elasticsearch(
-            definition=quantity_def, dynamic=True, doc_type=doc_type
-        )
+        annotation = Elasticsearch(definition=quantity_def, dynamic=True)
         annotation.mapping['type']
     except NotImplementedError:
         return None

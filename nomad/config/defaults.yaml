@@ -68,9 +68,7 @@ elastic:
   bulk_size: 1000
   bulk_timeout: 600
   entries_index: nomad_entries_v1
-  entries_per_material_cap: 1000
   host: localhost
-  materials_index: nomad_materials_v1
   port: 9200
   timeout: 60
 temporal:
@@ -176,7 +174,6 @@ oasis:
   uses_central_user_management: false
 process:
   auxfile_cutoff: 100
-  index_materials: false
   max_upload_size: 34359738368
   metadata_file_extensions:
     - json

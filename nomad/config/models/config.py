@@ -1046,17 +1046,9 @@ class Elastic(ConfigBaseModel):
         90 * 1024 * 1024,  # 90 MB
         description='Maximum payload size sent to the Elasticsearch server in bytes. Note that Elasticsearch has an internal limit of 100MB that you can configure as well.',
     )
-    entries_per_material_cap: int = Field(
-        1000,
-        description='Maximum number of entries per material used when aggregating entry data to materials.',
-    )
     entries_index: str = Field(
         'nomad_entries_v1',
         description='Name of the Elasticsearch index storing entries.',
-    )
-    materials_index: str = Field(
-        'nomad_materials_v1',
-        description='Name of the Elasticsearch index storing materials.',
     )
 
 
@@ -1729,10 +1721,6 @@ class GitLab(ConfigBaseModel):
 
 
 class Process(ConfigBaseModel):
-    index_materials: bool = Field(
-        False,
-        description='If True, material-level indices are created/updated during processing.',
-    )
     reuse_parser: bool = Field(
         True,
         description='If True, parser instances may be reused between entries to improve performance.',

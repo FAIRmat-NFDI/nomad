@@ -57,7 +57,6 @@ from nomad.config.models.config import Reprocess
 from nomad.datamodel import EditableUserMetadata
 from nomad.datamodel.context import ServerContext
 from nomad.files import StreamedFile, create_zipstream_async
-from nomad.metainfo.elasticsearch_extension import entry_type
 from nomad.mongo.groups import MongoUserGroup
 from nomad.processing.data import Upload
 from nomad.search import (
@@ -115,7 +114,7 @@ class APITag(str, Enum):
 
 logger = utils.get_logger(__name__)
 
-query_parameters = QueryParameters(doc_type=entry_type)
+query_parameters = QueryParameters()
 
 archive_required_documentation = strip(
     """
@@ -1050,7 +1049,7 @@ def _answer_entries_rawdir_request(
         include_entry, response_pagination = single_pagination
         entries_metadata = [single_metadata] if include_entry else []
         response_owner = owner
-        response_query = normalize_api_query(query, doc_type=entry_type)
+        response_query = normalize_api_query(query)
     else:
         search_response = perform_search(
             owner=owner,
@@ -1516,7 +1515,7 @@ def _answer_entries_archive_request(
             else []
         )
         response_owner = owner
-        response_query = normalize_api_query(query, doc_type=entry_type)
+        response_query = normalize_api_query(query)
     else:
         search_response = perform_search(
             owner=owner,
@@ -2337,9 +2336,7 @@ def edit(
                 # Add to list
                 updated_metadata.append(entry_metadata)
 
-            failed = es_update_metadata(
-                updated_metadata, update_materials=False, refresh=True
-            )
+            failed = es_update_metadata(updated_metadata, refresh=True)
 
             if failed > 0:
                 logger.error(

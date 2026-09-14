@@ -17,7 +17,7 @@
 #
 
 from nomad.metainfo import Category, MCategory, MSection, Quantity, Section, SubSection
-from nomad.metainfo.elasticsearch_extension import Elasticsearch, material_entry_type
+from nomad.metainfo.elasticsearch_extension import Elasticsearch
 
 
 class FastAccess(MCategory):
@@ -50,7 +50,7 @@ class ProvenanceTracker(MSection):
         Class or type of the provenance.
         Can be used to add further description to the provenance.
         """,
-        a_elasticsearch=Elasticsearch(material_entry_type),
+        a_elasticsearch=Elasticsearch(),
     )
 
 

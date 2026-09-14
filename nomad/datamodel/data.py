@@ -25,7 +25,7 @@ from cachetools import TTLCache
 from pydantic import Field
 
 from nomad.config import config
-from nomad.metainfo.elasticsearch_extension import Elasticsearch, material_entry_type
+from nomad.metainfo.elasticsearch_extension import Elasticsearch
 from nomad.metainfo.metainfo import (
     JSON,
     Capitalized,
@@ -127,10 +127,8 @@ class Author(MSection):
         type=str,
         derived=lambda user: f'{user.first_name} {user.last_name}'.strip(),
         a_elasticsearch=[
-            Elasticsearch(material_entry_type, _es_field='keyword'),
-            Elasticsearch(
-                material_entry_type, mapping='text', field='text', _es_field=''
-            ),
+            Elasticsearch(_es_field='keyword'),
+            Elasticsearch(mapping='text', field='text', _es_field=''),
             Elasticsearch(suggestion='default'),
         ],
     )
@@ -164,7 +162,7 @@ class User(Author):
 
     m_def = Section(a_pydantic=PydanticModel())
 
-    user_id = Quantity(type=str, a_elasticsearch=Elasticsearch(material_entry_type))
+    user_id = Quantity(type=str, a_elasticsearch=Elasticsearch())
 
     username = Quantity(type=str)
 
