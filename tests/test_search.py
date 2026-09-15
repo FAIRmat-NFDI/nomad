@@ -45,6 +45,7 @@ from nomad.search import AuthenticationRequiredError as ARE
 from nomad.search import (
     PermissionDeniedError,
     _api_to_es_query,
+    delete_by_query,
     normalize_api_query,
     quantity_values,
     refresh,
@@ -397,6 +398,45 @@ def test_update_by_query(indices, example_data):
 
     results = search(owner='all', query=dict(entry_id='other test id'))
     assert results.pagination.total == 4
+
+
+@pytest.fixture()
+def two_user_data(elastic_function, user1, user2):
+    for user, upload_id in [(user1, 'user1_upload'), (user2, 'user2_upload')]:
+        data = ExampleData(main_author=user)
+        data.create_upload(upload_id=upload_id, published=True)
+        data.create_entry(
+            upload_id=upload_id,
+            entry_id=f'{upload_id}_entry',
+            mainfile='test_content/test_entry/mainfile.json',
+        )
+        data.save(with_files=False, with_mongo=False)
+
+
+def test_update_by_query_owner(indices, two_user_data, user1):
+    update_by_query(
+        update_script="""
+            ctx._source.entry_name = "updated";
+        """,
+        query={},
+        owner='user',
+        user_id=user1.user_id,
+        refresh=True,
+    )
+
+    assert entry_index.get(id='user1_upload_entry')['_source']['entry_name'] == (
+        'updated'
+    )
+    assert entry_index.get(id='user2_upload_entry')['_source'].get('entry_name') != (
+        'updated'
+    )
+
+
+def test_delete_by_query_owner(indices, two_user_data, user1):
+    delete_by_query(query={}, owner='user', user_id=user1.user_id, refresh=True)
+
+    hits = entry_index.search(body=dict(query=dict(match_all={})))['hits']['hits']
+    assert [hit['_id'] for hit in hits] == ['user2_upload_entry']
 
 
 def test_quantity_values(indices, example_data):

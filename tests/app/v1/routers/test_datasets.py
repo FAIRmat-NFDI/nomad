@@ -351,6 +351,48 @@ def test_post_datasets(
 
 
 @pytest.mark.parametrize(
+    'query, entries',
+    [
+        pytest.param({}, None, id='query'),
+        pytest.param(None, ['id_01', 'user2_entry'], id='entries'),
+    ],
+)
+def test_post_datasets_only_adds_own_entries(
+    auth_headers, client, data, user2, query, entries
+):
+    """Creating an owned dataset must not add the dataset to entries of other users,
+    neither in mongo nor in elasticsearch, even if the query matches them."""
+    user2_data = ExampleData(main_author=user2)
+    user2_data.create_upload(upload_id='user2_upload', published=True)
+    user2_data.create_entry(
+        upload_id='user2_upload',
+        entry_id='user2_entry',
+        mainfile='test_content/user2/mainfile.json',
+    )
+    user2_data.save(with_files=False)
+
+    dataset = {'dataset_name': 'user2 dataset', 'dataset_type': 'owned'}
+    if query is not None:
+        dataset['query'] = query
+    if entries is not None:
+        dataset['entries'] = entries
+
+    response = client.post('datasets', headers=auth_headers['user2'], json=dataset)
+    assert_response(response, status_code=200)
+    dataset_id = response.json()['data']['dataset_id']
+
+    search_results = search(
+        owner='admin',
+        query={'datasets.dataset_id': dataset_id},
+        user_id=admin_user_id,
+    )
+    assert [entry['entry_id'] for entry in search_results.data] == ['user2_entry']
+    assert [
+        entry.entry_id for entry in processing.Entry.objects(datasets=dataset_id)
+    ] == ['user2_entry']
+
+
+@pytest.mark.parametrize(
     'dataset_id, user, status_code',
     [
         pytest.param('dataset_listed', 'user1', 200, id='plain'),

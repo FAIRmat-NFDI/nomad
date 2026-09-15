@@ -505,6 +505,7 @@ def post_datasets(
             """,
             params=dict(dataset=entry_type.create_index_doc(dataset)),
             query=es_query,
+            owner=Owner.user,
             user_id=user.user_id,
             refresh=True,
         )
