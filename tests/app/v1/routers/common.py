@@ -19,7 +19,7 @@
 import json
 import re
 from typing import Any
-from urllib.parse import urlencode
+from urllib.parse import unquote, urlencode
 
 import pytest
 from fastapi import status
@@ -1459,8 +1459,10 @@ def assert_browser_download_headers(response, media_type: str, filename: str):
     content_disposition = response.headers['Content-Disposition']
     assert 'attachment;' in content_disposition
     if filename:
-        filename_in_header = content_disposition.split('filename="')[1][:-1]
-        assert filename_in_header == filename
+        # RFC 6266: `filename*` carries the exact name, `filename` an ASCII fallback
+        match = re.search(r"filename\*=UTF-8''([^;]*)", content_disposition)
+        assert match, content_disposition
+        assert unquote(match.group(1)) == filename
 
 
 def perform_metadata_test(

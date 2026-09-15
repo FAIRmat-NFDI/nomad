@@ -24,7 +24,7 @@ import io
 import json
 import lzma
 import os
-import urllib
+import urllib.parse
 from collections.abc import Iterator
 from types import FunctionType
 from typing import IO, Any
@@ -271,12 +271,23 @@ def browser_download_headers(
     data to a file with the specified filename. Note, the `media_type` should normally be
     either `application/octet-stream` or `application/zip`, using for example `application/json`
     will cause most browsers to try to open and view the file instead of downloading it.
+
+    File names may contain any character the file system accepts, including non-ASCII
+    characters and control characters such as CR/LF, none of which can be sent verbatim
+    in a header value. Following RFC 6266, the name is therefore sent twice: as an ASCII
+    `filename` fallback in which every non-printable and non-ASCII character is replaced
+    by '_', and as an RFC 5987 percent-encoded `filename*` carrying the exact name.
+    Clients that understand `filename*` use it in preference to `filename`.
     """
     assert filename, 'Filename must be specified'
-    filename = filename.replace('"', '\\"')
+    ascii_fallback = ''.join(c if ' ' <= c <= '~' else '_' for c in filename)
+    ascii_fallback = ascii_fallback.replace('\\', '\\\\').replace('"', '\\"')
     return {
         'Content-Type': media_type,
-        'Content-Disposition': f'attachment; filename="{filename}"',
+        'Content-Disposition': (
+            f'attachment; filename="{ascii_fallback}"; '
+            f"filename*=UTF-8''{urllib.parse.quote(filename, safe='')}"
+        ),
     }
 
 

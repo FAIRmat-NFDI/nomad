@@ -269,20 +269,35 @@ def is_safe_path(path: str, safe_path: str, is_directory=True) -> bool:
 
 def is_safe_relative_path(path: str) -> bool:
     """
-    Checks if path is a *safe* relative path. We consider it safe if it does not start with
-    '/' or use '.' or '..' elements (which could be open for security leaks if allowed).
-    It may end with a single '/', indicating that a folder is referred. For referring to
-    the base folder, the empty string should be used (not '.' etc).
+    Validate a slash-separated relative path that never goes above the base folder.
+
+    '.' and '..' components are allowed as long as traversal never goes above
+    the base folder, even temporarily. The empty string and '.' refer to the
+    base folder. A single trailing slash is allowed. Absolute paths, repeated
+    slashes and NULs are rejected.
+
+    NULs are rejected because no file system can store them (Python's `open`
+    raises `ValueError` on them), so such a path can never name a real file.
+    Every other control character, newlines included, is a legal character in
+    POSIX file names and in zip/tar member names, and is therefore accepted.
+    Consumers that embed a path in a line- or header-oriented format must
+    escape it themselves (see `nomad.app.v1.utils.browser_download_headers`).
+
+    Paths use NOMAD's nominal '/' separator regardless of the host OS.
+
+    This is a lexical check; it does not prevent traversal through symlinks.
     """
     if not isinstance(path, str):
         return False
+
     if path == '':
         return True
-    if path.startswith('/') or '//' in path or '\n' in path:
+
+    if path.startswith('/') or '//' in path or '\x00' in path:
         return False
 
     depth = 0
-    for element in path.split(os.sep):
+    for element in path.removesuffix('/').split('/'):
         if element == '.':
             continue
         if element == '..':

@@ -18,7 +18,7 @@
 
 import pytest
 
-from nomad.app.v1.utils import get_query_keys
+from nomad.app.v1.utils import browser_download_headers, get_query_keys
 
 
 @pytest.mark.parametrize(
@@ -42,3 +42,34 @@ from nomad.app.v1.utils import get_query_keys
 )
 def test_get_query_keys(source, exclude_keys, expected_keys):
     assert get_query_keys(source, exclude_keys) == expected_keys
+
+
+@pytest.mark.parametrize(
+    'filename, expected_fallback, expected_encoded',
+    [
+        pytest.param('file.txt', 'file.txt', 'file.txt', id='plain'),
+        pytest.param('my file.txt', 'my file.txt', 'my%20file.txt', id='space'),
+        pytest.param('a"b.txt', 'a\\"b.txt', 'a%22b.txt', id='double quote'),
+        pytest.param('a\\b.txt', 'a\\\\b.txt', 'a%5Cb.txt', id='backslash'),
+        # Characters that cannot be sent verbatim in a header value. Without the
+        # fallback substitution these would let a file name break the response.
+        pytest.param(
+            'a\r\nX-Evil: 1.txt',
+            'a__X-Evil: 1.txt',
+            'a%0D%0AX-Evil%3A%201.txt',
+            id='crlf',
+        ),
+        pytest.param('a\tb.txt', 'a_b.txt', 'a%09b.txt', id='tab'),
+        pytest.param('\u00e4\u00f6.txt', '__.txt', '%C3%A4%C3%B6.txt', id='non-ascii'),
+    ],
+)
+def test_browser_download_headers(filename, expected_fallback, expected_encoded):
+    headers = browser_download_headers(filename)
+    assert headers['Content-Disposition'] == (
+        f'attachment; filename="{expected_fallback}"; '
+        f"filename*=UTF-8''{expected_encoded}"
+    )
+    # Every header value must be sendable as-is
+    for value in headers.values():
+        assert not any(c < ' ' or c == '\x7f' for c in value)
+        value.encode('ascii')
