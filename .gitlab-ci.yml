@@ -10,7 +10,7 @@ image: gitlab-registry.mpcdf.mpg.de/nomad-lab/nomad-fair/ci-runner:latest
 
 default:
   tags:
-    - cloud # Necessary to select the right CI runner
+    - mpcdf-shared
   interruptible: true
 
 variables:
@@ -128,6 +128,8 @@ check python dependencies:
       when: never
 
 .base_test:
+  tags:
+    - cloud
   image: ${CI_REGISTRY_IMAGE}/dev_python:${DOCKER_TAG}
   stage: test
   services:
@@ -139,8 +141,6 @@ check python dependencies:
         - ES_JAVA_OPTS="-Xms512m -Xmx512m" docker-entrypoint.sh elasticsearch -Ediscovery.type=single-node -Expack.security.enabled=false
     - name: mongo:5
       alias: mongo
-    - name: chrislusf/seaweedfs:4.25
-      alias: seaweedfs
   variables:
     AWS_ACCESS_KEY_ID: nomad_test
     AWS_SECRET_ACCESS_KEY: nomad_test
@@ -168,7 +168,7 @@ generate pytest timings:
     - <<: *manual-allow_failure
 
 python tests:
-  parallel: 4
+  parallel: 3
   extends: .base_test
   script:
     - >
@@ -195,14 +195,25 @@ python tests:
     - when: on_success
 
 python tests with s3:
-  parallel: 4
+  parallel: 1
   extends: .base_test
+  services:
+    - name: elasticsearch:7.17.24
+      alias: elastic
+      command:
+        - bash
+        - "-c"
+        - ES_JAVA_OPTS="-Xms512m -Xmx512m" docker-entrypoint.sh elasticsearch -Ediscovery.type=single-node -Expack.security.enabled=false
+    - name: mongo:5
+      alias: mongo
+    - name: chrislusf/seaweedfs:4.25
+      alias: seaweedfs
   script:
     - >
       python -m pytest -sv -n=3
       --dist=loadscope
       --disable-socket
-      --allow-hosts=localhost,elastic,mongo
+      --allow-hosts=localhost,elastic,mongo,seaweedfs
       --cov=nomad
       --cov-report term
       --cov-config=.coveragerc

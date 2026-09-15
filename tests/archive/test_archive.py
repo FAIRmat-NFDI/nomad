@@ -359,10 +359,7 @@ def test_convert(tmp):
             assert to_json(springer_new[uuid]) == to_json(entry)
 
 
-@pytest.fixture(scope='function')
-def json_dict():
-    return json.loads(
-        """
+_JSON_DICT = """
 {
     "metadata": {
         "entry_id": "test_id"
@@ -448,7 +445,11 @@ def json_dict():
     }
 }
 """
-    )
+
+
+@pytest.fixture(scope='function')
+def json_dict():
+    return json.loads(_JSON_DICT)
 
 
 @pytest.fixture(scope='function')
@@ -886,8 +887,8 @@ def test_required_reader(
                 assert_dict(results, root_result)
 
 
-@pytest.fixture(scope='function')
-def example_data_with_reference(temporal_worker, user1, json_dict):
+@pytest.fixture(scope='module')
+def example_data_with_reference(user1, mongo_infra, elastic_module):
     """
     Provides a couple of entries with references.
 
@@ -940,15 +941,16 @@ def example_data_with_reference(temporal_worker, user1, json_dict):
         },  # remote reference
     ]
 
-    del json_dict['results']
+    test_dict = json.loads(_JSON_DICT)
+    del test_dict['results']
 
     for index, ref in enumerate(ref_list):
         ref['m_def'] = 'simulationworkflowschema.SimulationWorkflow'
-        json_dict['workflow2'] = ref
+        test_dict['workflow2'] = ref
         data.create_entry(
             upload_id='id_published_with_ref',
             entry_id=f'id_{index + 1:02d}',
-            entry_archive=EntryArchive.m_from_dict(json_dict),
+            entry_archive=EntryArchive.m_from_dict(test_dict),
         )
 
     for archive in data.archives.values():
@@ -956,9 +958,13 @@ def example_data_with_reference(temporal_worker, user1, json_dict):
 
     data.save(with_files=True, with_es=True, with_mongo=True)
 
+    from nomad.app.v1.models import MetadataPagination
     from nomad.search import search
 
-    results = search().data
+    results = search(
+        query={'upload_id': 'id_published_with_ref'},
+        pagination=MetadataPagination(order_by='entry_id', order='asc'),
+    ).data
     assert len(results) == 6
     for i in (0, 1, 5):
         assert 'entry_references' not in results[i]
@@ -1059,23 +1065,24 @@ def remote_reference_required():
     ],
 )
 def test_required_reader_with_remote_reference(
-    json_dict,
     remote_reference_required,
     resolve_inplace,
-    elastic_function,
     example_data_with_reference,
     user1,
     entry_id,
     inplace_result,
 ):
-    archive = {'workflow2': json_dict['workflow2']}
-    archive['workflow2']['m_def'] = 'simulationworkflowschema.SimulationWorkflow'
-    archive['workflow2']['tasks'] = [
-        {
-            'm_def': 'nomad.datamodel.metainfo.workflow.TaskReference',
-            'task': f'../entries/{entry_id}/archive#/workflow2',
+    archive = {
+        'workflow2': {
+            'm_def': 'simulationworkflowschema.SimulationWorkflow',
+            'tasks': [
+                {
+                    'm_def': 'nomad.datamodel.metainfo.workflow.TaskReference',
+                    'task': f'../entries/{entry_id}/archive#/workflow2',
+                }
+            ],
         }
-    ]
+    }
 
     f = BytesIO()
     write_archive(f, {'entry_id': archive})

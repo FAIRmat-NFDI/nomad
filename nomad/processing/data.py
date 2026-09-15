@@ -1187,8 +1187,8 @@ class Entry(Proc):
             setattr(entry_metadata, quantity_name, getattr(self, quantity_name))
         # Special case: domain. May be derivable from mongo, or may have to be read from the archive
         if self.parser_name is not None:
-            parser = parser_dict[self.parser_name]
-            if parser.domain:
+            parser = parser_dict.get(self.parser_name)
+            if parser and parser.domain:
                 entry_metadata.domain = parser.domain
 
     def _apply_metadata_to_mongo_entry(self, entry_metadata: EntryMetadata):

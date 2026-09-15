@@ -81,6 +81,13 @@ DEFAULT_PAT_TEST_SCOPES = [Scope.UPLOADS_READ]
 DEFAULT_PAT_TEST_NAME = 'Test PAT'
 
 
+@pytest.fixture
+def mongo_function(mongo_infra):
+    PAT.objects.delete()
+    yield
+    PAT.objects.delete()
+
+
 def test_domain_record_lifecycle_at_expiry_boundary():
     expiry = now()
     record = PATRecord(
@@ -213,10 +220,11 @@ def test_create_expiration_logic(mongo_function):
     days = 10
     result = create_test_pat(user_id='u1', expires_in_days=days)
 
-    expected_date = now() + datetime.timedelta(days=days)
-    # Check if dates are close (within 10 seconds)
-    delta = abs((result.pat.expired_at - expected_date).total_seconds())
-    assert delta < 10
+    assert result.pat.expired_at is not None
+    assert result.pat.created_at is not None
+    assert result.pat.expired_at == result.pat.created_at + datetime.timedelta(
+        days=days
+    )
 
 
 @pytest.mark.parametrize('expires_in_days', [0, -1])
