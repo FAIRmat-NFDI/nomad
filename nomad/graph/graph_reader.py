@@ -1560,7 +1560,7 @@ class GeneralReader:
                             )
         except KeyError:
             raise ArchiveError(
-                f'Archive {entry_id} does not exist in upload {entry_id}.'
+                f'Archive {entry_id} does not exist in upload {upload_id}.'
             )
 
     async def _apply_resolver(self, node: GraphNode, config: RequestConfig):

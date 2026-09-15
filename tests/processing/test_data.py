@@ -238,6 +238,48 @@ def test_put_file_and_process_local_does_not_set_success_message_on_failure(
     main_entry.process_entry_local.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    'process_status, parser_level, should_process',
+    [
+        pytest.param(ProcessStatus.SUCCESS, -1, True, id='stale-level-not-processing'),
+        pytest.param(ProcessStatus.RUNNING, -1, False, id='lower-level-processing'),
+        pytest.param(ProcessStatus.RUNNING, 0, True, id='same-level-processing'),
+        pytest.param(ProcessStatus.RUNNING, None, True, id='no-level-processing'),
+    ],
+)
+def test_process_updated_raw_file_parser_level(
+    process_status, parser_level, should_process
+):
+    """
+    Tests that raw files are processed/not processed correctly by
+    `process_updated_raw_file`. The function should correctly process completely new files
+    when no processing is currently running, and should process files that have a higher
+    level even if processing is running.
+    """
+    entry = MagicMock()
+    parser = SimpleNamespace(level=0)
+    upload = SimpleNamespace(
+        published=False,
+        parser_level=parser_level,
+        process_running=process_status in ProcessStatus.STATUSES_PROCESSING,
+        current_process_flags=None,
+        get_logger=MagicMock,
+        upload_files=SimpleNamespace(raw_isfile=lambda _path: True),
+        match_mainfiles=lambda _path, _example: [('mainfile.json', None, parser)],
+        _get_or_create_entry=lambda *args, **kwargs: (entry, False, None),
+    )
+
+    Upload.process_updated_raw_file(upload, 'mainfile.json', True)
+
+    if should_process:
+        entry._process_entry_local.assert_called_once()
+        assert entry.process_status == ProcessStatus.SUCCESS
+        entry.save.assert_called_once()
+    else:
+        entry._process_entry_local.assert_not_called()
+        entry.save.assert_not_called()
+
+
 @pytest.fixture(scope='function', autouse=True)
 def mongo_forall(mongo_function):
     pass
