@@ -31,7 +31,7 @@ import LoginLogout from '../LoginLogout'
 import UnitMenu from '../units/UnitMenu'
 import MainMenu from './MainMenu'
 import { useInfo, useLoading } from '../api'
-import { guiBase, oasis, urlAbs } from '../../config'
+import { appBase, guiBase, oasis, urlAbs } from '../../config'
 import Breadcrumbs from './Breadcrumbs'
 
 const newGuiPluginPackage = 'nomad_gui'
@@ -64,8 +64,9 @@ function useNewGuiUrl() {
     if (!prefix) return undefined
 
     const path = `${prefix}/select-gui`
+    const base = appBase.endsWith('/') ? appBase : `${appBase}/`
 
-    return urlAbs(path)
+    return urlAbs(path, base)
   }, [info])
 }
 
