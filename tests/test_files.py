@@ -994,10 +994,23 @@ class TestPublicUploadFiles(UploadFilesContract):
         assert remote_fs.exists(FSUtility.remote_path(zip_file.os_path))
         assert remote_fs.exists(FSUtility.remote_path(msg_file.os_path))
         assert remote_fs.exists(_remote_marker_location(public.os_path))
+        assert os.path.isfile(os.path.join(public.os_path, MARKER_FILENAME))
         marker = RemoteReadyMarker.load(public.os_path, remote_fs)
         assert marker is not None
         assert marker.matches_remote(remote_fs, public.os_path)
         assert public.storage_fs is remote_fs
+
+    def test_remote_only_pack_does_not_write_local_marker(
+        self, monkeypatch, test_upload_id
+    ):
+        remote_fs = self._setup_memory_public_fs(monkeypatch, write_mode='remote_only')
+        _, entries, staging = create_staging_upload(test_upload_id, entry_specs='p')
+        staging.pack(entries, with_embargo=False)
+        staging.delete()
+
+        public = PublicUploadFiles(test_upload_id)
+        assert remote_fs.exists(_remote_marker_location(public.os_path))
+        assert not os.path.exists(os.path.join(public.os_path, MARKER_FILENAME))
 
     def test_remote_then_local_stale_ready_cache_rechecks_marker(
         self, monkeypatch, test_upload_id
