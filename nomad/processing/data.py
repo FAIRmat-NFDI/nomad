@@ -1260,9 +1260,9 @@ class Entry(Proc):
                     entry_archive_dict[section_results] = to_json(
                         entry_archive[section_results]
                     )
-                entry_metadata = datamodel.EntryArchive.m_from_dict(entry_archive_dict)[
-                    section_metadata
-                ]
+                entry_metadata = datamodel.EntryArchive.m_from_dict(
+                    entry_archive_dict, m_context=ServerContext(upload)
+                )[section_metadata]
                 self._apply_metadata_from_mongo(upload, entry_metadata)
         except KeyError:
             # Due to hard processing failures, it might be possible that an entry might not
@@ -2184,12 +2184,14 @@ class Upload(Proc):
         embargo_length: int | None = None,
         target_deployment_url: str | None = None,
         auth_token: str | None = None,
+        export_settings: dict[str, Any] | None = None,
     ):
         return run_async(
             self._start_publish_externally_workflow(
                 embargo_length=embargo_length,
                 target_deployment_url=target_deployment_url,
                 auth_token=auth_token,
+                export_settings=export_settings,
             )
         )
 
@@ -2198,6 +2200,7 @@ class Upload(Proc):
         embargo_length: int | None = None,
         target_deployment_url: str | None = None,
         auth_token: str | None = None,
+        export_settings: dict[str, Any] | None = None,
     ):
         client = await get_client()
         workflow_id = f'publish-externally-{self.upload_id}-{uuid.uuid4()}'
@@ -2210,6 +2213,7 @@ class Upload(Proc):
                     embargo_length=embargo_length,
                     target_deployment_url=target_deployment_url,
                     auth_token=auth_token,
+                    export_settings=export_settings,
                 ),
                 id=workflow_id,
                 task_queue=TaskQueue.NOMAD_INTERNAL_WORKFLOWS.value,
@@ -2225,6 +2229,7 @@ class Upload(Proc):
         embargo_length: int | None = None,
         target_deployment_url: str | None = None,
         auth_token: str | None = None,
+        export_settings: dict[str, Any] | None = None,
     ):
         assert self.published, (
             'Only published uploads can be published to the central NOMAD.'
@@ -2245,16 +2250,18 @@ class Upload(Proc):
                 export_path=bundle_path,
                 zipped=True,
                 overwrite=False,
-                export_settings=config.bundle_export.default_settings,
+                export_settings=config.bundle_export.default_settings.customize(
+                    export_settings or {}
+                ),
             ).export_bundle()
 
             # upload to central NOMAD
             self.set_last_status_message('Uploading bundle externally')
-            upload_parameters: dict[str, Any] = {}
+            upload_parameters: dict[str, Any] = {'format': 'bundle'}
             if embargo_length is not None:
                 upload_parameters.update(embargo_length=embargo_length)
 
-            upload_url = f'{target_deployment_url}/v1/uploads/bundle'
+            upload_url = f'{target_deployment_url}/v1/uploads/import'
 
             with open(bundle_path, 'rb') as f:
                 if auth_token is not None:

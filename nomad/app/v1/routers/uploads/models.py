@@ -23,6 +23,7 @@ from fastapi import Body
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_core import PydanticCustomError
 
+from nomad.config import config
 from nomad.models.common import UTCDateTime
 from nomad.processing import ProcessStatus
 from nomad.utils import strip
@@ -43,6 +44,156 @@ class APITag(str, Enum):
 
 class UploadTransferFormat(str, Enum):
     bundle = 'bundle'
+
+
+class UploadExportOptions(BaseModel):
+    format: UploadTransferFormat = Field(
+        UploadTransferFormat.bundle,
+        title='Format',
+        description='The export format. Currently only `bundle` is supported.',
+    )
+    include_raw_files: bool | None = Field(
+        True,
+        title='Include raw files',
+        description='If raw files should be included in the bundle.',
+        json_schema_extra={'export_formats': ['bundle']},
+    )
+    include_archive_files: bool | None = Field(
+        True,
+        title='Include processed archives',
+        description='If archive files (i.e. parsed entries data) should be included in the bundle.',
+        json_schema_extra={'export_formats': ['bundle']},
+    )
+    include_datasets: bool | None = Field(
+        True,
+        title='Include dataset references',
+        description='If dataset references should be included in the bundle.',
+        json_schema_extra={'export_formats': ['bundle']},
+    )
+    include_schemas: bool | None = Field(
+        False,
+        title='Include schemas',
+        description='If schemas should be included in the bundle.',
+        json_schema_extra={'export_formats': ['bundle']},
+    )
+
+
+upload_export_options_parameters = parameter_dependency_from_model(
+    'upload_export_options_parameters', UploadExportOptions
+)
+
+
+def _get_target_deployment_url():
+    return config.oasis.central_nomad_deployment_url
+
+
+class UploadTransferRequest(BaseModel):
+    include_raw_files: bool = Field(
+        True,
+        title='Include raw files',
+        description='If raw files should be included in the transferred bundle.',
+    )
+    include_archive_files: bool = Field(
+        True,
+        title='Include processed archives',
+        description='If archive files (i.e. parsed entries data) should be included in the transferred bundle.',
+    )
+    include_datasets: bool = Field(
+        True,
+        title='Include dataset references',
+        description='If dataset references should be included in the transferred bundle.',
+    )
+    include_schemas: bool = Field(
+        False,
+        title='Include schemas',
+        description='If schema snapshots should be included in the transferred bundle.',
+    )
+    target_deployment_url: str = Field(
+        default_factory=_get_target_deployment_url,  # Factory has better behavior for testing
+        description='If not provided, the transfer will target the central nomad deployment. The url must end with /api',
+        examples=['https://nomad-lab.eu/prod/v1/api'],
+    )
+    auth_token: str = Field(
+        ...,
+        description='Token used to authenticate the upload transfer in the target deployment. You can use the /auth/token API endpoint in the target depoyment to retrieve the token. Provide the plain token, do not include the "Bearer"',
+        examples=['eyJhbGciOiJSUzI1NiIsInR5cCI...'],
+    )
+    embargo_length: int | None = Field(
+        None,
+        description="""
+                If provided, updates the embargo length of the upload. The value should
+                be between 0 and 36 months. 0 means no embargo.""",
+        ge=0,
+        le=36,
+    )
+
+    @model_validator(mode='after')
+    def validate_transfer_contents(self):
+        if not self.include_raw_files and not self.include_archive_files:
+            raise ValueError('Include raw files or processed archives, or both.')
+        return self
+
+
+class UploadImportOptions(BaseModel):
+    format: UploadTransferFormat = Field(
+        UploadTransferFormat.bundle,
+        title='Format',
+        description='The import format. Currently only `bundle` is supported.',
+    )
+    embargo_length: int | None = Field(
+        None,
+        ge=0,
+        le=36,
+        title='Embargo period (months)',
+        description='The embargo period for the imported project. Uses the bundle value if omitted.',
+    )
+    include_raw_files: bool | None = Field(
+        None,
+        title='Include raw files',
+        description='Import raw files. Only administrators can override the deployment default.',
+        json_schema_extra={'import_formats': ['bundle']},
+    )
+    include_archive_files: bool | None = Field(
+        None,
+        title='Include processed archives',
+        description='Import processed archives. Only administrators can override the deployment default.',
+        json_schema_extra={'import_formats': ['bundle']},
+    )
+    include_datasets: bool | None = Field(
+        None,
+        title='Include dataset references',
+        description='Import dataset references. Only administrators can override the deployment default.',
+        json_schema_extra={'import_formats': ['bundle']},
+    )
+    include_bundle_info: bool | None = Field(
+        None,
+        title='Keep bundle information',
+        description='Keep the bundle information file. Only administrators can override the deployment default.',
+        json_schema_extra={'import_formats': ['bundle']},
+    )
+    keep_original_timestamps: bool | None = Field(
+        None,
+        title='Keep original timestamps',
+        description='Keep original upload, entry, and publication timestamps. Only administrators can override the deployment default.',
+        json_schema_extra={'import_formats': ['bundle']},
+    )
+    set_from_oasis: bool | None = Field(
+        None,
+        title='Mark as imported from an Oasis',
+        description='Set the source Oasis metadata. Only administrators can override the deployment default.',
+        json_schema_extra={'import_formats': ['bundle']},
+    )
+    trigger_processing: bool | None = Field(
+        None,
+        title='Trigger processing',
+        description='Process the project after import. Only administrators can override the deployment default.',
+        json_schema_extra={'import_formats': ['bundle']},
+    )
+
+
+upload_import_options_parameters = parameter_dependency_from_model(
+    'upload_import_options_parameters', UploadImportOptions
+)
 
 
 class UploadRole(str, Enum):

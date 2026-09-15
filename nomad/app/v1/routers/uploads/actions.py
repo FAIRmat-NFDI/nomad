@@ -24,7 +24,6 @@ from fastapi import Query as FastApiQuery
 from fastapi.exceptions import RequestValidationError
 from mongoengine.errors import MongoEngineException
 
-from nomad.app.v1.models.models import TransferBundleRequest
 from nomad.datacite import DataCiteException
 from nomad.datacite.service import create_doi_for_upload, publish_doi
 from nomad.mongo.doi import EmbeddedDOI
@@ -53,7 +52,12 @@ from .default import (
     get_current_user,
     strip,
 )
-from .models import APITag, DeleteEntryFilesRequest, UploadProcDataResponse
+from .models import (
+    APITag,
+    DeleteEntryFilesRequest,
+    UploadProcDataResponse,
+    UploadTransferRequest,
+)
 from .utils import (
     _check_upload_not_processing,
     _get_upload_with_write_access,
@@ -446,9 +450,9 @@ def stop_upload_processing(
     response_model_exclude_unset=True,
     response_model_exclude_none=True,
 )
-@traced(span_name='uploads.transfer_upload_bundle')
-def transfer_upload_bundle(
-    transfer_options: TransferBundleRequest,
+@traced(span_name='uploads.transfer_upload')
+def transfer_upload(
+    transfer_options: UploadTransferRequest,
     upload_id: Annotated[
         str,
         Path(
@@ -460,7 +464,7 @@ def transfer_upload_bundle(
     ],
     user: Annotated[
         User,
-        Depends(get_current_user([Scope.UPLOADS_BUNDLE_READ], allow_anonymous=False)),
+        Depends(get_current_user([Scope.UPLOADS_EXPORT], allow_anonymous=False)),
     ],
 ):
     """
@@ -488,6 +492,12 @@ def transfer_upload_bundle(
             target_deployment_url=target_deployment_url,
             auth_token=transfer_options.auth_token,
             embargo_length=transfer_options.embargo_length,
+            export_settings={
+                'include_raw_files': transfer_options.include_raw_files,
+                'include_archive_files': transfer_options.include_archive_files,
+                'include_datasets': transfer_options.include_datasets,
+                'include_schemas': transfer_options.include_schemas,
+            },
         )
         return UploadProcDataResponse(
             upload_id=upload_id, data=upload_to_pydantic(upload)

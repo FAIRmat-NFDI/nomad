@@ -19,7 +19,7 @@
 
 import pytest
 
-from nomad.auth.scopes import Scope, _resolve_scopes
+from nomad.auth.scopes import Scope, _resolve_scopes, resolve_scope_aliases
 
 
 def test_scope_metadata():
@@ -48,6 +48,11 @@ def test_scope_metadata():
             id='whitespace-handling',
         ),
         pytest.param(
+            {'uploads_bundle:read', 'uploads_bundle:write'},
+            {'uploads:export', 'uploads:import'},
+            id='legacy-upload-bundle-aliases',
+        ),
+        pytest.param(
             {'*:*'},
             Scope.all_values(),
             id='wildcard-all',
@@ -72,6 +77,12 @@ def test_scope_metadata():
 )
 def test_resolve_scopes_valid(scopes, expected):
     assert _resolve_scopes(scopes) == expected
+
+
+def test_resolve_scope_aliases_for_existing_tokens():
+    assert resolve_scope_aliases(
+        {'uploads_bundle:read', 'uploads_bundle:write', 'datasets:read'}
+    ) == {'uploads:export', 'uploads:import', 'datasets:read'}
 
 
 @pytest.mark.parametrize(

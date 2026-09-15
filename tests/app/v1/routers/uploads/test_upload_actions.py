@@ -25,6 +25,7 @@ from unittest.mock import MagicMock, Mock
 import pytest
 from fastapi.testclient import TestClient
 
+from nomad.app.v1.routers.uploads.models import UploadTransferRequest
 from nomad.common import now
 from nomad.config import config
 from nomad.processing import ProcessStatus, Upload
@@ -577,6 +578,43 @@ def setup_for_transfer_bundle(request, monkeypatch, mongo_function):
             'nomad.app.v1.routers.uploads.utils.validate_target_deployment_url',
             MagicMock(),
         )
+
+
+@pytest.mark.parametrize('include_schemas', [False, True])
+def test_transfer_rejects_missing_contents(
+    client, auth_headers, monkeypatch, include_schemas
+):
+    publish_externally = Mock()
+    monkeypatch.setattr(Upload, 'publish_externally', publish_externally)
+
+    response = client.post(
+        'uploads/test-upload/action/transfer',
+        headers=auth_headers['user0'],
+        json={
+            'auth_token': 'destination-token',
+            'include_raw_files': False,
+            'include_archive_files': False,
+            'include_schemas': include_schemas,
+        },
+    )
+
+    assert response.status_code == 422, response.text
+    assert 'Include raw files or processed archives, or both.' in response.text
+    publish_externally.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    'options',
+    [
+        {},
+        {'include_raw_files': True, 'include_archive_files': True},
+        {'include_raw_files': True, 'include_archive_files': False},
+        {'include_raw_files': False, 'include_archive_files': True},
+    ],
+)
+def test_transfer_accepts_valid_contents(options):
+    request = UploadTransferRequest(auth_token='destination-token', **options)
+    assert request.include_raw_files or request.include_archive_files
 
 
 async def _perform_transfer_request(
