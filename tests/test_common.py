@@ -102,21 +102,62 @@ def test_is_safe_path(path, safe_path, is_directory, is_safe):
 @pytest.mark.parametrize(
     'path, is_safe',
     [
+        # Valid relative paths
         pytest.param('', True, id='root path implicit'),
-        pytest.param('.', True, id='root path explicit'),
         pytest.param('subfolder', True, id='subfolder implicit'),
-        pytest.param('./subfolder', True, id='subfolder excplicit'),
+        pytest.param('subfolder/', True, id='single trailing slash'),
+        pytest.param('folder/file.txt', True, id='nested file'),
+        pytest.param('folder/child/', True, id='nested folder trailing slash'),
+        pytest.param('.hidden/file..txt', True, id='dots within names'),
+        pytest.param('.../file', True, id='three dot component'),
+        # Explicit current-directory components
+        pytest.param('.', True, id='root path explicit'),
+        pytest.param('./', True, id='root path explicit trailing slash'),
+        pytest.param('./subfolder', True, id='leading dot component'),
+        pytest.param('folder/./file', True, id='middle dot component'),
+        pytest.param('folder/.', True, id='trailing dot component'),
+        pytest.param('folder/./', True, id='dot component trailing slash'),
+        # Absolute paths
+        pytest.param('/', False, id='absolute root'),
+        pytest.param('//', False, id='double slash root'),
         pytest.param('/unsafe/a', False, id='absolute path'),
+        # Parent-directory navigation within the base folder
+        pytest.param('safe/../safe', True, id='redundant traversal'),
+        pytest.param('safe/..', True, id='trailing parent component'),
+        pytest.param('safe/../', True, id='parent component trailing slash'),
+        pytest.param('a/b/../../c', True, id='multiple parent components'),
+        pytest.param('./a/./../b', True, id='mixed dot and parent components'),
+        # Traversal above the base folder, even temporarily
         pytest.param('../unsafe/a', False, id='outside root start'),
         pytest.param('subfolder/../../unsafe', False, id='outside root middle'),
-        pytest.param('safe/../safe', True, id='redundant traversal'),
-        pytest.param(None, False, id='Not string'),
-        pytest.param('safe//', False, id='Invalid 1'),
-        pytest.param('safe\n', False, id='Invalid 2'),
+        pytest.param('..', False, id='parent directory'),
+        pytest.param('../', False, id='parent directory trailing slash'),
+        pytest.param('./../a', False, id='dot does not increase depth'),
+        pytest.param('a/./../../b', False, id='middle dot does not increase depth'),
+        pytest.param('a/../../b/c', False, id='escape before returning inside'),
+        pytest.param('a/../..', False, id='escape at end'),
+        # Invalid input types
+        pytest.param(None, False, id='none'),
+        pytest.param(123, False, id='integer'),
+        pytest.param(b'folder/file', False, id='bytes'),
+        # Repeated separators
+        pytest.param('safe//', False, id='double trailing slash'),
+        pytest.param('safe///', False, id='triple trailing slash'),
+        pytest.param('safe//file', False, id='empty middle component'),
+        # Control characters other than NUL are legal in POSIX file names and
+        # in zip/tar members, so they are accepted
+        pytest.param('safe\n', True, id='trailing newline'),
+        pytest.param('safe\n/file', True, id='embedded newline'),
+        pytest.param('safe\r', True, id='trailing carriage return'),
+        pytest.param('safe\r\n/file', True, id='embedded crlf'),
+        pytest.param('safe\tfile', True, id='embedded tab'),
+        # NUL cannot be stored by any file system
+        pytest.param('safe\x00', False, id='trailing nul'),
+        pytest.param('safe\x00/file', False, id='embedded nul'),
     ],
 )
 def test_is_safe_relative_path(path, is_safe):
-    assert is_safe_relative_path(path) == is_safe
+    assert is_safe_relative_path(path) is is_safe
 
 
 @pytest.mark.parametrize(

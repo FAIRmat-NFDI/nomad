@@ -36,7 +36,7 @@ from nomad.units import ureg
 from nomad.utils import deep_get, query_list_to_dict, strip
 
 from ..models import HTTPExceptionModel, User
-from ..utils import create_responses
+from ..utils import browser_download_headers, create_responses
 from .entries import answer_entry_archive_request
 
 router = APIRouter()
@@ -468,7 +468,8 @@ Here is a brief rundown of the different features each format supports:
     return Response(
         content=content,
         media_type=format_info['mime_type'],
-        headers={
-            'Content-Disposition': f'attachment; filename="{formula or "system"}.{format_info["extension"]}"'
-        },
+        headers=browser_download_headers(
+            f'{formula or "system"}.{format_info["extension"]}',
+            format_info['mime_type'],
+        ),
     )
