@@ -3236,7 +3236,14 @@ class Upload(Proc):
                     # files are updated e.g. by a schema normalizer which is not
                     # associated with a parser, the parser level is not set, and thus we
                     # skip the check.
-                    if self.parser_level is None or self.parser_level >= parser.level:
+                    # NOTE: The parser level is persisted and not reset after processing.
+                    # When the upload is not being processed (e.g. files are updated by an
+                    # action or through the API), the stored level is stale and ignored.
+                    if (
+                        not self.process_running
+                        or self.parser_level is None
+                        or self.parser_level >= parser.level
+                    ):
                         try:
                             entry._process_entry_local()
                             entry.process_status = ProcessStatus.SUCCESS
