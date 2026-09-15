@@ -49,7 +49,14 @@ from .default import (
     get_current_user,
     strip,
 )
-from .models import APITag, UploadProcDataResponse, UploadTransferFormat
+from .models import (
+    APITag,
+    UploadExportOptions,
+    UploadImportOptions,
+    UploadProcDataResponse,
+    upload_export_options_parameters,
+    upload_import_options_parameters,
+)
 from .utils import (
     _check_upload_not_processing,
     _get_files_if_provided,
@@ -106,56 +113,12 @@ _upload_bundle_response = (
 def get_upload_bundle(
     user: Annotated[
         User,
-        Depends(get_current_user([Scope.UPLOADS_BUNDLE_READ])),
+        Depends(get_current_user([Scope.UPLOADS_EXPORT])),
     ],
     upload_id: Annotated[str, Path(description='The unique id of the upload.')],
-    format: Annotated[
-        UploadTransferFormat,
-        FastApiQuery(
-            description=strip(
-                """
-                The export format. Currently only `bundle` is supported."""
-            )
-        ),
-    ] = UploadTransferFormat.bundle,
-    include_raw_files: Annotated[
-        bool | None,
-        FastApiQuery(
-            description=strip(
-                """
-                If raw files should be included in the bundle (true by default)."""
-            )
-        ),
-    ] = True,
-    include_archive_files: Annotated[
-        bool | None,
-        FastApiQuery(
-            description=strip(
-                """
-                If archive files (i.e. parsed entries data) should be included in the bundle
-                (true by default)."""
-            )
-        ),
-    ] = True,
-    include_datasets: Annotated[
-        bool | None,
-        FastApiQuery(
-            description=strip(
-                """
-                If datasets references to this upload should be included in the bundle
-                (true by default)."""
-            )
-        ),
-    ] = True,
-    include_schemas: Annotated[
-        bool | None,
-        FastApiQuery(
-            description=strip(
-                """
-                If schemas should be included in the bundle (false by default)."""
-            )
-        ),
-    ] = False,
+    export_options: Annotated[
+        UploadExportOptions, Depends(upload_export_options_parameters)
+    ],
 ):
     """
     Get an *upload bundle* for the specified upload. An upload bundle is a file bundle which
@@ -166,10 +129,10 @@ def get_upload_bundle(
 
     export_settings = config.bundle_export.default_settings.customize(
         dict(
-            include_raw_files=include_raw_files,
-            include_archive_files=include_archive_files,
-            include_datasets=include_datasets,
-            include_schemas=include_schemas,
+            include_raw_files=export_options.include_raw_files,
+            include_archive_files=export_options.include_archive_files,
+            include_datasets=export_options.include_datasets,
+            include_schemas=export_options.include_schemas,
         )
     )
 
@@ -215,21 +178,15 @@ async def post_upload_bundle(
         User,
         Depends(
             get_current_user(
-                [Scope.UPLOADS_BUNDLE_WRITE],
+                [Scope.UPLOADS_IMPORT],
                 allow_anonymous=False,
                 allow_upload_token=True,
             )
         ),
     ],
-    format: Annotated[
-        UploadTransferFormat,
-        FastApiQuery(
-            description=strip(
-                """
-                The import format. Currently only `bundle` is supported."""
-            )
-        ),
-    ] = UploadTransferFormat.bundle,
+    import_options: Annotated[
+        UploadImportOptions, Depends(upload_import_options_parameters)
+    ],
     file: Annotated[
         list[UploadFile] | SkipJsonSchema[None],
         File(
@@ -251,88 +208,6 @@ async def post_upload_bundle(
             )
         ),
     ] = None,
-    embargo_length: Annotated[
-        int | None,
-        FastApiQuery(
-            description=strip(
-                """
-                Specifies the embargo length in months to set on the upload. If omitted,
-                the value specified in the bundle will be used. A value of 0 means no
-                embargo."""
-            )
-        ),
-    ] = None,
-    include_raw_files: Annotated[
-        bool | None,
-        FastApiQuery(
-            description=strip(
-                """
-                If raw files should be imported from the bundle
-                *(only admins can change this setting)*."""
-            )
-        ),
-    ] = None,
-    include_archive_files: Annotated[
-        bool | None,
-        FastApiQuery(
-            description=strip(
-                """
-                If archive files (i.e. parsed entries data) should be imported from the bundle
-                *(only admins can change this setting)*."""
-            )
-        ),
-    ] = None,
-    include_datasets: Annotated[
-        bool | None,
-        FastApiQuery(
-            description=strip(
-                """
-                If dataset references to this upload should be imported from the bundle
-                *(only admins can change this setting)*."""
-            )
-        ),
-    ] = None,
-    include_bundle_info: Annotated[
-        bool | None,
-        FastApiQuery(
-            description=strip(
-                """
-                If the bundle_info.json file should be kept
-                *(only admins can change this setting)*."""
-            )
-        ),
-    ] = None,
-    keep_original_timestamps: Annotated[
-        bool | None,
-        FastApiQuery(
-            description=strip(
-                """
-                If all original timestamps, including `upload_create_time`, `entry_create_time`
-                and `publish_time`, should be kept
-                *(only admins can change this setting)*."""
-            )
-        ),
-    ] = None,
-    set_from_oasis: Annotated[
-        bool | None,
-        FastApiQuery(
-            description=strip(
-                """
-                If the `from_oasis` flag and `oasis_deployment_url` should be set
-                *(only admins can change this setting)*."""
-            )
-        ),
-    ] = None,
-    trigger_processing: Annotated[
-        bool | None,
-        FastApiQuery(
-            description=strip(
-                """
-                If processing should be triggered after the bundle has been imported
-                *(only admins can change this setting)*."""
-            )
-        ),
-    ] = None,
 ):
     """
     Posts an *upload bundle* to this NOMAD deployment. An upload bundle is a file bundle which
@@ -349,13 +224,13 @@ async def post_upload_bundle(
     """
     import_settings = config.bundle_import.default_settings.customize(
         dict(
-            include_raw_files=include_raw_files,
-            include_archive_files=include_archive_files,
-            include_datasets=include_datasets,
-            include_bundle_info=include_bundle_info,
-            keep_original_timestamps=keep_original_timestamps,
-            set_from_oasis=set_from_oasis,
-            trigger_processing=trigger_processing,
+            include_raw_files=import_options.include_raw_files,
+            include_archive_files=import_options.include_archive_files,
+            include_datasets=import_options.include_datasets,
+            include_bundle_info=import_options.include_bundle_info,
+            keep_original_timestamps=import_options.keep_original_timestamps,
+            set_from_oasis=import_options.set_from_oasis,
+            trigger_processing=import_options.trigger_processing,
         )
     )
 
@@ -405,7 +280,7 @@ async def post_upload_bundle(
                 import_settings=import_settings.model_dump()
                 if import_settings is not None
                 else {},
-                embargo_length=embargo_length,
+                embargo_length=import_options.embargo_length,
             )
             return upload_obj
 

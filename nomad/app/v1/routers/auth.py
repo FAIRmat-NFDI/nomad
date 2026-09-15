@@ -38,7 +38,7 @@ from nomad.auth.pat import (
     PATSortOrder,
     pat_service,
 )
-from nomad.auth.scopes import Scope
+from nomad.auth.scopes import Scope, resolve_scope_aliases
 from nomad.auth.tokens import (
     AuthResult,
     generate_simple_token,
@@ -208,8 +208,10 @@ async def _resolve_user_with_scopes(
     # 2. imagine someone was admin before but not anymore,
     # they shouldn't be able to use old tokens with admin permission
 
-    # Enforce backend scopes
-    if missing_scopes := required_scopes - set(scopes):
+    # Enforce backend scopes. Resolve deprecated aliases so existing PATs keep
+    # working while newly created tokens only expose the current scope names.
+    resolved_scopes = resolve_scope_aliases(scopes)
+    if missing_scopes := required_scopes - resolved_scopes:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f'Missing scopes: {sorted(missing_scopes)}',

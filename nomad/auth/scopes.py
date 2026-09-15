@@ -116,10 +116,8 @@ class Scope(str, Enum):
     UPLOADS_PUBLISH = ('uploads:publish', 'Publish uploads.')
     UPLOADS_PROCESS = ('uploads:process', 'Process uploads.')
     UPLOADS_ASSIGN_DOI = ('uploads:assign_doi', 'Assign DOIs to uploads.')
-
-    # uploads bundle
-    UPLOADS_BUNDLE_READ = ('uploads_bundle:read', 'Read upload bundles.')
-    UPLOADS_BUNDLE_WRITE = ('uploads_bundle:write', 'Create or update upload bundles.')
+    UPLOADS_EXPORT = ('uploads:export', 'Export uploads.')
+    UPLOADS_IMPORT = ('uploads:import', 'Import uploads.')
 
     # users
     USERS_READ = ('users:read', 'Read user information.')
@@ -154,6 +152,17 @@ class Scope(str, Enum):
         return {scope.value for scope in cls}
 
 
+_LEGACY_SCOPE_ALIASES = {
+    'uploads_bundle:read': Scope.UPLOADS_EXPORT.value,
+    'uploads_bundle:write': Scope.UPLOADS_IMPORT.value,
+}
+
+
+def resolve_scope_aliases(scopes: Iterable[str]) -> set[str]:
+    """Map deprecated scope values to their current equivalents."""
+    return {_LEGACY_SCOPE_ALIASES.get(scope, scope) for scope in scopes}
+
+
 def _resolve_scopes(
     scopes: str | Iterable[str],
 ) -> set[str]:
@@ -185,6 +194,7 @@ def _resolve_scopes(
         scope = raw.strip()
         if not scope:
             continue
+        scope = _LEGACY_SCOPE_ALIASES.get(scope, scope)
 
         scope_parts: list[str] = scope.split(':')
 

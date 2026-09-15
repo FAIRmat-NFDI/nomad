@@ -29,6 +29,7 @@ from nomad.auth.scopes import Scope
 from nomad.common import now
 
 PAT_PREFIX = 'nomad_pat_'
+
 _PAT_FORBIDDEN_SCOPES = frozenset(
     {
         Scope.TOKENS_CREATE.value,

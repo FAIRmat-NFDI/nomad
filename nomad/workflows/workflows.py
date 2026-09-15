@@ -772,9 +772,7 @@ class TransferUploadOwnershipWorkflow:
 class ImportBundleWorkflow:
     @workflow.run
     async def run(self, input: ImportBundleWorkflowInput):
-        retry_policy = RetryPolicy(
-            maximum_attempts=2,
-        )
+        retry_policy = RetryPolicy(maximum_attempts=1)
         timeout = timedelta(
             seconds=config.temporal.processing_timeouts.import_bundle_timeout
         )
@@ -896,6 +894,9 @@ class PublishExternallyWorkflow:
         retry_policy = RetryPolicy(
             maximum_attempts=2,
         )
+        # Publishing externally creates the upload on the target deployment and
+        # is therefore not safe to retry.
+        publish_retry_policy = RetryPolicy(maximum_attempts=1)
         timeout = timedelta(
             seconds=config.temporal.processing_timeouts.publish_externally_timeout
         )
@@ -920,7 +921,7 @@ class PublishExternallyWorkflow:
                 input,
                 schedule_to_close_timeout=timeout,
                 heartbeat_timeout=heartbeat_timeout,
-                retry_policy=retry_policy,
+                retry_policy=publish_retry_policy,
                 priority=PUBLISH_EXTERNALLY_PRIORITY,
             )
 

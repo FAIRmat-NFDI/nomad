@@ -214,6 +214,7 @@ class PublishExternallyWorkflowInput:
     embargo_length: int | None = None
     target_deployment_url: str | None = None
     auth_token: str | None = None
+    export_settings: dict[str, Any] | None = None
 
 
 @dataclass

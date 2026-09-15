@@ -479,6 +479,7 @@ def publish_externally_activity(input: PublishExternallyWorkflowInput):
             target_deployment_url=input.target_deployment_url,
             auth_token=input.auth_token,
             embargo_length=input.embargo_length,
+            export_settings=input.export_settings,
         )
 
 

@@ -157,6 +157,12 @@ async def oasis_publishable_upload(
     suffix = '_2'  # Will be added to all IDs in the mirrored upload
     upload_id = non_empty_processed_with_temporal.upload_id
 
+    # This fixture simulates two deployments in one database by changing upload
+    # and entry IDs. Synthetic schema snapshots contain stable cross-entry
+    # references and cannot be rewritten safely by this simulation. Schema
+    # transfer itself is covered by the bundle schema round-trip tests.
+    monkeypatch.setattr(bundles.BundleExporter, '_get_schema_packages', lambda _: [])
+
     # Do some tricks to add suffix to the ID fields
     old_bundle_importer_open = bundles.BundleImporter.open
 
