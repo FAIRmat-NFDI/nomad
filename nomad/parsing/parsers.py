@@ -235,7 +235,10 @@ for entry_point in enabled_entry_points:
             f'Error loading entry point "{entry_point.id}": The load method of a parser entry point must return a Parser instance'
         )
         instance.name = entry_point_name
-        instance.aliases = entry_point.aliases
+        aliases = list(entry_point.aliases)
+        if entry_point.name and entry_point.name not in aliases:
+            aliases.append(entry_point.name)
+        instance.aliases = aliases
         parsers.append(instance)
 
 parsers.extend([TabularDataParser(), ArchiveParser()])

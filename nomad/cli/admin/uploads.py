@@ -296,16 +296,19 @@ def _query_uploads(
             process_status__in=proc.ProcessStatus.STATUSES_PROCESSING
         )
 
+    upload_filter_q = Q(upload_id__in=list(uploads)) if uploads is not None else Q()
     if entries_mongo_query_q == Q():
         # If there is no entry based query, we get the list of all uploads from the upload
         # and not the entry collection. This ensures that we will also catch uploads that
         # do not have an entry.
         mongo_entry_based_uploads = set(
-            proc.Upload.objects().distinct(field='upload_id')  # type: ignore
+            proc.Upload.objects(upload_filter_q).distinct(field='upload_id')  # type: ignore
         )
     else:
         mongo_entry_based_uploads = set(
-            proc.Entry.objects(entries_mongo_query_q).distinct(field='upload_id')  # type: ignore
+            proc.Entry.objects(entries_mongo_query_q & upload_filter_q).distinct(
+                field='upload_id'
+            )  # type: ignore
         )
 
     if entries_query_uploads is not None:

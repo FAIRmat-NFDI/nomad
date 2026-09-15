@@ -44,6 +44,14 @@ def invoke_cli(*args, **kwargs):
     return click.testing.CliRunner().invoke(*args, obj=POPO(), **kwargs)
 
 
+@pytest.fixture(autouse=True)
+def fast_cli_elastic(monkeypatch):
+    monkeypatch.setattr(
+        'nomad.metainfo.elasticsearch_extension.create_indices',
+        lambda *args, **kwargs: None,
+    )
+
+
 @pytest.mark.parametrize(
     'prefix, expected_location',
     [
@@ -122,6 +130,9 @@ class TestAdmin:
             cli, ['admin', 'reset', '--i-am-really-sure'], catch_exceptions=False
         )
         assert result.exit_code == 0
+        from nomad.metainfo.elasticsearch_extension import entry_index
+
+        entry_index.create_index(upsert=True)
 
     def test_reset_not_sure(self):
         result = invoke_cli(cli, ['admin', 'reset'], catch_exceptions=False)
@@ -152,59 +163,75 @@ class TestAdmin:
     #     # TODO test new index pair
     #     # assert es_search(owner=None, query=dict(upload_id=upload_id)).pagination.total == 0
 
-    @pytest.mark.parametrize(
-        'publish_time,dry,lifted',
-        [
-            (now(), False, False),
-            (
-                datetime.datetime(
-                    year=2012, month=1, day=1, tzinfo=datetime.timezone.utc
-                ),
-                True,
-                False,
-            ),
-            (
-                datetime.datetime(
-                    year=2012, month=1, day=1, tzinfo=datetime.timezone.utc
-                ),
-                False,
-                True,
-            ),
-        ],
-    )
     @pytest.mark.asyncio
-    async def test_lift_embargo(
-        self, elastic_function, published, publish_time, dry, lifted, temporal_worker
-    ):
+    async def test_lift_embargo(self, elastic_function, published, temporal_worker):
         upload_id = published.upload_id
-        published.publish_time = publish_time
-        published.save()
         entry = Entry.objects(upload_id=upload_id).first()
 
         assert published.upload_files.exists()
         assert published.with_embargo
-
         assert (
             search(owner='public', query=dict(upload_id=upload_id)).pagination.total
             == 0
         )
 
         async with temporal_worker():
+            # 1. Unexpired embargo -> does not lift
+            published.publish_time = now()
+            published.save()
             result = await asyncio.to_thread(
                 lambda: invoke_cli(
                     cli,
-                    ['admin', 'lift-embargo'] + (['--dry'] if dry else []),
+                    ['admin', 'lift-embargo'],
                     catch_exceptions=False,
                 )
             )
-
             assert result.exit_code == 0
             await published.await_workflows()
-        assert not published.with_embargo == lifted
-        assert (
-            search(owner='public', query=dict(upload_id=upload_id)).pagination.total > 0
-        ) == lifted
-        if lifted:
+            published.reload()
+            assert published.with_embargo
+            assert (
+                search(owner='public', query=dict(upload_id=upload_id)).pagination.total
+                == 0
+            )
+
+            # 2. Expired embargo with --dry -> does not lift
+            published.publish_time = datetime.datetime(
+                year=2012, month=1, day=1, tzinfo=datetime.timezone.utc
+            )
+            published.save()
+            result = await asyncio.to_thread(
+                lambda: invoke_cli(
+                    cli,
+                    ['admin', 'lift-embargo', '--dry'],
+                    catch_exceptions=False,
+                )
+            )
+            assert result.exit_code == 0
+            await published.await_workflows()
+            published.reload()
+            assert published.with_embargo
+            assert (
+                search(owner='public', query=dict(upload_id=upload_id)).pagination.total
+                == 0
+            )
+
+            # 3. Expired embargo live -> lifts embargo
+            result = await asyncio.to_thread(
+                lambda: invoke_cli(
+                    cli,
+                    ['admin', 'lift-embargo'],
+                    catch_exceptions=False,
+                )
+            )
+            assert result.exit_code == 0
+            await published.await_workflows()
+            published.reload()
+            assert not published.with_embargo
+            assert (
+                search(owner='public', query=dict(upload_id=upload_id)).pagination.total
+                > 0
+            )
             with files.UploadFiles.get(upload_id=upload_id).read_archive(
                 entry_id=entry.entry_id
             ) as archive:
@@ -405,8 +432,10 @@ def transform_for_index_test(entry):
 
 @pytest.mark.usefixtures('reset_config', 'no_warn')
 class TestAdminUploads:
-    def test_query_mongo(self, elastic_function, published):
-        upload_id = published.upload_id
+    def test_query_mongo(self, user1, mongo_function):
+        upload_id = 'test_upload_id'
+        Upload.create(upload_id=upload_id, main_author=user1, upload_name='test_upload')
+        Entry.create(upload_id=upload_id, entry_id='test_entry_id', mainfile='mainfile')
 
         query = dict(upload_id=upload_id)
         result = invoke_cli(
@@ -418,8 +447,9 @@ class TestAdminUploads:
         assert result.exit_code == 0
         assert '1 uploads selected' in result.stdout
 
-    def test_ls(self, elastic_function, published):
-        upload_id = published.upload_id
+    def test_ls(self, user1, mongo_function):
+        upload_id = 'test_upload_id'
+        Upload.create(upload_id=upload_id, main_author=user1, upload_name='test_upload')
 
         result = invoke_cli(
             cli, ['admin', 'uploads', 'ls', upload_id], catch_exceptions=False
@@ -428,8 +458,12 @@ class TestAdminUploads:
         assert result.exit_code == 0
         assert '1 uploads selected' in result.stdout
 
-    def test_ls_query(self, elastic_function, published):
-        upload_id = published.upload_id
+    def test_ls_query(self, user1, mongo_function, elastic_function):
+        upload_id = 'test_upload_id'
+        data = ExampleData(main_author=user1)
+        data.create_upload(upload_id=upload_id)
+        data.create_entry(upload_id=upload_id)
+        data.save(with_es=True, with_files=False)
 
         result = invoke_cli(
             cli,
@@ -647,10 +681,12 @@ class TestAdminUploads:
             (False, False, True),
         ],
     )
-    def test_reset(
-        self, non_empty_processed_with_temporal, with_entries, success, failure
-    ):
-        upload_id = non_empty_processed_with_temporal.upload_id
+    def test_reset(self, user1, mongo_function, with_entries, success, failure):
+        upload_id = 'test_reset_upload'
+        data = ExampleData(main_author=user1)
+        data.create_upload(upload_id=upload_id)
+        data.create_entry(upload_id=upload_id)
+        data.save(with_es=False, with_files=False)
 
         upload = Upload.objects(upload_id=upload_id).first()
         entry = Entry.objects(upload_id=upload_id).first()
@@ -691,23 +727,27 @@ class TestAdminUploads:
         user1,
         mongo_function,
         elastic_function,
+        raw_files_function,
         indexed,
         check_item,
         all_entries,
     ):
         data = ExampleData(main_author=user1)
-        data.create_upload(upload_id='test_upload')
-        data.create_entry(upload_id='test_upload')
-        data.save(with_es=indexed, with_files=False)
+        try:
+            data.create_upload(upload_id='test_upload')
+            data.create_entry(upload_id='test_upload')
+            data.save(with_es=indexed, with_files=False)
 
-        result = invoke_cli(
-            cli,
-            f'admin uploads integrity {all_entries} {check_item}',
-            catch_exceptions=True,
-        )
+            result = invoke_cli(
+                cli,
+                f'admin uploads integrity {all_entries} {check_item} test_upload',
+                catch_exceptions=True,
+            )
 
-        assert result.exit_code == 0
-        assert ('test_upload' in result.output) != indexed
+            assert result.exit_code == 0
+            assert ('test_upload' in result.output) != indexed
+        finally:
+            data.delete()
 
     @pytest.mark.parametrize('all_entries', ['--check-all-entries', ''])
     def test_integrity_archive(
@@ -715,21 +755,25 @@ class TestAdminUploads:
         user1,
         mongo_function,
         elastic_function,
+        raw_files_function,
         all_entries,
     ):
         data = ExampleData(main_author=user1)
-        data.create_upload(upload_id='test_upload')
-        data.create_entry(upload_id='test_upload')
-        data.save(with_es=True, with_files=True)
+        try:
+            data.create_upload(upload_id='test_upload')
+            data.create_entry(upload_id='test_upload')
+            data.save(with_es=True, with_files=True)
 
-        result = invoke_cli(
-            cli,
-            f'admin uploads integrity {all_entries} --old-archive-format',
-            catch_exceptions=True,
-        )
+            result = invoke_cli(
+                cli,
+                f'admin uploads integrity {all_entries} --old-archive-format test_upload',
+                catch_exceptions=True,
+            )
 
-        assert result.exit_code == 0
-        assert 'test_upload' not in result.output
+            assert result.exit_code == 0
+            assert 'test_upload' not in result.output
+        finally:
+            data.delete()
 
     @pytest.mark.parametrize('all_entries', ['--check-all-entries', ''])
     @pytest.mark.parametrize('es_nomad_version', ['1', '2'])
@@ -740,30 +784,34 @@ class TestAdminUploads:
         user1,
         mongo_function,
         elastic_function,
+        raw_files_function,
         es_nomad_version,
         archive_nomad_version,
         all_entries,
     ):
         data = ExampleData(main_author=user1)
-        data.create_upload(upload_id='test_upload')
-        data.create_entry(upload_id='test_upload')
-        data.save(
-            with_es=True,
-            with_files=True,
-            es_nomad_version=es_nomad_version,
-            archive_nomad_version=archive_nomad_version,
-        )
+        try:
+            data.create_upload(upload_id='test_upload')
+            data.create_entry(upload_id='test_upload')
+            data.save(
+                with_es=True,
+                with_files=True,
+                es_nomad_version=es_nomad_version,
+                archive_nomad_version=archive_nomad_version,
+            )
 
-        result = invoke_cli(
-            cli,
-            f'admin uploads integrity {all_entries} --nomad-version-mismatch',
-            catch_exceptions=True,
-        )
+            result = invoke_cli(
+                cli,
+                f'admin uploads integrity {all_entries} --nomad-version-mismatch test_upload',
+                catch_exceptions=True,
+            )
 
-        assert result.exit_code == 0
-        assert ('test_upload' in result.output) != (
-            es_nomad_version == archive_nomad_version
-        )
+            assert result.exit_code == 0
+            assert ('test_upload' in result.output) != (
+                es_nomad_version == archive_nomad_version
+            )
+        finally:
+            data.delete()
 
     @pytest.mark.parametrize('all_entries', ['--check-all-entries', ''])
     def test_integrity_suffix(
@@ -772,29 +820,33 @@ class TestAdminUploads:
         user1,
         mongo_function,
         elastic_function,
+        raw_files_function,
         all_entries,
     ):
         data = ExampleData(main_author=user1)
-        data.create_upload(upload_id='test_upload')
-        data.create_entry(upload_id='test_upload')
-        data.save(with_es=True, with_files=True)
+        try:
+            data.create_upload(upload_id='test_upload')
+            data.create_entry(upload_id='test_upload')
+            data.save(with_es=True, with_files=True)
 
-        current_suffix = config.fs.archive_version_suffix
-        if isinstance(current_suffix, list):
-            new_suffix = ['whatever'] + current_suffix
-        else:
-            new_suffix = ['whatever', current_suffix]
+            current_suffix = config.fs.archive_version_suffix
+            if isinstance(current_suffix, list):
+                new_suffix = ['whatever'] + current_suffix
+            else:
+                new_suffix = ['whatever', current_suffix]
 
-        monkeypatch.setattr('nomad.config.fs.archive_version_suffix', new_suffix)
+            monkeypatch.setattr('nomad.config.fs.archive_version_suffix', new_suffix)
 
-        result = invoke_cli(
-            cli,
-            f'admin uploads integrity {all_entries} --not-preferred-suffix',
-            catch_exceptions=True,
-        )
+            result = invoke_cli(
+                cli,
+                f'admin uploads integrity {all_entries} --not-preferred-suffix test_upload',
+                catch_exceptions=True,
+            )
 
-        assert result.exit_code == 0
-        assert 'test_upload' in result.output
+            assert result.exit_code == 0
+            assert 'test_upload' in result.output
+        finally:
+            data.delete()
 
     @pytest.mark.parametrize('all_entries', ['--check-all-entries', ''])
     @pytest.mark.parametrize('delete_file', [True, False])
@@ -803,30 +855,56 @@ class TestAdminUploads:
         ['--missing-storage', '--missing-raw-files', '--missing-archive-files'],
     )
     def test_integrity_files(
-        self, non_empty_processed_with_temporal, check_item, delete_file, all_entries
+        self,
+        user1,
+        mongo_function,
+        elastic_function,
+        raw_files_function,
+        check_item,
+        delete_file,
+        all_entries,
     ):
-        if delete_file:
-            non_empty_processed_with_temporal.upload_files.delete()
-        result = invoke_cli(
-            cli,
-            f'admin uploads integrity {all_entries} {check_item}',
-            catch_exceptions=True,
-        )
+        upload_id = 'test_upload'
+        mainfile = 'test_mainfile'
+        data = ExampleData(main_author=user1)
+        try:
+            data.create_upload(upload_id=upload_id)
+            data.create_entry(upload_id=upload_id, mainfile=mainfile, files=[mainfile])
+            data.save(with_es=True, with_files=True)
 
-        assert result.exit_code == 0
-        assert (
-            non_empty_processed_with_temporal.upload_id in result.output
-        ) == delete_file
+            if delete_file:
+                Upload.get(upload_id).upload_files.delete()
+            result = invoke_cli(
+                cli,
+                f'admin uploads integrity {all_entries} {check_item} {upload_id}',
+                catch_exceptions=True,
+            )
 
-    def test_integrity_both_storages(self, non_empty_processed_with_temporal):
-        result = invoke_cli(
-            cli,
-            'admin uploads integrity --both-storages',
-            catch_exceptions=True,
-        )
+            assert result.exit_code == 0
+            assert ('test_upload' in result.output) == delete_file
+        finally:
+            data.delete()
 
-        assert result.exit_code == 0
-        assert non_empty_processed_with_temporal.upload_id not in result.output
+    def test_integrity_both_storages(
+        self, user1, mongo_function, elastic_function, raw_files_function
+    ):
+        upload_id = 'test_upload'
+        data = ExampleData(main_author=user1)
+        try:
+            data.create_upload(upload_id=upload_id)
+            data.create_entry(upload_id=upload_id)
+            data.save(with_es=True, with_files=True)
+
+            result = invoke_cli(
+                cli,
+                f'admin uploads integrity --both-storages {upload_id}',
+                catch_exceptions=True,
+            )
+
+            assert result.exit_code == 0
+            assert upload_id not in result.output
+        finally:
+            data.delete()
 
 
 @pytest.mark.usefixtures('reset_config')

@@ -574,22 +574,23 @@ async def test_list_quantities(
         return replace_dataset_ref(ref_or_reflist)
 
     kwargs['user'] = users_dict[kwargs.get('user', 'user1')]
-    for suffix in ('_1', '_2'):
-        for arg in ('metadata', 'expected_metadata', 'expected_error_loc'):
-            if arg in kwargs:
-                kwargs.pop(arg)
-            if arg + suffix in kwargs:
-                kwargs[arg] = kwargs.pop(arg + suffix)
-        datasets = kwargs['metadata'].get('datasets')
-        if datasets is not None:
-            if isinstance(datasets, dict):
-                datasets = {
-                    op: replace_dataset_ref_or_reflist(v) for op, v in datasets.items()
-                }
-            else:
-                datasets = replace_dataset_ref_or_reflist(datasets)
-            kwargs['metadata']['datasets'] = datasets
-        async with temporal_worker():
+    async with temporal_worker():
+        for suffix in ('_1', '_2'):
+            for arg in ('metadata', 'expected_metadata', 'expected_error_loc'):
+                if arg in kwargs:
+                    kwargs.pop(arg)
+                if arg + suffix in kwargs:
+                    kwargs[arg] = kwargs.pop(arg + suffix)
+            datasets = kwargs['metadata'].get('datasets')
+            if datasets is not None:
+                if isinstance(datasets, dict):
+                    datasets = {
+                        op: replace_dataset_ref_or_reflist(v)
+                        for op, v in datasets.items()
+                    }
+                else:
+                    datasets = replace_dataset_ref_or_reflist(datasets)
+                kwargs['metadata']['datasets'] = datasets
             await assert_edit_request(
                 example_data_writeable=example_data_writeable, **kwargs
             )

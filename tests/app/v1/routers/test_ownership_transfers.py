@@ -29,6 +29,12 @@ from nomad.processing import Upload
 from tests.app.v1.routers.common import assert_response
 
 
+def _example_data_writeable_for_uploads(request, resource_type: str):
+    if resource_type != 'upload':
+        return None
+    return request.getfixturevalue('example_data_writeable')
+
+
 def _prepare_transfer_resource(
     resource_type: str,
     client,
@@ -78,7 +84,7 @@ def _resource_record_type(resource_type: str) -> str:
 def test_transfer_create_and_list_basic(
     auth_headers,
     client,
-    example_data_writeable,
+    request,
     users_dict,
     resource_type,
 ):
@@ -87,7 +93,9 @@ def test_transfer_create_and_list_basic(
         client,
         auth_headers,
         users_dict,
-        example_data_writeable=example_data_writeable,
+        example_data_writeable=_example_data_writeable_for_uploads(
+            request, resource_type
+        ),
     )
 
     create_response = _create_transfer(
@@ -154,7 +162,7 @@ def _create_group_for_transfer(client, auth_headers, users_dict) -> str:
 def test_transfer_create(
     auth_headers,
     client,
-    example_data_writeable,
+    request,
     users_dict,
     resource_type,
     client_user,
@@ -165,7 +173,9 @@ def test_transfer_create(
         client,
         auth_headers,
         users_dict,
-        example_data_writeable=example_data_writeable,
+        example_data_writeable=_example_data_writeable_for_uploads(
+            request, resource_type
+        ),
     )
 
     response = client.post(
@@ -196,7 +206,7 @@ async def test_transfer_respond(
     auth_headers,
     client,
     temporal_worker,
-    example_data_writeable,
+    request,
     users_dict,
     resource_type,
     action,
@@ -208,7 +218,9 @@ async def test_transfer_respond(
         client,
         auth_headers,
         users_dict,
-        example_data_writeable=example_data_writeable,
+        example_data_writeable=_example_data_writeable_for_uploads(
+            request, resource_type
+        ),
     )
 
     create_response = _create_transfer(
@@ -221,7 +233,7 @@ async def test_transfer_respond(
     assert_response(create_response, 200)
     transfer_id = create_response.json()['transfer_id']
 
-    if resource_type == 'upload':
+    if resource_type == 'upload' and action == 'accept':
         async with temporal_worker():
             response = await asyncio.to_thread(
                 lambda: client.post(
@@ -302,7 +314,7 @@ async def test_transfer_cancel(
     auth_headers,
     client,
     temporal_worker,
-    example_data_writeable,
+    request,
     users_dict,
     resource_type,
     client_user,
@@ -313,7 +325,9 @@ async def test_transfer_cancel(
         client,
         auth_headers,
         users_dict,
-        example_data_writeable=example_data_writeable,
+        example_data_writeable=_example_data_writeable_for_uploads(
+            request, resource_type
+        ),
     )
 
     create_response = _create_transfer(
@@ -369,7 +383,7 @@ async def test_transfer_cancel(
 def test_transfer_list_omits_expired_pending_records(
     auth_headers,
     client,
-    example_data_writeable,
+    request,
     users_dict,
     resource_type,
 ):
@@ -378,7 +392,9 @@ def test_transfer_list_omits_expired_pending_records(
         client,
         auth_headers,
         users_dict,
-        example_data_writeable=example_data_writeable,
+        example_data_writeable=_example_data_writeable_for_uploads(
+            request, resource_type
+        ),
     )
 
     create_response = _create_transfer(
@@ -409,7 +425,7 @@ def test_transfer_list_omits_expired_pending_records(
 def test_transfer_get_hides_expired_pending_records(
     auth_headers,
     client,
-    example_data_writeable,
+    request,
     users_dict,
     resource_type,
 ):
@@ -418,7 +434,9 @@ def test_transfer_get_hides_expired_pending_records(
         client,
         auth_headers,
         users_dict,
-        example_data_writeable=example_data_writeable,
+        example_data_writeable=_example_data_writeable_for_uploads(
+            request, resource_type
+        ),
     )
 
     create_response = _create_transfer(

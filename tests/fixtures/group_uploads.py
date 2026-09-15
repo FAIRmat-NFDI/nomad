@@ -134,7 +134,7 @@ def upload_full_agents(create_group_uploads_from_molds):
     yield from create_group_uploads_from_molds(labels)
 
 
-@pytest.fixture(scope='function')
+@pytest.fixture(scope='module')
 def uploads_agent_write_access(
     create_group_uploads_from_molds,
     elastic_module,

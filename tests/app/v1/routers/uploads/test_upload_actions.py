@@ -57,19 +57,36 @@ def perform_post_upload_action(
 
 
 @pytest.mark.parametrize(
+    'upload_id, user, expected_status_code',
+    [
+        pytest.param('id_unpublished', None, 401, id='no-credentials'),
+        pytest.param('id_unpublished', 'invalid', 401, id='invalid-credentials'),
+        pytest.param('silly_value', 'user1', 404, id='invalid-upload_id'),
+    ],
+)
+def test_post_upload_action_process_auth(
+    auth_headers,
+    client,
+    example_data,
+    upload_id,
+    user,
+    expected_status_code,
+):
+    user_auth = auth_headers[user]
+    response = perform_post_upload_action(client, user_auth, upload_id, 'process')
+    assert_response(response, expected_status_code)
+
+
+@pytest.mark.parametrize(
     'upload_id, publish, user, expected_status_code',
     [
         # Test access/permission
         pytest.param(None, True, 'user0', 200, id='published-admin'),
         pytest.param(None, True, 'user1', 403, id='published-not-admin'),
-        pytest.param(None, False, None, 401, id='no-credentials'),
-        pytest.param(None, False, 'invalid', 401, id='invalid-credentials'),
         pytest.param(None, False, 'user2', 403, id='no-access'),
         # Test state
         pytest.param(None, False, 'user1', 200, id='not-published'),
         pytest.param('id_processing_w', False, 'user1', 400, id='already-processing'),
-        # Test failure
-        pytest.param('silly_value', False, 'user1', 404, id='invalid-upload_id'),
     ],
 )
 @pytest.mark.asyncio
@@ -744,13 +761,35 @@ async def _request_transfer_start(
 
 
 @pytest.mark.parametrize(
+    'embargo_length',
+    [
+        pytest.param(-10, id='embargo_length=-10'),
+        pytest.param(40, id='embargo_length=40'),
+    ],
+)
+def test_embargo_length_validation(
+    auth_headers,
+    client: TestClient,
+    embargo_length: int,
+):
+    response = client.post(
+        'uploads/id_published_w/action/transfer',
+        headers=auth_headers['user0'],
+        json={
+            'auth_token': 'dummy_token',
+            'embargo_length': embargo_length,
+        },
+    )
+    assert response.status_code == 422
+    assert len(response.json()['detail']) > 0
+
+
+@pytest.mark.parametrize(
     'embargo_length, expected_response_code',
     [
-        pytest.param(-10, 422, id='embargo_length=-10'),
         pytest.param(0, 200, id='embargo_length=0'),
         pytest.param(5, 200, id='embargo_length=5'),
         pytest.param(36, 200, id='embargo_length=36'),
-        pytest.param(40, 422, id='embargo_length=40'),
     ],
 )
 @pytest.mark.asyncio
@@ -768,12 +807,43 @@ async def test_embargo_length(
             client,
             oasis_publishable_upload,
             embargo_length,
-            check_success=expected_response_code < 400,
+            check_success=True,
         )
 
     assert response.status_code == expected_response_code
-    if expected_response_code >= 400:
-        assert len(body['detail']) > 0  # Check error message info
+
+
+@pytest.fixture
+def oasis_publishable_upload_lightweight(
+    api_v1,
+    monkeypatch,
+    user1,
+    temporal_worker: TemporalWorkerContext,
+    create_upload,
+):
+    monkeypatch.setattr('nomad.config.oasis.is_oasis', True)
+    monkeypatch.setattr('nomad.config.keycloak.username', user1.username)
+    monkeypatch.setattr('nomad.config.oasis.central_nomad_deployment_url', '/api')
+
+    async def async_post(url, data, params, **kwargs):
+        async with temporal_worker():
+            return await asyncio.to_thread(
+                lambda: api_v1.post(
+                    build_url(url.lstrip('/api/v1/'), params),
+                    data=data.read(),
+                    **kwargs,
+                )
+            )
+
+    def new_post(url, data=None, params=None, **kwargs):
+        if params is None:
+            params = {}
+        return asyncio.run(async_post(url, data, params, **kwargs))
+
+    monkeypatch.setattr('requests.post', new_post)
+
+    create_upload(upload={'publish_time': now(), 'published': True})
+    return 'upload_id', '_v2'
 
 
 async def _check_workflow_failure(
@@ -803,9 +873,9 @@ async def test_bad_formatted_token(
     temporal_worker,
     auth_headers,
     client: TestClient,
-    oasis_publishable_upload: tuple[str, Literal['_v2']],
+    oasis_publishable_upload_lightweight: tuple[str, Literal['_v2']],
 ):
-    upload_id, _ = oasis_publishable_upload
+    upload_id, _ = oasis_publishable_upload_lightweight
     auth = auth_headers['user0']
 
     async with temporal_worker():
@@ -831,9 +901,9 @@ async def test_invalid_token(
     temporal_worker,
     auth_headers,
     client: TestClient,
-    oasis_publishable_upload: tuple[str, Literal['_v2']],
+    oasis_publishable_upload_lightweight: tuple[str, Literal['_v2']],
 ):
-    upload_id, _ = oasis_publishable_upload
+    upload_id, _ = oasis_publishable_upload_lightweight
     user = 'user1'
     user_auth = auth_headers[user]
 
@@ -842,7 +912,7 @@ async def test_invalid_token(
         response, _ = await _request_transfer_start(
             auth_headers,
             client,
-            oasis_publishable_upload,
+            oasis_publishable_upload_lightweight,
             0,
             user,
             target_deployment_user='invalid',

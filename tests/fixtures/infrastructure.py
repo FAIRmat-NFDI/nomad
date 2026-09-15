@@ -52,6 +52,7 @@ class TrieNode:
         """
         self.children = {}
         self.is_end_of_word = False
+        self.matched_prefix = None
 
 
 class Trie:
@@ -74,19 +75,23 @@ class Trie:
                 node.children[char] = TrieNode()
             node = node.children[char]
         node.is_end_of_word = True
+        node.matched_prefix = word
 
 
 class CustomScheduler(LoadScopeScheduling):
     """
     Custom test scheduler for parallel test execution with pytest-xdist.
 
-    It defines a method for splitting the scope of tests to enable efficient parallel execution
-    by distributing tests across different workers based on predefined integration test prefixes.
-    By distributing it this way, all of the integration tests would be passed to one single worker,
-    thus avoiding any issues that may arise with running parallel tests that require celery workers.
+    Tests whose nodeid matches an integration prefix share a scope unique to that
+    prefix. That keeps tests from the same file (or directory prefix) on one
+    worker so they cannot collide, while different integration modules can still
+    run in parallel on gw0/gw1/gw2.
 
-    The scheduler uses a Trie data structure for efficient integration test prefix matching,
-    reducing the time complexity of splitting test scopes.
+    Parser and normalizer suites stay in this list: they previously failed when
+    xdist freely load-balanced them. Each still gets its own scope, so they are
+    not queued behind cli/upload/archive on a single worker.
+
+    The scheduler uses a Trie for prefix matching.
     """
 
     integration_tests = [
@@ -95,11 +100,8 @@ class CustomScheduler(LoadScopeScheduling):
         'tests/app/v1/routers/uploads/test_uploads_non_xdist.py',
         'tests/app/v1/routers/uploads/test_upload_actions.py',
         'tests/archive/test_archive.py',
-        'tests/logtransfer/test_logtransfer.py',
         'tests/normalizing',
         'tests/parsing/test_parsing.py',
-        'tests/processing/test_base.py',
-        'tests/processing/test_data_legacy.py',
         'tests/processing/test_rfc3161.py',
         'tests/test_cli.py',
     ]
@@ -121,14 +123,15 @@ class CustomScheduler(LoadScopeScheduling):
             nodeid (str): The identifier of the test.
 
         Returns:
-            str: 'integration-tests' if nodeid matches an integration test, else nodeid itself.
+            str: ``integration-<prefix>`` if nodeid matches an integration test,
+            else nodeid itself.
         """
         node = self.trie.root
         for char in nodeid:
             if char in node.children:
                 node = node.children[char]
                 if node.is_end_of_word:
-                    return 'integration-tests'
+                    return f'integration-{node.matched_prefix}'
             else:
                 break
         return nodeid
@@ -329,6 +332,10 @@ def clear_elastic(elastic_infra, indices):
                         retry_count -= 1
                     else:
                         raise
+                except elasticsearch.exceptions.NotFoundError:
+                    # Happens if a test removed indices without recreating them.
+                    clear_elastic_infra(indices)
+                    break
                 except elasticsearch.exceptions.TransportError:
                     if retry_count:
                         # Sleep and try again

@@ -362,6 +362,84 @@ class TestEditRepo:
     'user, kwargs',
     [
         pytest.param(
+            None,
+            dict(
+                owner='all',
+                query={'upload_id': 'id_unpublished'},
+                metadata=dict(comment='test comment'),
+                expected_status_code=401,
+            ),
+            id='no-credentials',
+        ),
+        pytest.param(
+            'invalid',
+            dict(
+                owner='all',
+                query={'upload_id': 'id_unpublished'},
+                metadata=dict(comment='test comment'),
+                expected_status_code=401,
+            ),
+            id='invalid-credentials',
+        ),
+        pytest.param(
+            'user1',
+            dict(
+                query={'upload_id': 'id_unpublished'},
+                metadata=dict(upload_name='a test name'),
+                expected_error_loc=('metadata', 'upload_name'),
+            ),
+            id='query-cannot-edit-upload-data',
+        ),
+        pytest.param(
+            'user1',
+            dict(
+                query={'upload_create_time:lt': '2021-01-01'},
+                metadata=dict(comment='a test comment'),
+                expected_error_loc=('query',),
+            ),
+            id='query-no-results',
+        ),
+    ],
+)
+def test_post_entries_edit_auth_and_validation(
+    auth_headers,
+    client,
+    example_data,
+    user,
+    kwargs,
+):
+    user_auth = auth_headers[user]
+    query = kwargs.get('query')
+    owner = kwargs.get('owner', 'visible')
+    metadata = kwargs.get('metadata')
+    entries = kwargs.get('entries')
+    entries_key = kwargs.get('entries_key')
+    verify_only = kwargs.get('verify_only', False)
+    expected_error_loc = kwargs.get('expected_error_loc')
+    expected_status_code = kwargs.get('expected_status_code')
+
+    edit_request_json = dict(
+        query=query,
+        owner=owner,
+        metadata=metadata,
+        entries=entries,
+        entries_key=entries_key,
+        verify_only=verify_only,
+    )
+    url = 'entries/edit'
+    response = client.post(url, headers=user_auth, json=edit_request_json)
+    if expected_error_loc:
+        assert_response(response, 422)
+        error_locs = [tuple(d['loc']) for d in response.json()['detail']]
+        assert expected_error_loc in error_locs
+    elif expected_status_code not in (None, 200):
+        assert_response(response, expected_status_code)
+
+
+@pytest.mark.parametrize(
+    'user, kwargs',
+    [
+        pytest.param(
             'user1',
             dict(
                 query={'upload_id': 'id_unpublished_w'},
@@ -409,26 +487,6 @@ class TestEditRepo:
             id='published-not-admin',
         ),
         pytest.param(
-            None,
-            dict(
-                owner='all',
-                query={'upload_id': 'id_unpublished_w'},
-                metadata=dict(comment='test comment'),
-                expected_status_code=401,
-            ),
-            id='no-credentials',
-        ),
-        pytest.param(
-            'invalid',
-            dict(
-                owner='all',
-                query={'upload_id': 'id_unpublished_w'},
-                metadata=dict(comment='test comment'),
-                expected_status_code=401,
-            ),
-            id='invalid-credentials',
-        ),
-        pytest.param(
             'user2',
             dict(
                 query={'upload_id': 'id_unpublished_w'},
@@ -460,24 +518,6 @@ class TestEditRepo:
                 affected_upload_ids=['id_unpublished_w'],
             ),
             id='compound-query-ok',
-        ),
-        pytest.param(
-            'user1',
-            dict(
-                query={'upload_id': 'id_unpublished_w'},
-                metadata=dict(upload_name='a test name'),
-                expected_error_loc=('metadata', 'upload_name'),
-            ),
-            id='query-cannot-edit-upload-data',
-        ),
-        pytest.param(
-            'user1',
-            dict(
-                query={'upload_create_time:lt': '2021-01-01'},
-                metadata=dict(comment='a test comment'),
-                expected_error_loc=('query',),
-            ),
-            id='query-no-results',
         ),
     ],
 )

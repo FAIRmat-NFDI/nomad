@@ -314,7 +314,6 @@ def test_post_datasets(
     auth_headers,
     client,
     data,
-    example_data,
     users_dict,
     dataset_name,
     dataset_type,
@@ -372,7 +371,7 @@ def test_delete_dataset(auth_headers, client, data, dataset_id, user, status_cod
 
 
 @pytest.fixture
-def unpublished_data(user1):
+def unpublished_data(user1, mongo_function, elastic_function):
     data = ExampleData(main_author=user1)
     data.create_upload(upload_id='unpublished', published=False)
     data.create_entry(
@@ -401,30 +400,53 @@ def unpublished_data(user1):
 
 
 @pytest.mark.parametrize(
-    'dataset_id, user, datacite_enabled, status_code',
+    'dataset_id, user, datacite_enabled, status_code, setup',
     [
-        pytest.param('dataset_1', 'user1', True, 200, id='plain'),
-        pytest.param('dataset_1', None, True, 401, id='no-user'),
-        pytest.param('dataset_1', 'user2', True, 403, id='wrong-user'),
-        pytest.param('dataset_1', 'user1', False, 403, id='datacite-disabled'),
-        pytest.param('dataset_doi', 'user1', True, 400, id='with-doi'),
-        pytest.param('unpublished', 'user1', True, 400, id='unpublished'),
-        pytest.param('empty', 'user1', True, 400, id='empty'),
+        pytest.param('dataset_1', None, True, 401, None, id='no-user'),
+        pytest.param('dataset_1', 'user2', True, 403, 'owned', id='wrong-user'),
+        pytest.param('dataset_1', 'user1', False, 403, None, id='datacite-disabled'),
+        pytest.param('dataset_doi', 'user1', True, 400, 'with-doi', id='with-doi'),
+        pytest.param('empty', 'user1', True, 400, 'empty', id='empty'),
     ],
 )
-def test_assign_doi_dataset(
+def test_assign_doi_dataset_auth_and_errors(
     datacite_mock: DataciteMock,
     auth_headers,
     client,
-    data,
-    unpublished_data,
+    mongo_function,
+    elastic_function,
     user1,
     dataset_id,
     user,
     datacite_enabled,
     status_code,
+    setup,
 ):
-    assert DOI.objects().count() == 1  # one DOI from fixture 'data'
+    if setup == 'owned':
+        create_dataset(
+            dataset_id=dataset_id,
+            user_id=user1.user_id,
+            dataset_name='test dataset 1',
+            dataset_type='owned',
+        )
+    elif setup == 'with-doi':
+        create_dataset(
+            dataset_id=dataset_id,
+            user_id=user1.user_id,
+            dataset_name='foreign test dataset',
+            dataset_type='foreign',
+            doi='test_doi',
+        )
+    elif setup == 'empty':
+        create_dataset(
+            dataset_id=dataset_id,
+            user_id=user1.user_id,
+            dataset_name='test empty dataset',
+            dataset_type='owned',
+        )
+
+    expected_doi_count = 1 if setup == 'with-doi' else 0
+    assert DOI.objects().count() == expected_doi_count
     datacite_mock.set_enabled(datacite_enabled)
 
     headers = auth_headers[user]
@@ -433,15 +455,42 @@ def test_assign_doi_dataset(
     assert_response(response, status_code=status_code)
     if not datacite_enabled:
         assert 'not enabled' in response.json()['detail']
-    if status_code != 200:
-        assert DOI.objects().count() == 1
-        return
+    assert DOI.objects().count() == expected_doi_count
 
+
+def test_assign_doi_dataset(
+    datacite_mock: DataciteMock,
+    auth_headers,
+    client,
+    data,
+    user1,
+):
+    assert DOI.objects().count() == 1  # one DOI from fixture 'data'
+
+    headers = auth_headers['user1']
+    response = client.post('datasets/dataset_1/action/doi', headers=headers)
+
+    assert_response(response, status_code=200)
     json_response = response.json()
     dataset = json_response['data']
     assert_dataset(dataset, user_id=user1.user_id)
     assert dataset['doi'] is not None
     assert DOI.objects().count() == 2
+
+
+def test_assign_doi_dataset_unpublished(
+    datacite_mock: DataciteMock,
+    auth_headers,
+    client,
+    unpublished_data,
+):
+    assert DOI.objects().count() == 0
+
+    headers = auth_headers['user1']
+    response = client.post('datasets/unpublished/action/doi', headers=headers)
+
+    assert_response(response, status_code=400)
+    assert DOI.objects().count() == 0
 
 
 def test_assign_doi_dataset_datacite_error(
