@@ -74,12 +74,6 @@ class Scope(str, Enum):
     ENTRIES_READ = ('entries:read', 'Read entries.')
     ENTRIES_WRITE = ('entries:write', 'Create or update entries.')
 
-    # federation
-    FEDERATION_WRITE = (
-        'federation:write',
-        'Write federation-related configuration or state.',
-    )
-
     # graph
     GRAPH_READ = ('graph:read', 'Read graph API data.')
 
