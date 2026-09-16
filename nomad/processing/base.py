@@ -32,14 +32,6 @@ from nomad import utils
 from nomad.config import config
 from nomad.models.common import ProcessStatus
 from nomad.mongo.fields import UTCDateTimeField
-from nomad.search import get_statistics
-
-
-def transfer_logs():
-    from nomad.logtransfer import transfer_logs
-
-    utils.get_logger('nomad.oasis').info('oasis statistics', **get_statistics())
-    transfer_logs()
 
 
 class InvalidId(Exception):

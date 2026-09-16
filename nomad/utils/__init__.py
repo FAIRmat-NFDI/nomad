@@ -164,7 +164,7 @@ class ClassicLogger:
 def set_console_log_level(level):
     root = logging.getLogger()
     try:
-        from .structlogging import LogstashHandler, LogtransferHandler
+        from .structlogging import LogstashHandler
     except ImportError:
         for handler in root.handlers:
             handler.setLevel(level)
@@ -172,7 +172,7 @@ def set_console_log_level(level):
         for handler in root.handlers:
             if not isinstance(
                 handler,
-                LogstashHandler | LogtransferHandler,
+                LogstashHandler,
             ):
                 handler.setLevel(level)
 

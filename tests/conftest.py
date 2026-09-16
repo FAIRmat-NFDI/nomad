@@ -35,7 +35,7 @@ from httpx2 import ASGITransport, AsyncClient
 
 from nomad.config import config
 
-# make sure to disable logstash (the logs can interfere with the testing, especially for logtransfer)
+# make sure to disable logstash (the logs can interfere with the testing)
 config.logstash.enabled = False  # noqa: E402  # this must be set *before* the other modules are imported
 
 from nomad import utils

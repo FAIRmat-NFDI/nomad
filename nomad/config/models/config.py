@@ -1461,53 +1461,6 @@ class Logstash(ConfigBaseModel):
     model_config = ConfigDict(coerce_numbers_to_str=True)
 
 
-class Logtransfer(ConfigBaseModel):
-    """Configuration of logtransfer and statistics service.
-
-    When enabled (enabled) an additional logger will write logs to a log file (log_file).
-    At regular intervals (transfer_interval) a celery task is scheduled. It will log a set
-    of statistics. It will copy the log file (transfer_log_files). Transfer the contents
-    of the copy to the central NOMAD (oasis.central_nomad_deployment_url) and delete the copy.
-    The transfer is only done if the the log file has a certain size (transfer_threshold). Only a
-    maximum amount of logs are transferred (transfer_capacity). Only logs with a certain
-    level (level) are considered. The files will be stored in fs.tmp.
-    """
-
-    enabled: bool = Field(
-        False,
-        description='If enabled this starts process that frequently generates logs with statistics.',
-    )
-    transfer_threshold: int = Field(
-        0,
-        description='The minimum size in bytes of stored logs before logs are transferred. 0 means transfer at every transfer interval.',
-    )
-    transfer_capacity: int = Field(
-        1000000,
-        description='The maximum number of bytes of stored logs that are transferred. Excess is dropped.',
-    )
-    transfer_interval: int = Field(
-        600,
-        description='Time interval in seconds after which stored logs are potentially transferred.',
-    )
-    level: int | str = Field(
-        logging.INFO, description='The min log level for logs to be transferred.'
-    )
-    log_file: str = Field(
-        'nomad.log', description='The log file that is used to store logs for transfer.'
-    )
-    transfer_log_file: str = Field(
-        '.transfer.log',
-        description='The log file that is used to copy logs for transfer.',
-    )
-    file_rollover_wait_time: float = Field(
-        1,
-        description='Time in seconds to wait after log file was "rolled over" for transfer.',
-    )
-
-    # Validators
-    _level = field_validator('level', mode='before')(normalize_loglevel)
-
-
 class Tests(ConfigBaseModel):
     default_timeout: int = Field(
         60,
@@ -2152,10 +2105,6 @@ WARNING: Modifying the storage configuration of an existing installation would m
     logstash: Logstash = Field(
         default_factory=Logstash,
         description='Logstash logging and forwarding configuration.',
-    )
-    logtransfer: Logtransfer = Field(
-        default_factory=Logtransfer,
-        description='Configuration for the logtransfer/statistics service.',
     )
     telemetry: Telemetry = Field(
         default_factory=Telemetry,
