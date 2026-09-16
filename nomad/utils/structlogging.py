@@ -27,10 +27,8 @@ be used similar to the standard `logging.getLogger`.
 
 import json
 import logging
-import os
 import re
 from datetime import datetime
-from logging.handlers import WatchedFileHandler
 from typing import Any, cast
 
 import logstash
@@ -74,12 +72,6 @@ class BaseHandler(logging.Handler):
     """A Handler base class that filters logs for being structlog entries."""
 
     def filter(self, record):
-        if record.name.startswith('nomad.logtransfer'):
-            # We filter out all logtransfer logs, as they might cause
-            # infinite loops with only logtransfer errors and not transffered
-            # logs.
-            return False
-
         if record.name == 'uvicorn.access':
             http_access_path = record.args[2]
             if 'alive' in http_access_path or 'gui/index.html' in http_access_path:
@@ -193,11 +185,6 @@ class LogstashFormatter(logstash.formatter.LogstashFormatterBase):  # type: igno
         return self.serialize(message)
 
 
-class LogtransferFormatter(LogstashFormatter):
-    def serialize(self, message):
-        return json.dumps(message)
-
-
 class ConsoleFormatter(LogstashFormatter):
     def __init__(self, message_type='Logstash', tags=None, fqdn=False, datefmt=None):
         # In conftest.py, we monkeypatch the logging.Formatter with ConsoleFormatter.
@@ -252,11 +239,6 @@ class ConsoleFormatter(LogstashFormatter):
         return out.getvalue()
 
 
-class LogtransferHandler(WatchedFileHandler):
-    def __init__(self):
-        super().__init__(os.path.join(config.fs.tmp, config.logtransfer.log_file))
-
-
 def add_logstash_handler(logger):
     logstash_handler = next(
         (
@@ -277,31 +259,6 @@ def add_logstash_handler(logger):
 
 
 root = logging.getLogger()
-
-
-def get_logtransfer_handler(logger=root):
-    logtransfer_handler = next(
-        (
-            handler
-            for handler in logger.handlers
-            if isinstance(handler, LogtransferHandler)
-        ),
-        None,
-    )
-
-    return logtransfer_handler
-
-
-def add_logtransfer_handler(logger):
-    logtransfer_handler = get_logtransfer_handler(logger)
-
-    if logtransfer_handler is None:
-        logtransfer_handler = LogtransferHandler()
-        logtransfer_handler.formatter = LogtransferFormatter(
-            tags=['nomad', config.meta.deployment]
-        )
-        logtransfer_handler.setLevel(config.logtransfer.level)
-        logger.addHandler(logtransfer_handler)
 
 
 def get_logger(name, **kwargs):
@@ -347,7 +304,7 @@ def configure_logging(console_log_level=config.services.console_log_level):
     for handler in root.handlers:
         # Avoid circular imports by checking the class name for WorkflowRoutingHandler
         if (
-            not isinstance(handler, (LogstashHandler, LogtransferHandler))
+            not isinstance(handler, LogstashHandler)
             and type(handler).__name__ != 'WorkflowRoutingHandler'
         ):
             handler.setLevel(console_log_level)
@@ -367,12 +324,6 @@ if config.logstash.enabled:
         logstash_host=config.logstash.host,
         logstash_port=config.logstash.tcp_port,
         logstash_level=config.logstash.level,
-    )
-
-if config.logtransfer.enabled:
-    add_logtransfer_handler(root)
-    get_logger(__name__).info(
-        'setup logtransfer logging', logtransfer=config.logtransfer.enabled
     )
 
 # configure log levels

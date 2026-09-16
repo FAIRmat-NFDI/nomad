@@ -333,9 +333,6 @@ def api_v1_client():
     [
         pytest.param('GET', '/datasets/', '/datasets', id='datasets-get'),
         pytest.param('POST', '/datasets/', '/datasets', id='datasets-post'),
-        pytest.param(
-            'POST', '/federation/logs/', '/federation/logs', id='federation-logs'
-        ),
         pytest.param('GET', '/north/', '/north', id='north'),
     ],
 )

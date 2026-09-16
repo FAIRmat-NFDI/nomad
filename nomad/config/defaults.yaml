@@ -121,12 +121,6 @@ logstash:
   host: localhost
   level: 20
   tcp_port: '5000'
-logtransfer:
-  enabled: false
-  level: 20
-  transfer_threshold: 0
-  transfer_capacity: 1048576
-  transfer_interval: 600
 mail:
   enabled: false
   from_address: support@nomad-lab.eu

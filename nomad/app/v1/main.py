@@ -36,7 +36,6 @@ from .routers import (
     auth,
     datasets,
     entries,
-    federation,
     graph,
     groups,
     info,
@@ -125,7 +124,6 @@ app.include_router(auth.router, prefix='/auth')
 app.include_router(apps.router, prefix='/apps')
 app.include_router(datasets.router, prefix='/datasets')
 app.include_router(entries.router, prefix='/entries')
-app.include_router(federation.router, prefix='/federation')
 app.include_router(graph.router, prefix='/graph')
 app.include_router(groups.router, prefix='/groups')
 app.include_router(info.router, prefix='/info')
