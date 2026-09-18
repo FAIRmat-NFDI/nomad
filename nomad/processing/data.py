@@ -2365,7 +2365,7 @@ class Upload(Proc):
             )
         except Exception as e:
             raise ValueError(
-                'error loading example upload entry point "{example_upload_entry_point_id}": could not load configuration'
+                f'error loading example upload entry point "{entry_point_id}": could not load configuration'
             ) from e
 
         # Create the upload folder in staging
@@ -2378,7 +2378,7 @@ class Upload(Proc):
             entry_point.load(upload_folder)
         except Exception as e:
             raise ValueError(
-                'error loading example upload entry point "{example_upload_entry_point_id}": error in load() function'
+                f'error loading example upload entry point "{entry_point_id}": error in load() function'
             ) from e
 
     def setup_upload_for_workflow(
