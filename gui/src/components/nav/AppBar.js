@@ -31,7 +31,7 @@ import LoginLogout from '../LoginLogout'
 import UnitMenu from '../units/UnitMenu'
 import MainMenu from './MainMenu'
 import { useInfo, useLoading } from '../api'
-import { appBase, guiBase, oasis, urlAbs } from '../../config'
+import { guiBase, oasis, urlAbs } from '../../config'
 import Breadcrumbs from './Breadcrumbs'
 
 const newGuiPluginPackage = 'nomad_gui'
@@ -63,10 +63,13 @@ function useNewGuiUrl() {
       ?.prefix
     if (!prefix) return undefined
 
-    const path = `${prefix}/select-gui`
-    const base = appBase.endsWith('/') ? appBase : `${appBase}/`
+    // Join against the public GUI prefix, not appBase. appBase is the API root
+    // and can include an internal path such as /backend, which the new GUI
+    // router does not use.
+    const publicPrefix = guiBase.replace(/\/gui\/?$/, '')
+    const base = urlAbs(`${publicPrefix}/`)
 
-    return urlAbs(path, base)
+    return urlAbs(`${prefix}/select-gui`, base)
   }, [info])
 }
 
