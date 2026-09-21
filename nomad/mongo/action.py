@@ -16,12 +16,14 @@
 # limitations under the License.
 #
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Annotated, Any
 
 from beanie import Document, Indexed
 from pydantic import Field
 from pymongo import ASCENDING, DESCENDING, IndexModel
+
+from nomad.common import now
 
 
 class ActionDocument(Document):
@@ -52,8 +54,8 @@ class ActionDocument(Document):
     signal_inputs_submitted: list[dict] = Field(default_factory=list)
     priority_key: int | None = None
     priority_fairness_key: str | None = None
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=now)
+    updated_at: datetime = Field(default_factory=now)
 
     class Settings:
         name = 'action_document'
@@ -66,5 +68,5 @@ class ActionDocument(Document):
         ]
 
     async def save(self, *args, **kwargs):
-        self.updated_at = datetime.now(timezone.utc)
+        self.updated_at = now()
         return await super().save(*args, **kwargs)

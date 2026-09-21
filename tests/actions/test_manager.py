@@ -37,26 +37,17 @@ from temporalio.common import Priority
 from nomad import infrastructure
 from nomad.actions.action import Action
 from nomad.actions.assets.models import ACTION_ASSET_REF_TYPE, ActionAssetRef
-from nomad.actions.manager import (
-    RequestSignalInputActivityInput,
-    _async_stop_workflow,
+from nomad.actions.bootstrap import action_service
+from nomad.actions.manager import request_signal_input_activity
+from nomad.actions.models import RequestSignalInputActivityInput
+from nomad.actions.plugin_adapter import (
     _get_param_schema,
-    _to_dict,
     _validate_with_pydantic,
-    get_action_result,
-    get_action_result_async,
-    get_action_status,
-    get_action_status_async,
     get_all_action_schemas,
-    list_user_actions,
-    request_signal_input_activity,
-    start_action,
-    start_action_async,
-    stop_action,
-    stop_action_async,
-    submit_signal_input,
     validate_action_arg,
 )
+from nomad.actions.serialization import _to_dict
+from nomad.actions.workflow_adapter import _async_stop_workflow
 from nomad.config import config
 from nomad.mongo.action import ActionDocument
 
@@ -204,7 +195,7 @@ def test_get_param_schema():
 
 def test_validate_action_arg(monkeypatch, mock_action_entry_point):
     monkeypatch.setattr(
-        'nomad.actions.manager.get_actions',
+        'nomad.actions.plugin_adapter.get_actions',
         lambda: {'my-action': mock_action_entry_point},
     )
 
@@ -217,7 +208,7 @@ def test_validate_action_arg(monkeypatch, mock_action_entry_point):
 
 def test_get_all_action_schemas(monkeypatch, mock_action_entry_point):
     monkeypatch.setattr(
-        'nomad.actions.manager.get_actions',
+        'nomad.actions.plugin_adapter.get_actions',
         lambda: {'my-action': mock_action_entry_point},
     )
     schemas = get_all_action_schemas()
@@ -275,7 +266,7 @@ def test_get_all_action_schemas_with_dynamic_entry_point(monkeypatch):
     mock_entry_point.allowed_options = ['remote_oasis_1', 'remote_oasis_2']
 
     monkeypatch.setattr(
-        'nomad.actions.manager.get_actions',
+        'nomad.actions.plugin_adapter.get_actions',
         lambda: {'dynamic-action': mock_entry_point},
     )
 
@@ -301,7 +292,7 @@ def test_validate_action_arg_with_dynamic_entry_point(monkeypatch):
     mock_entry_point.allowed_options = ['valid_endpoint']
 
     monkeypatch.setattr(
-        'nomad.actions.manager.get_actions',
+        'nomad.actions.plugin_adapter.get_actions',
         lambda: {'dynamic-action': mock_entry_point},
     )
 
@@ -364,7 +355,7 @@ def test_get_all_action_schemas_temporal_signal(monkeypatch):
     mock_entry_point.plugin_package = 'temporal-plugin'
 
     monkeypatch.setattr(
-        'nomad.actions.manager.get_actions',
+        'nomad.actions.plugin_adapter.get_actions',
         lambda: {'temporal-action': mock_entry_point},
     )
     schemas = get_all_action_schemas()
@@ -395,7 +386,7 @@ def test_get_all_action_schemas_uses_python_method_name_for_signal(monkeypatch):
     mock_entry_point.plugin_package = 'temporal-plugin'
 
     monkeypatch.setattr(
-        'nomad.actions.manager.get_actions',
+        'nomad.actions.plugin_adapter.get_actions',
         lambda: {'temporal-action': mock_entry_point},
     )
     schemas = get_all_action_schemas()
@@ -409,7 +400,7 @@ def test_start_action_sync_facade_returns_value(
     monkeypatch, mongo_function, user1, mock_action_entry_point
 ):
     monkeypatch.setattr(
-        'nomad.actions.manager.get_actions',
+        'nomad.actions.plugin_adapter.get_actions',
         lambda: {'my-action': mock_action_entry_point},
     )
 
@@ -418,12 +409,12 @@ def test_start_action_sync_facade_returns_value(
         return workflow_id
 
     monkeypatch.setattr(
-        'nomad.actions.manager._async_start_workflow',
+        'nomad.actions.workflow_adapter._async_start_workflow',
         mock_async_start_workflow,
     )
 
     args = MyActionArgs(arg1='test', arg2=123, user_id=user1.user_id)
-    action_instance_id = start_action('my-action', args)
+    action_instance_id = action_service.start('my-action', args)
     assert action_instance_id.startswith('my-action-')
 
 
@@ -431,7 +422,7 @@ def test_start_action_sync_facade_passes_priority_and_persists_metadata(
     monkeypatch, mongo_function, user1, mock_action_entry_point
 ):
     monkeypatch.setattr(
-        'nomad.actions.manager.get_actions',
+        'nomad.actions.plugin_adapter.get_actions',
         lambda: {'my-action': mock_action_entry_point},
     )
     mock_action_entry_point.priority_key = 2
@@ -443,12 +434,12 @@ def test_start_action_sync_facade_passes_priority_and_persists_metadata(
         return workflow_id
 
     monkeypatch.setattr(
-        'nomad.actions.manager._async_start_workflow',
+        'nomad.actions.workflow_adapter._async_start_workflow',
         mock_async_start_workflow,
     )
 
     args = MyActionArgs(arg1='test', arg2=123, user_id=user1.user_id)
-    action_instance_id = start_action('my-action', args)
+    action_instance_id = action_service.start('my-action', args)
 
     doc = (
         infrastructure.mongo_client.get_database(config.mongo.db_name)
@@ -467,7 +458,7 @@ async def test_start_action_sync_facade_works_inside_running_loop(
     running_loop = asyncio.get_running_loop()
 
     monkeypatch.setattr(
-        'nomad.actions.manager.get_actions',
+        'nomad.actions.plugin_adapter.get_actions',
         lambda: {'my-action': mock_action_entry_point},
     )
 
@@ -475,12 +466,12 @@ async def test_start_action_sync_facade_works_inside_running_loop(
         return workflow_id
 
     monkeypatch.setattr(
-        'nomad.actions.manager._async_start_workflow',
+        'nomad.actions.workflow_adapter._async_start_workflow',
         mock_async_start_workflow,
     )
 
     args = MyActionArgs(arg1='test', arg2=123, user_id=user1.user_id)
-    action_instance_id = start_action('my-action', args)
+    action_instance_id = action_service.start('my-action', args)
     assert action_instance_id.startswith('my-action-')
     assert running_loop.is_running()
 
@@ -496,7 +487,7 @@ async def test_start_action_sync_facade_propagates_exceptions(
     monkeypatch, mongo_function, user1, mock_action_entry_point
 ):
     monkeypatch.setattr(
-        'nomad.actions.manager.get_actions',
+        'nomad.actions.plugin_adapter.get_actions',
         lambda: {'my-action': mock_action_entry_point},
     )
 
@@ -504,20 +495,20 @@ async def test_start_action_sync_facade_propagates_exceptions(
         raise RuntimeError('boom')
 
     monkeypatch.setattr(
-        'nomad.actions.manager._async_start_workflow',
+        'nomad.actions.workflow_adapter._async_start_workflow',
         mock_async_start_workflow,
     )
 
     args = MyActionArgs(arg1='test', arg2=123, user_id=user1.user_id)
     with pytest.raises(RuntimeError, match='boom'):
-        start_action('my-action', args)
+        action_service.start('my-action', args)
 
 
 def test_start_action_sync_facade_rejects_asset_refs(
     monkeypatch, mongo_function, user1, mock_action_entry_point
 ):
     monkeypatch.setattr(
-        'nomad.actions.manager.get_actions',
+        'nomad.actions.plugin_adapter.get_actions',
         lambda: {'my-action': mock_action_entry_point},
     )
 
@@ -530,7 +521,7 @@ def test_start_action_sync_facade_rejects_asset_refs(
         ValueError,
         match='ActionAssetRef inputs are not supported from ELNs',
     ):
-        start_action('my-action', args)
+        action_service.start('my-action', args)
 
 
 @pytest.mark.asyncio
@@ -538,7 +529,7 @@ async def test_start_action(
     monkeypatch, mongo_function, async_mongo_function, user1, mock_action_entry_point
 ):
     monkeypatch.setattr(
-        'nomad.actions.manager.get_actions',
+        'nomad.actions.plugin_adapter.get_actions',
         lambda: {'my-action': mock_action_entry_point},
     )
 
@@ -546,11 +537,12 @@ async def test_start_action(
         return 'workflow-id-start-test'
 
     monkeypatch.setattr(
-        'nomad.actions.manager._async_start_workflow', mock_async_start_workflow
+        'nomad.actions.workflow_adapter._async_start_workflow',
+        mock_async_start_workflow,
     )
 
     args = MyActionArgs(arg1='test', arg2=123, user_id=user1.user_id)
-    action_instance_id = await start_action_async('my-action', args)
+    action_instance_id = await action_service.a_start('my-action', args)
 
     assert action_instance_id is not None
 
@@ -573,9 +565,9 @@ async def test_start_action_does_not_consume_assets_for_missing_action(
         called['count'] += 1
         return []
 
-    monkeypatch.setattr('nomad.actions.manager.get_actions', lambda: {})
+    monkeypatch.setattr('nomad.actions.plugin_adapter.get_actions', lambda: {})
     monkeypatch.setattr(
-        'nomad.actions.manager.consume_staged_assets', mock_consume_staged_assets
+        'nomad.actions.asset_adapter.consume_staged_assets', mock_consume_staged_assets
     )
 
     args = MyActionArgsWithAsset(
@@ -583,8 +575,8 @@ async def test_start_action_does_not_consume_assets_for_missing_action(
         recording=_recording_asset_ref(),
     )
 
-    with pytest.raises(AssertionError, match='No action data'):
-        await start_action_async('missing-action', args)
+    with pytest.raises(ValueError, match='No action data'):
+        await action_service.a_start('missing-action', args)
 
     assert called['count'] == 0
 
@@ -605,7 +597,7 @@ async def test_start_action_consumes_asset_refs(
     mock_entry_point.priority_key = None
     mock_entry_point.priority_fairness_key = None
     monkeypatch.setattr(
-        'nomad.actions.manager.get_actions',
+        'nomad.actions.plugin_adapter.get_actions',
         lambda: {'my-action': mock_entry_point},
     )
 
@@ -621,17 +613,18 @@ async def test_start_action_consumes_asset_refs(
         return 'workflow-id-start-test'
 
     monkeypatch.setattr(
-        'nomad.actions.manager.consume_staged_assets', mock_consume_staged_assets
+        'nomad.actions.asset_adapter.consume_staged_assets', mock_consume_staged_assets
     )
     monkeypatch.setattr(
-        'nomad.actions.manager._async_start_workflow', mock_async_start_workflow
+        'nomad.actions.workflow_adapter._async_start_workflow',
+        mock_async_start_workflow,
     )
 
     args = MyActionArgsWithAsset(
         user_id=user1.user_id,
         recording=_recording_asset_ref(),
     )
-    await start_action_async('my-action', args)
+    await action_service.a_start('my-action', args)
     assert called['count'] == 1
 
 
@@ -651,7 +644,7 @@ async def test_start_action_rolls_back_assets_if_workflow_start_fails(
     mock_entry_point.priority_key = None
     mock_entry_point.priority_fairness_key = None
     monkeypatch.setattr(
-        'nomad.actions.manager.get_actions',
+        'nomad.actions.plugin_adapter.get_actions',
         lambda: {'my-action': mock_entry_point},
     )
 
@@ -668,13 +661,15 @@ async def test_start_action_rolls_back_assets_if_workflow_start_fails(
         raise RuntimeError('temporal start failed')
 
     monkeypatch.setattr(
-        'nomad.actions.manager.consume_staged_assets', mock_consume_staged_assets
+        'nomad.actions.asset_adapter.consume_staged_assets', mock_consume_staged_assets
     )
     monkeypatch.setattr(
-        'nomad.actions.manager.rollback_consumed_assets', mock_rollback_consumed_assets
+        'nomad.actions.asset_adapter.rollback_consumed_assets',
+        mock_rollback_consumed_assets,
     )
     monkeypatch.setattr(
-        'nomad.actions.manager._async_start_workflow', mock_async_start_workflow
+        'nomad.actions.workflow_adapter._async_start_workflow',
+        mock_async_start_workflow,
     )
 
     args = MyActionArgsWithAsset(
@@ -682,7 +677,7 @@ async def test_start_action_rolls_back_assets_if_workflow_start_fails(
         recording=_recording_asset_ref(),
     )
     with pytest.raises(RuntimeError, match='temporal start failed'):
-        await start_action_async('my-action', args)
+        await action_service.a_start('my-action', args)
     assert rollback_called['count'] == 1
 
 
@@ -710,12 +705,12 @@ def test_get_action_status_sync_facade_returns_value(
         return WorkflowExecutionStatus.RUNNING
 
     monkeypatch.setattr(
-        'nomad.actions.manager._get_workflow_status_safe',
+        'nomad.actions.workflow_adapter._get_workflow_status_safe',
         mock_get_workflow_status_safe,
     )
 
-    status = get_action_status('workflow-1', user1.user_id)
-    assert status == WorkflowExecutionStatus.RUNNING
+    status = action_service.get_status('workflow-1', user1.user_id)
+    assert status.name == WorkflowExecutionStatus.RUNNING.name
     assert status.name == 'RUNNING'
 
 
@@ -740,11 +735,11 @@ def test_stop_action_sync_facade_cancels_workflow(monkeypatch, mongo_function, u
         assert action_instance_id == 'workflow-1'
 
     monkeypatch.setattr(
-        'nomad.actions.manager._async_stop_workflow',
+        'nomad.actions.workflow_adapter._async_stop_workflow',
         mock_async_stop_workflow,
     )
 
-    assert stop_action('workflow-1', user1.user_id) is None
+    assert action_service.stop('workflow-1', user1.user_id) is None
 
     doc = (
         infrastructure.mongo_client.get_database(config.mongo.db_name)
@@ -772,11 +767,11 @@ async def test_stop_action_async_cancels_workflow(
         assert action_instance_id == 'workflow-async-stop'
 
     monkeypatch.setattr(
-        'nomad.actions.manager._async_stop_workflow',
+        'nomad.actions.workflow_adapter._async_stop_workflow',
         mock_async_stop_workflow,
     )
 
-    assert await stop_action_async('workflow-async-stop', user1.user_id) is None
+    assert await action_service.a_stop('workflow-async-stop', user1.user_id) is None
 
     updated_doc = await ActionDocument.find_one(
         ActionDocument.action_instance_id == 'workflow-async-stop'
@@ -817,11 +812,11 @@ def test_get_action_result_sync_facade_returns_value(
         return WorkflowResult(result='success', secret=SecretStr('secret'))
 
     monkeypatch.setattr(
-        'nomad.actions.manager._get_workflow_result_safe',
+        'nomad.actions.workflow_adapter._get_workflow_result_safe',
         mock_get_workflow_result_safe,
     )
 
-    result = get_action_result('workflow-1', user1.user_id)
+    result = action_service.get_result('workflow-1', user1.user_id)
     assert result == {'result': 'success'}
 
 
@@ -830,7 +825,7 @@ async def test_start_action_async_passes_priority_and_persists_metadata(
     monkeypatch, mongo_function, async_mongo_function, user1, mock_action_entry_point
 ):
     monkeypatch.setattr(
-        'nomad.actions.manager.get_actions',
+        'nomad.actions.plugin_adapter.get_actions',
         lambda: {'my-action': mock_action_entry_point},
     )
     mock_action_entry_point.priority_key = 4
@@ -842,11 +837,12 @@ async def test_start_action_async_passes_priority_and_persists_metadata(
         return workflow_id
 
     monkeypatch.setattr(
-        'nomad.actions.manager._async_start_workflow', mock_async_start_workflow
+        'nomad.actions.workflow_adapter._async_start_workflow',
+        mock_async_start_workflow,
     )
 
     args = MyActionArgs(arg1='test', arg2=123, user_id=user1.user_id)
-    action_instance_id = await start_action_async('my-action', args)
+    action_instance_id = await action_service.a_start('my-action', args)
 
     doc = await ActionDocument.find_one(
         ActionDocument.action_instance_id == action_instance_id
@@ -866,7 +862,7 @@ async def test_async_stop_workflow_uses_temporal_cancel(monkeypatch):
     async def get_client():
         return mock_client
 
-    monkeypatch.setattr('nomad.actions.manager.get_client', get_client)
+    monkeypatch.setattr('nomad.actions.workflow_adapter.get_client', get_client)
 
     await _async_stop_workflow('workflow-cancel')
 
@@ -895,7 +891,7 @@ def mock_temporal_client(monkeypatch):
     async def get_client():
         return mock_client
 
-    monkeypatch.setattr('nomad.actions.manager.get_client', get_client)
+    monkeypatch.setattr('nomad.actions.workflow_adapter.get_client', get_client)
     return mock_client
 
 
@@ -912,8 +908,8 @@ async def test_get_action_status(
     )
     await action_doc.insert()
 
-    status = await get_action_status_async('workflow-123', user1.user_id)
-    assert status == WorkflowExecutionStatus.RUNNING
+    status = await action_service.a_get_status('workflow-123', user1.user_id)
+    assert status.name == WorkflowExecutionStatus.RUNNING.name
 
     # Verify the status was updated in the DB
     updated_doc = await ActionDocument.find_one(
@@ -922,7 +918,7 @@ async def test_get_action_status(
     assert updated_doc.status == 'RUNNING'
 
     with pytest.raises(Exception):
-        await get_action_status_async('nonexistent-workflow', user1.user_id)
+        await action_service.a_get_status('nonexistent-workflow', user1.user_id)
 
 
 @pytest.mark.asyncio
@@ -942,12 +938,12 @@ async def test_get_action_status_marks_unknown_when_workflow_is_missing(
         return None
 
     monkeypatch.setattr(
-        'nomad.actions.manager._get_workflow_status_safe',
+        'nomad.actions.workflow_adapter._get_workflow_status_safe',
         mock_get_workflow_status_safe,
     )
 
-    status = await get_action_status_async('workflow-missing', user1.user_id)
-    assert status == WorkflowExecutionStatus.TERMINATED
+    status = await action_service.a_get_status('workflow-missing', user1.user_id)
+    assert status.name == WorkflowExecutionStatus.TERMINATED.name
 
     updated_doc = await ActionDocument.find_one(
         ActionDocument.action_instance_id == 'workflow-missing'
@@ -968,7 +964,7 @@ async def test_get_action_result(
     )
     await action_doc.insert()
 
-    result = await get_action_result_async('workflow-123', user1.user_id)
+    result = await action_service.a_get_result('workflow-123', user1.user_id)
     assert result == {'result': 'success'}
 
     # Verify results were saved to DB
@@ -979,7 +975,7 @@ async def test_get_action_result(
     assert updated_doc.results == {'result': 'success'}
 
     with pytest.raises(Exception):
-        await get_action_result_async('nonexistent-workflow', user1.user_id)
+        await action_service.a_get_result('nonexistent-workflow', user1.user_id)
 
 
 @pytest.mark.asyncio
@@ -1002,17 +998,17 @@ async def test_list_user_actions(
     ).insert()
 
     async def mock_update_status(action):
-        pass
+        return action
 
     monkeypatch.setattr(
-        'nomad.actions.manager._refresh_action_status', mock_update_status
+        'nomad.actions.bootstrap.action_service.a_refresh', mock_update_status
     )
 
-    actions_page = await list_user_actions(user1.user_id)
+    actions_page = await action_service.a_list_owned(user1.user_id)
     assert len(actions_page.items) == 2
 
     # Test no actions for user
-    actions_page = await list_user_actions('other-user')
+    actions_page = await action_service.a_list_owned('other-user')
     assert len(actions_page.items) == 0
 
 
@@ -1035,12 +1031,12 @@ async def test_submit_signal_input_requires_pending_request(
     mock_entry_point.load.return_value = mock_action
 
     monkeypatch.setattr(
-        'nomad.actions.manager.get_actions',
+        'nomad.actions.plugin_adapter.get_actions',
         lambda: {'my-action': mock_entry_point},
     )
 
     with pytest.raises(Exception, match='No pending signal input request found'):
-        await submit_signal_input(
+        await action_service.a_submit_signal_input(
             action_instance_id='workflow-submit-1',
             user_id=user1.user_id,
             signal_fn_name='test_signal',
@@ -1070,7 +1066,7 @@ async def test_submit_signal_input_clears_pending_request(
     mock_entry_point.load.return_value = mock_action
 
     monkeypatch.setattr(
-        'nomad.actions.manager.get_actions',
+        'nomad.actions.plugin_adapter.get_actions',
         lambda: {'my-action': mock_entry_point},
     )
 
@@ -1078,10 +1074,10 @@ async def test_submit_signal_input_clears_pending_request(
         return None
 
     monkeypatch.setattr(
-        'nomad.actions.manager._async_signal_workflow', mock_signal_workflow
+        'nomad.actions.workflow_adapter._async_signal_workflow', mock_signal_workflow
     )
 
-    await submit_signal_input(
+    await action_service.a_submit_signal_input(
         action_instance_id='workflow-submit-2',
         user_id=user1.user_id,
         signal_fn_name='test_signal',
@@ -1121,7 +1117,7 @@ async def test_submit_signal_input_rolls_back_assets_if_signal_fails(
     mock_entry_point = MagicMock(spec=EntryPoint)
     mock_entry_point.load.return_value = mock_action
     monkeypatch.setattr(
-        'nomad.actions.manager.get_actions',
+        'nomad.actions.plugin_adapter.get_actions',
         lambda: {'my-action': mock_entry_point},
     )
 
@@ -1138,17 +1134,18 @@ async def test_submit_signal_input_rolls_back_assets_if_signal_fails(
         raise RuntimeError('signal send failed')
 
     monkeypatch.setattr(
-        'nomad.actions.manager.consume_staged_assets', mock_consume_staged_assets
+        'nomad.actions.asset_adapter.consume_staged_assets', mock_consume_staged_assets
     )
     monkeypatch.setattr(
-        'nomad.actions.manager.rollback_consumed_assets', mock_rollback_consumed_assets
+        'nomad.actions.asset_adapter.rollback_consumed_assets',
+        mock_rollback_consumed_assets,
     )
     monkeypatch.setattr(
-        'nomad.actions.manager._async_signal_workflow', mock_signal_workflow
+        'nomad.actions.workflow_adapter._async_signal_workflow', mock_signal_workflow
     )
 
     with pytest.raises(RuntimeError, match='signal send failed'):
-        await submit_signal_input(
+        await action_service.a_submit_signal_input(
             action_instance_id='workflow-submit-4',
             user_id=user1.user_id,
             signal_fn_name='test_signal',
@@ -1184,7 +1181,7 @@ async def test_submit_signal_input_restores_pending_request_if_asset_consume_fai
     mock_entry_point = MagicMock(spec=EntryPoint)
     mock_entry_point.load.return_value = mock_action
     monkeypatch.setattr(
-        'nomad.actions.manager.get_actions',
+        'nomad.actions.plugin_adapter.get_actions',
         lambda: {'my-action': mock_entry_point},
     )
 
@@ -1195,14 +1192,14 @@ async def test_submit_signal_input_restores_pending_request_if_asset_consume_fai
         raise AssertionError('signal should not be sent')
 
     monkeypatch.setattr(
-        'nomad.actions.manager.consume_staged_assets', mock_consume_staged_assets
+        'nomad.actions.asset_adapter.consume_staged_assets', mock_consume_staged_assets
     )
     monkeypatch.setattr(
-        'nomad.actions.manager._async_signal_workflow', mock_signal_workflow
+        'nomad.actions.workflow_adapter._async_signal_workflow', mock_signal_workflow
     )
 
     with pytest.raises(ValueError, match='asset missing'):
-        await submit_signal_input(
+        await action_service.a_submit_signal_input(
             action_instance_id='workflow-submit-asset-fail',
             user_id=user1.user_id,
             signal_fn_name='test_signal',

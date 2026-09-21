@@ -40,27 +40,25 @@ from pydantic import BaseModel
 from nomad.actions.action import get_actions
 from nomad.actions.assets.models import ActionAssetPurpose, ActionAssetUploadResult
 from nomad.actions.assets.service import clone_action_asset, upload_action_asset
-from nomad.actions.manager import (
-    ActionStreamUnavailable,
-    action_log_file_path,
-    get_action_result_async,
-    get_action_status_async,
-    get_all_action_schemas,
-    get_user_action,
-    list_user_actions,
-    start_action_async,
-    stop_action_async,
-    stream_action_events_for_user_async,
-    stream_processing_events_for_user_async,
-    submit_signal_input,
-    validate_action_arg,
+from nomad.actions.bootstrap import action_service
+from nomad.actions.domain import (
+    ActionNotFoundError,
+    ActionNotRunningError,
+    SignalInputNotFoundError,
 )
+from nomad.actions.manager import action_log_file_path
 from nomad.actions.models import (
     ActionRecord,
     ActionRecordPage,
     ActionSchemaInfo,
     ActionStreamEvent,
     ActionStreamEventType,
+)
+from nomad.actions.plugin_adapter import get_all_action_schemas, validate_action_arg
+from nomad.actions.streams import (
+    ActionStreamUnavailable,
+    stream_action_events_for_user_async,
+    stream_processing_events_for_user_async,
 )
 from nomad.app.v1.models import User
 from nomad.app.v1.routers.auth import get_current_user
@@ -262,7 +260,7 @@ async def action_start(
     start_data.data['user_id'] = user.user_id
     try:
         input_data = validate_action_arg(action_id, start_data.data)
-        action_instance_id = await start_action_async(
+        action_instance_id = await action_service.a_start(
             action_id=action_id, data=input_data
         )
         return {'action_instance_id': action_instance_id}
@@ -293,10 +291,14 @@ async def action_stop(
         user: The authenticated user.
     """
     try:
-        await stop_action_async(
+        await action_service.a_stop(
             action_instance_id=action_instance_id, user_id=user.user_id
         )
         return {'status': 'stopped'}
+    except ActionNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ActionNotRunningError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
@@ -328,7 +330,7 @@ async def action_signal_input(
         user: The authenticated user.
     """
     try:
-        await submit_signal_input(
+        await action_service.a_submit_signal_input(
             action_instance_id=action_instance_id,
             user_id=user.user_id,
             signal_fn_name=signal_input_data.signal_fn_name,
@@ -339,16 +341,12 @@ async def action_signal_input(
         raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except (ActionNotFoundError, SignalInputNotFoundError) as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ActionNotRunningError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
     except Exception as e:
-        detail = str(e)
-        if (
-            'was not registered in the DB' in detail
-            or 'No pending signal input request found' in detail
-        ):
-            raise HTTPException(status_code=404, detail=detail)
-        if 'Action is not running.' in detail:
-            raise HTTPException(status_code=409, detail=detail)
-        raise HTTPException(status_code=500, detail=detail)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get(
@@ -377,12 +375,14 @@ async def action_status(
         The status of the action.
     """
     try:
-        status = await get_action_status_async(
+        status = await action_service.a_get_status(
             action_instance_id=action_instance_id, user_id=user.user_id
         )
         if status is None:
             return {'status': 'UNKNOWN'}
         return {'status': status.name}
+    except ActionNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
@@ -415,10 +415,12 @@ async def action_result(
         The result of the action.
     """
     try:
-        result = await get_action_result_async(
+        result = await action_service.a_get_result(
             action_instance_id=action_instance_id, user_id=user.user_id
         )
         return result
+    except ActionNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
     except HTTPException:
         raise
     except Exception as e:
@@ -500,7 +502,7 @@ async def action(
         The action.
     """
     try:
-        result = await get_user_action(
+        result = await action_service.a_get_owned(
             action_instance_id=action_instance_id, user_id=user.user_id
         )
         if result is None:
@@ -537,7 +539,7 @@ async def stream_logs(
             else:
                 # check if workflow status is running/pending, otherwise break
                 try:
-                    status = await get_action_status_async(
+                    status = await action_service.a_get_status(
                         action_instance_id=action_instance_id,
                         user_id=user_id,
                     )
@@ -568,7 +570,7 @@ async def stream_sse_events(
         return
 
     try:
-        action_status = await get_action_status_async(
+        action_status = await action_service.a_get_status(
             action_instance_id=action_instance_id,
             user_id=user_id,
         )
@@ -649,11 +651,10 @@ async def action_events(
         raise
     except ActionStreamUnavailable as e:
         raise HTTPException(status_code=409, detail=str(e))
+    except ActionNotFoundError as e:
+        raise HTTPException(status_code=404, detail='Action not found.') from e
     except Exception as e:
-        detail = str(e)
-        if 'was not registered in the DB' in detail:
-            raise HTTPException(status_code=404, detail='Action not found.')
-        raise HTTPException(status_code=500, detail=detail)
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
     return StreamingResponse(
         stream_sse_events(
@@ -706,7 +707,7 @@ async def action_logs(
     """
     try:
         # First check if the user has access to this action.
-        result = await get_user_action(
+        result = await action_service.a_get_owned(
             action_instance_id=action_instance_id,
             user_id=user.user_id,
         )
@@ -835,7 +836,7 @@ async def actions(
         An ActionRecordPage with items, optional next_cursor, and total count.
     """
     try:
-        result = await list_user_actions(
+        result = await action_service.a_list_owned(
             user_id=user.user_id,
             page_size=page_size,
             cursor=cursor,

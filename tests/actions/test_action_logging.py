@@ -117,6 +117,18 @@ def test_routing_handler_prefers_action_instance_id(tmp_path, monkeypatch):
         structlog.contextvars.clear_contextvars()
 
 
+def test_log_path_does_not_fall_back_to_legacy_layout(tmp_path, monkeypatch):
+    monkeypatch.setattr(config.fs, 'actions', str(tmp_path))
+    legacy = tmp_path / 'logs' / 'instance.log'
+    legacy.parent.mkdir()
+    legacy.write_text('old log')
+
+    assert action_log_file_path('instance') == str(
+        tmp_path / 'instance' / 'nomad_system' / 'logs' / 'instance.log'
+    )
+    assert legacy.read_text() == 'old log'
+
+
 @pytest.mark.asyncio
 async def test_interceptor_binds_root_action_context(monkeypatch):
     class _DummyNext:
