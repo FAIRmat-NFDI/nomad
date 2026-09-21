@@ -27,6 +27,7 @@ from nomad.common import now
 from nomad.mongo.fields import UTCDateTimeField
 
 MONGO_CACHE_DEFAULT_TTL: Final[timedelta] = timedelta(hours=1)
+SERVER_STATS_CACHE_KEY: Final[str] = 'server-stats'
 
 
 class MongoCache(Document):

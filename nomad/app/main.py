@@ -69,6 +69,7 @@ def mount_with_trailing_slash_redirect(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from nomad import infrastructure
+    from nomad.actions.workflows.utils import setup_server_stats
     from nomad.cli.dev import generate_gui_artifacts_js, get_gui_config
     from nomad.metainfo.elasticsearch_extension import entry_type
     from nomad.parsing.parsers import import_all_parsers
@@ -102,6 +103,8 @@ async def lifespan(app: FastAPI):
 
     try:
         app.state.temporal_client = await get_client()
+        await setup_server_stats(app.state.temporal_client)
+
         yield
     except Exception as e:
         logger = get_logger(__name__)

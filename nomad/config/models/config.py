@@ -261,6 +261,15 @@ class Services(ConfigBaseModel):
         description='If true, all queries to the /entries/query API endpoint will be logged.',
     )
 
+    collect_server_stats: bool = Field(
+        True,
+        description='If true, server statistics will be collected periodically.',
+    )
+    collect_server_stats_cron_expression: str = Field(
+        '1 1 * * *',
+        description='Cron expression for scheduling server stats collection.',
+    )
+
     # Validators
     _console_log_level = field_validator('console_log_level', mode='before')(
         normalize_loglevel

@@ -95,14 +95,15 @@ def setup_mongo():
 
     logger.info('setup mongo connection')
 
-    # drop cache at startup
-    db = mongo_client.get_database(config.mongo.db_name)
-    db.get_collection('cache').drop()
-
+    from nomad.mongo.cache import SERVER_STATS_CACHE_KEY, MongoCache
     from nomad.mongo.groups import MongoUserGroup
     from nomad.mongo.notifications import Notification
     from nomad.processing import Entry, Upload
 
+    # Drop FastAPI cache entries on startup, but keep the server-stats snapshot.
+    db = mongo_client.get_database(config.mongo.db_name)
+    db.get_collection('cache').delete_many({'key': {'$ne': SERVER_STATS_CACHE_KEY}})
+    MongoCache.ensure_indexes()
     MongoUserGroup.ensure_indexes()
     Notification.ensure_indexes()
     Upload.ensure_indexes()
@@ -161,10 +162,10 @@ def check_mongo():
     db = mongo_client.get_database(config.mongo.db_name)
     names = set(db.list_collection_names())
 
-    # 'cache' is also known but should have been removed by setup
     expected_names = {
         'action_document',
         'archive',
+        'cache',
         'dataset',
         'd_o_i',  # auto-named from class DOI
         'entry',

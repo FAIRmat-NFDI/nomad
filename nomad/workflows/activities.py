@@ -36,6 +36,7 @@ from nomad.parsing.parsers import parsers
 from nomad.processing.base import ProcessFailure, ProcessStatus
 from nomad.processing.data import Entry, Upload
 from nomad.search import delete_upload
+from nomad.server_stats import collect_server_stats
 from nomad.uploads import remove_upload_reviewers
 from nomad.workflows.shared_objects import (
     CleanupEntriesBatchActivityInput,
@@ -497,3 +498,8 @@ def handle_heartbeat_failure_activity(input: ProcessEntryActivityInput):
         ]
     )
     entry.save()
+
+
+@activity.defn
+def server_stats_checkin_activity():
+    collect_server_stats()
