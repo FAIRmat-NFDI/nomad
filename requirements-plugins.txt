@@ -41,8 +41,9 @@ dnspython==2.8.0          # via email-validator, pymongo, -c requirements-dev.tx
 docker==7.2.0             # via dockerspawner, -c requirements-dev.txt
 dockerspawner==14.0.0     # via nomad-lab, -c requirements-dev.txt
 docstring-parser==0.18.0  # via nomad-lab, -c requirements-dev.txt
-elasticsearch==7.17.13    # via elasticsearch-dsl, nomad-lab, -c requirements-dev.txt
-elasticsearch-dsl==7.4.1  # via nomad-lab, -c requirements-dev.txt
+elastic-transport==9.4.2  # via elasticsearch, -c requirements-dev.txt
+elasticsearch==9.5.0      # via nomad-lab, -c requirements-dev.txt
+elasticsearch7==7.17.13   # via nomad-lab, -c requirements-dev.txt
 email-validator==2.3.0    # via pydantic, -c requirements-dev.txt
 escapism==1.1.0           # via dockerspawner, -c requirements-dev.txt
 et-xmlfile==2.0.0         # via openpyxl, -c requirements-dev.txt

@@ -23,7 +23,7 @@ import threading
 import warnings
 from enum import Enum
 from importlib.metadata import entry_points, version
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import quote
 
 from fsspec import AbstractFileSystem, filesystem
@@ -1003,6 +1003,21 @@ class Actions(ConfigBaseModel):
 
 
 class Elastic(ConfigBaseModel):
+    version: Literal['7', '9'] = Field(
+        '7',
+        description=(
+            'Major version of the Elasticsearch cluster. Version 7 is supported '
+            'temporarily and is deprecated; use version 9 for new deployments.'
+        ),
+    )
+
+    @field_validator('version', mode='before')
+    @classmethod
+    def transform_version(cls, value: Any) -> Any:
+        if isinstance(value, int) and not isinstance(value, bool):
+            return str(value)
+        return value
+
     username: str = Field(
         '',
         description='Username for authenticating with the Elasticsearch server.',
@@ -1019,6 +1034,23 @@ class Elastic(ConfigBaseModel):
         9200,
         description='Port on which the Elasticsearch server is listening.',
     )
+    scheme: Literal['http', 'https'] = Field(
+        'http',
+        description=(
+            'URL scheme used to connect to the Elasticsearch server. '
+            'Elasticsearch 9 requires this; its Python client rejects host:port '
+            'without a scheme. Values with a trailing :// (http://, https://) '
+            'are accepted.'
+        ),
+    )
+
+    @field_validator('scheme', mode='before')
+    @classmethod
+    def transform_scheme(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            return value.strip().lower().removesuffix('://')
+        return value
+
     timeout: int = Field(
         60,
         description='Default request timeout (in seconds) for Elasticsearch operations.',

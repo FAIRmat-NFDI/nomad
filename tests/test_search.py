@@ -111,8 +111,8 @@ def assert_search_upload(
 def test_mapping_compatibility(elastic_infra):
     from nomad.infrastructure import elastic_client
 
-    v0 = elastic_client.indices.get(config.elastic.entries_index)
-    v1 = elastic_client.indices.get(config.elastic.entries_index)
+    v0 = elastic_client.indices.get(index=config.elastic.entries_index)
+    v1 = elastic_client.indices.get(index=config.elastic.entries_index)
 
     def get_mapping(index):
         assert len(index) == 1

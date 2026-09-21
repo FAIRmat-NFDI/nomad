@@ -23,7 +23,7 @@ from enum import Enum
 from typing import Any
 
 import rfc3161ng
-from elasticsearch_dsl import analyzer, tokenizer
+from elasticsearch.dsl import analyzer, tokenizer
 
 from nomad import utils
 from nomad.datamodel.metainfo.common import FastAccess

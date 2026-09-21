@@ -18,7 +18,7 @@
 
 from typing import Any
 
-from elasticsearch_dsl import Q
+from elasticsearch.dsl import Q
 from optimade.filterparser import LarkParser
 from optimade.models import StructureResource
 from optimade.server.entry_collections import EntryCollection
@@ -76,7 +76,7 @@ class StructureCollection(EntryCollection):
         self._check_aliases(self.resource_mapper.all_aliases())
         self._check_aliases(self.resource_mapper.all_length_aliases())
 
-    def _base_search_query(self) -> Q:
+    def _base_search_query(self) -> Any:
         return Q('exists', field='optimade.elements') & Q('term', processed=True)
 
     def __len__(self) -> int:

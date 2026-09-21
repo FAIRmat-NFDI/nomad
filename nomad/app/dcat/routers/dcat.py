@@ -20,7 +20,7 @@ from datetime import date, datetime
 from enum import Enum
 from typing import Annotated
 
-from elasticsearch_dsl import Q
+from elasticsearch.dsl import Q
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 
 from nomad import utils

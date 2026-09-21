@@ -20,14 +20,14 @@ from collections import defaultdict
 from enum import Enum
 from typing import Annotated
 
-from elasticsearch.exceptions import RequestError
-from elasticsearch_dsl import Search
-from elasticsearch_dsl.utils import AttrList
+from elasticsearch.dsl import Search
+from elasticsearch.dsl.utils import AttrList
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
 from nomad.app.v1.routers.auth import get_current_user
 from nomad.auth.scopes import Scope
+from nomad.elastic_compat import REQUEST_ERROR_TYPES, execute_search
 from nomad.metainfo.elasticsearch_extension import entry_index, entry_type
 from nomad.tracing import traced
 
@@ -127,8 +127,8 @@ def get_suggestions(
         # For some reason calling the search.extra()-method messes up the type
         # information for the Search-object. This is why linting is disabled
         # here.
-        es_response = search.execute()  # pylint: disable=no-member
-    except RequestError as e:
+        es_response = execute_search(search)
+    except REQUEST_ERROR_TYPES as e:
         raise SuggestionError from e
 
     # We return the original field in the source document.
@@ -142,12 +142,12 @@ def get_suggestions(
 
     for name, name_es in zip(names, names_es):
         variants = entry_type.suggestions[name].variants
-        for option in es_response.suggest[name_es][0].options:
-            weight = option._score
+        for suggest_option in es_response.suggest[name_es][0].options:
+            weight = suggest_option._score
 
             # We use the original input text to do the matching. This works
             # better than the text returned by the completion suggester
-            # (option.text), since it can match several items if there are
+            # (suggest_option.text), since it can match several items if there are
             # multiple values per quantity.
             text = data.input
             if text is not None:
@@ -158,7 +158,7 @@ def get_suggestions(
             # Nested fields use the nested document as _source: we need to
             # modify the path accordingly.
             try:
-                nested_field = option._nested.field
+                nested_field = suggest_option._nested.field
             except AttributeError:
                 nested_field = None
             quantity_path = name[len(nested_field) :] if nested_field else name
@@ -183,7 +183,7 @@ def get_suggestions(
 
             options: list[str] = []
             parts = quantity_path.split('.')
-            gather_options(option._source, parts, options)
+            gather_options(suggest_option._source, parts, options)
 
             # There may be multiple options and we have to look which options
             # were actually matched (the completion suggester does not have a

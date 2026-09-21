@@ -139,12 +139,15 @@ check python dependencies:
         - bash
         - "-c"
         - ES_JAVA_OPTS="-Xms512m -Xmx512m" docker-entrypoint.sh elasticsearch -Ediscovery.type=single-node -Expack.security.enabled=false
-    - name: mongo:5
+    - name: mongo:8
       alias: mongo
   variables:
     AWS_ACCESS_KEY_ID: nomad_test
     AWS_SECRET_ACCESS_KEY: nomad_test
     NOMAD_ELASTIC_HOST: elastic
+    # The config loader JSON-decodes environment variables, so preserve the
+    # Elasticsearch version as a string rather than an integer.
+    NOMAD_ELASTIC_VERSION: '"7"'
     NOMAD_MONGO_HOST: mongo
     NOMAD_KEYCLOAK_PASSWORD: ${CI_KEYCLOAK_ADMIN_PASSWORD}
     NOMAD_SERVICES_API_SECRET: some-very-long-test-secret-string
@@ -153,6 +156,24 @@ check python dependencies:
     - scripts/check_elastic.sh
     - uv pip install -e ".[dev]"
     - uv pip install -r requirements-plugins.txt -c requirements-dev.txt # remove this after moving to distro
+
+.base_test_es9:
+  extends: .base_test
+  services:
+    - name: elasticsearch:9.3.1
+      alias: elastic
+      command:
+        - bash
+        - "-c"
+        - ES_JAVA_OPTS="-Xms512m -Xmx512m" docker-entrypoint.sh elasticsearch -Ediscovery.type=single-node -Expack.security.enabled=false
+    - name: mongo:8
+      alias: mongo
+    - name: chrislusf/seaweedfs:4.25
+      alias: seaweedfs
+  variables:
+    # The config loader JSON-decodes environment variables, so preserve the
+    # Elasticsearch version as a string rather than an integer.
+    NOMAD_ELASTIC_VERSION: '"9"'
 
 generate pytest timings:
   extends: .base_test
@@ -189,6 +210,22 @@ python tests:
     expire_in: 1 days
     paths:
       - .coverage_${CI_NODE_INDEX}
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
+
+python tests elasticsearch 9:
+  extends: .base_test_es9
+  script:
+    - >
+      python -m pytest -sv -n=3
+      --dist=loadscope
+      --disable-socket
+      --allow-hosts=localhost,elastic,mongo
+      tests/test_search.py
+      tests/app/v1/routers/test_suggestions.py
+      tests/app/test_optimade.py
   rules:
     - if: $CI_COMMIT_TAG
       when: never

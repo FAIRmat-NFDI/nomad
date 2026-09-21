@@ -20,7 +20,7 @@ from logging import Logger
 
 import numpy as np
 from ase.data import chemical_symbols
-from elasticsearch_dsl import Text
+from elasticsearch.dsl import Text
 
 from nomad.config import config
 from nomad.datamodel.metainfo.annotations import H5WebAnnotation
@@ -1333,7 +1333,7 @@ class System(MSection):
             Alphabetically sorted chemical formula with reduced integer chemical
             proportion numbers. The proportion number is omitted if it is 1.
         """,
-        a_elasticsearch=Elasticsearch(mapping=Text(multi=True)),
+        a_elasticsearch=Elasticsearch(mapping=Text(multi=True).to_dict()),
     )
     parent_system = Quantity(
         type=str,
@@ -1707,7 +1707,7 @@ class Material(MSection):
             Alphabetically sorted chemical formula with reduced integer chemical
             proportion numbers. The proportion number is omitted if it is 1.
         """,
-        a_elasticsearch=Elasticsearch(mapping=Text(multi=True)),
+        a_elasticsearch=Elasticsearch(mapping=Text(multi=True).to_dict()),
     )
     elemental_composition = SubSection(
         sub_section=ElementalComposition.m_def,
