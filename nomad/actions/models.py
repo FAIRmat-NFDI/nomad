@@ -16,12 +16,13 @@
 # limitations under the License.
 #
 
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from nomad.common import now
 from nomad.models.common import UTCDateTime
 
 __all__ = [
@@ -82,7 +83,7 @@ class ActionStreamEvent(BaseModel):
         default=False, description='True when this event marks the stream terminal.'
     )
     timestamp: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc),
+        default_factory=now,
         description='Event creation timestamp.',
     )
 
@@ -96,6 +97,8 @@ class ActionStreamItem(BaseModel):
 
 
 class ActionRecord(BaseModel):
+    """API response DTO; repository records live in ``nomad.actions.domain``."""
+
     action_id: str
     action_instance_id: str
     user_id: str

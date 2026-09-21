@@ -24,31 +24,38 @@ from typing import Any
 from pymongo import ReturnDocument
 
 from nomad import infrastructure
-from nomad.actions.models import ActionRecord
+from nomad.actions.domain import ActionNotFoundError, ActionRecord, SignalInputClaim
+from nomad.common import now
 from nomad.config import config
 from nomad.mongo.action import ActionDocument
 
-__all__ = ['AsyncActionRepository', 'SyncActionRepository']
+__all__ = ['MongoAsyncActionRepository', 'MongoSyncActionRepository']
 
 
 def _utcnow() -> datetime:
-    """Return the current UTC timestamp."""
-    return datetime.now(timezone.utc)
+    """Return the current UTC timestamp through the mockable project clock."""
+    return now()
 
 
 def _record_from_document(doc: ActionDocument) -> ActionRecord:
     """Convert a Beanie document into an action record."""
-    return ActionRecord.model_validate(doc.model_dump())
+    return _record_from_mongo(doc.model_dump())
 
 
 def _record_from_mongo(doc: dict[str, Any]) -> ActionRecord:
     """Convert a raw Mongo document into an action record."""
     payload = dict(doc)
     payload.pop('_id', None)
+    for name in ('created_at', 'updated_at'):
+        value = payload.get(name)
+        if value is not None and value.tzinfo is None:
+            payload[name] = value.replace(tzinfo=timezone.utc)
     return ActionRecord.model_validate(payload)
 
 
-class AsyncActionRepository:
+class MongoAsyncActionRepository:
+    """MongoDB adapter for the asynchronous action repository port."""
+
     async def create(self, record: ActionRecord) -> ActionRecord:
         """Insert a new action record."""
         document = ActionDocument(**record.model_dump())
@@ -73,7 +80,7 @@ class AsyncActionRepository:
         """Fetch an owned action or raise if it does not exist."""
         record = await self.get_for_user(action_instance_id, user_id)
         if record is None:
-            raise Exception(
+            raise ActionNotFoundError(
                 'The action was not registered in the DB or was registered under a different user.'
             )
         return record
@@ -140,21 +147,6 @@ class AsyncActionRepository:
         await document.save()
         return _record_from_document(document)
 
-    async def patch_for_user(
-        self, action_instance_id: str, user_id: str, **fields: Any
-    ) -> ActionRecord | None:
-        """Update arbitrary fields for an owned action."""
-        document = await ActionDocument.find_one(
-            ActionDocument.action_instance_id == action_instance_id,
-            ActionDocument.user_id == user_id,
-        )
-        if document is None:
-            return None
-        for key, value in fields.items():
-            setattr(document, key, value)
-        await document.save()
-        return _record_from_document(document)
-
     async def add_pending_signal_input(
         self,
         action_instance_id: str,
@@ -178,7 +170,22 @@ class AsyncActionRepository:
         )
         return result.modified_count == 1
 
-    async def consume_pending_signal_input(
+    async def claim_pending_signal_input(
+        self, action_instance_id: str, user_id: str, signal_fn_name: str
+    ) -> SignalInputClaim | None:
+        document = await self._consume_pending_signal_input(
+            action_instance_id, user_id, signal_fn_name
+        )
+        if document is None:
+            return None
+        request = next(
+            request
+            for request in document['signal_input_requests']
+            if request.get('signal_fn_name') == signal_fn_name
+        )
+        return SignalInputClaim(action_id=document['action_id'], request=request)
+
+    async def _consume_pending_signal_input(
         self, action_instance_id: str, user_id: str, signal_fn_name: str
     ) -> dict[str, Any] | None:
         """Remove and return a matching pending signal-input request."""
@@ -238,7 +245,9 @@ class AsyncActionRepository:
         )
 
 
-class SyncActionRepository:
+class MongoSyncActionRepository:
+    """MongoDB adapter for the synchronous action repository port."""
+
     @property
     def collection(self):
         """Return the sync Mongo collection for action documents."""
@@ -269,7 +278,7 @@ class SyncActionRepository:
         """Fetch an owned action or raise if it does not exist."""
         record = self.get_for_user(action_instance_id, user_id)
         if record is None:
-            raise Exception(
+            raise ActionNotFoundError(
                 'The action was not registered in the DB or was registered under a different user.'
             )
         return record

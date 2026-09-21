@@ -26,9 +26,9 @@ from typing import Any
 
 from temporalio.contrib.workflow_streams import WorkflowStreamClient
 
+from nomad.actions.bootstrap import async_action_repository
 from nomad.actions.client import get_client
 from nomad.actions.models import ActionStreamEvent, ActionStreamItem
-from nomad.actions.repositories import AsyncActionRepository
 
 ACTION_STREAM_TOPIC = 'action'
 PROCESSING_STREAM_TOPIC = 'processing'
@@ -43,7 +43,7 @@ __all__ = [
     'stream_action_events_for_user_async',
 ]
 
-_async_action_repository = AsyncActionRepository()
+_async_action_repository = async_action_repository
 
 
 class ActionStreamUnavailable(Exception):
