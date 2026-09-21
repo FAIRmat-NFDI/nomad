@@ -215,6 +215,8 @@ async def oasis_publishable_upload(
     )
 
     async def async_post(url, data, params, **kwargs):
+        assert url == '/api/v1/uploads/import'
+        assert params['format'] == 'bundle'
         async with temporal_worker():
             return await asyncio.to_thread(
                 lambda: api_v1.post(
