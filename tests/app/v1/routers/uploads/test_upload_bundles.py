@@ -36,6 +36,32 @@ from .test_uploads import assert_processing, perform_post_put_file
 
 
 @pytest.mark.parametrize(
+    'method, route',
+    [
+        ('GET', 'uploads/upload_id/bundle'),
+        ('GET', 'uploads/upload_id/export'),
+        ('POST', 'uploads/bundle'),
+        ('POST', 'uploads/import'),
+    ],
+)
+@pytest.mark.parametrize('format', ['unsupported', ''])
+def test_upload_transfer_invalid_format(client, auth_headers, method, route, format):
+    response = client.request(
+        method,
+        route,
+        params={'format': format},
+        headers=auth_headers['user0'],
+    )
+    assert_response(response, 422)
+    assert any(
+        error['loc'] == ['query', 'format'] and error['type'] == 'enum'
+        for error in response.json()['detail']
+    )
+
+
+@pytest.mark.parametrize('route', ['bundle', 'export'])
+@pytest.mark.parametrize('format', [None, 'bundle'])
+@pytest.mark.parametrize(
     'upload_id, user, query_args, expected_status_code',
     [
         # Test published
@@ -81,6 +107,8 @@ async def test_get_upload_bundle(
     client,
     temporal_worker,
     example_data_writeable,
+    route,
+    format,
     upload_id,
     user,
     query_args,
@@ -92,7 +120,8 @@ async def test_get_upload_bundle(
     include_archive_files = query_args.get('include_archive_files', True)
     include_schemas = query_args.get('include_schemas', False)
 
-    url = build_url(f'uploads/{upload_id}/bundle', query_args)
+    query_args = {**query_args, **({'format': format} if format is not None else {})}
+    url = build_url(f'uploads/{upload_id}/{route}', query_args)
     response = perform_get(client, url, user_auth=auth_headers[user])
     assert_response(response, expected_status_code)
     if expected_status_code == 200:
@@ -134,6 +163,7 @@ async def test_get_upload_bundle(
             )
 
 
+@pytest.mark.parametrize('route', ['bundle', 'export'])
 @pytest.mark.asyncio
 async def test_get_upload_bundle_includes_schema_raw_file(
     auth_headers,
@@ -141,6 +171,7 @@ async def test_get_upload_bundle_includes_schema_raw_file(
     temporal_worker,
     example_data_writeable,
     monkeypatch,
+    route,
 ):
     package = Package(name='tests.upload_bundle_schema')
 
@@ -155,7 +186,7 @@ async def test_get_upload_bundle_includes_schema_raw_file(
     )
 
     upload_id = example_data_writeable['id_published_w']
-    url = build_url(f'uploads/{upload_id}/bundle', dict(include_schemas=True))
+    url = build_url(f'uploads/{upload_id}/{route}', dict(include_schemas=True))
     response = perform_get(client, url, user_auth=auth_headers['user1'])
     assert_response(response, 200)
 
@@ -175,6 +206,8 @@ async def test_get_upload_bundle_includes_schema_raw_file(
         }
 
 
+@pytest.mark.parametrize('route', ['bundle', 'import'])
+@pytest.mark.parametrize('format', [None, 'bundle'])
 @pytest.mark.parametrize(
     'publish, test_duplicate, user, export_args, query_args, expected_status_code',
     [
@@ -195,6 +228,8 @@ async def test_post_upload_bundle(
     temporal_worker,
     non_empty_uploaded,
     internal_example_user_metadata,
+    route,
+    format,
     publish,
     test_duplicate,
     user,
@@ -232,11 +267,15 @@ async def test_post_upload_bundle(
             upload.delete_upload_local()
         # Finally, import the bundle
         user_auth = auth_headers[user]
+        query_args = {
+            **query_args,
+            **({'format': format} if format is not None else {}),
+        }
         response = await asyncio.to_thread(
             lambda: perform_post_put_file(
                 client,
                 'POST',
-                'uploads/bundle',
+                f'uploads/{route}',
                 'stream',
                 export_path,
                 user_auth,
