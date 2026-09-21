@@ -19,12 +19,17 @@
 import tempfile
 import uuid
 from pathlib import Path
-from unittest.mock import MagicMock, Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from temporalio.client import WorkflowFailureError
+from temporalio.common import WorkflowIDConflictPolicy
+from temporalio.exceptions import WorkflowAlreadyStartedError
+from temporalio.service import RPCError, RPCStatusCode
 
 from nomad.actions import TaskQueue
+from nomad.actions.workflows.utils import SERVER_STATS_WORKFLOW_ID, setup_server_stats
+from nomad.config import config
 from nomad.processing.base import ProcessFailure, ProcessStatus
 from nomad.processing.data import Upload
 from nomad.workflows.activities import (
@@ -50,7 +55,7 @@ from nomad.workflows.shared_objects import (
     UploadProcessingWorkflowInput,
 )
 from nomad.workflows.utils import CLEANUP_ENTRY_BATCH_SIZE, ENTRY_BATCH_FILE_SIZE
-from nomad.workflows.workflows import UpdateUploadWorkflow
+from nomad.workflows.workflows import ServerStatsWorkflow, UpdateUploadWorkflow
 
 # Test Constants
 TEST_UPLOAD_ID = 'test-upload-123'
@@ -1654,3 +1659,103 @@ class TestTransferUploadOwnershipWorkflow:
             ownership_transfer_mock_data_layer[
                 'record_queryset'
             ].delete.assert_called_once()
+
+
+def _not_found_error() -> RPCError:
+    return RPCError('Workflow not found', RPCStatusCode.NOT_FOUND, b'')
+
+
+def _mock_temporal_client(
+    handle: AsyncMock | None = None,
+) -> tuple[AsyncMock, AsyncMock]:
+    mock_client = AsyncMock()
+    mock_handle = handle or AsyncMock()
+    mock_client.get_workflow_handle = MagicMock(return_value=mock_handle)
+    return mock_client, mock_handle
+
+
+class TestSetupServerStats:
+    """Tests for the setup_server_stats function."""
+
+    @pytest.mark.asyncio
+    async def test_setup_server_stats_starts_when_missing(self):
+        mock_client, mock_handle = _mock_temporal_client()
+        mock_handle.describe.side_effect = _not_found_error()
+
+        await setup_server_stats(mock_client)
+
+        mock_client.get_workflow_handle.assert_called_once_with(
+            SERVER_STATS_WORKFLOW_ID
+        )
+        mock_handle.terminate.assert_not_called()
+        mock_client.start_workflow.assert_called_once()
+        call_args = mock_client.start_workflow.call_args
+        assert call_args[0][0] == ServerStatsWorkflow.run
+        assert call_args[1]['id'] == SERVER_STATS_WORKFLOW_ID
+        assert call_args[1]['task_queue'] == TaskQueue.NOMAD_INTERNAL_WORKFLOWS.value
+        assert (
+            call_args[1]['cron_schedule']
+            == config.services.collect_server_stats_cron_expression
+        )
+        assert (
+            call_args[1]['id_conflict_policy'] == WorkflowIDConflictPolicy.USE_EXISTING
+        )
+
+    @pytest.mark.asyncio
+    async def test_setup_server_stats_is_idempotent_when_cron_matches(self):
+        mock_client, mock_handle = _mock_temporal_client()
+        mock_description = MagicMock()
+        mock_description.raw_info.cron_schedule = (
+            config.services.collect_server_stats_cron_expression
+        )
+        mock_handle.describe.return_value = mock_description
+
+        await setup_server_stats(mock_client)
+
+        mock_handle.terminate.assert_not_called()
+        mock_client.start_workflow.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_setup_server_stats_handles_already_started(self):
+        mock_client, mock_handle = _mock_temporal_client()
+        mock_handle.describe.side_effect = _not_found_error()
+        mock_client.start_workflow.side_effect = WorkflowAlreadyStartedError(
+            SERVER_STATS_WORKFLOW_ID, 'ServerStatsWorkflow'
+        )
+
+        await setup_server_stats(mock_client)
+
+        mock_client.start_workflow.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_setup_server_stats_terminates_when_disabled(self, monkeypatch):
+        monkeypatch.setattr(config.services, 'collect_server_stats', False)
+        mock_client, mock_handle = _mock_temporal_client()
+
+        await setup_server_stats(mock_client)
+
+        mock_handle.terminate.assert_awaited_once()
+        mock_client.start_workflow.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_server_stats_workflow_execution(
+        self,
+        mongo_function,
+        elastic_function,
+        raw_files_function,
+        temporal_worker,
+        monkeypatch,
+    ):
+        mock_collect = MagicMock()
+        monkeypatch.setattr(
+            'nomad.workflows.activities.collect_server_stats', mock_collect
+        )
+
+        async with temporal_worker() as env:
+            await env.client.execute_workflow(
+                'ServerStatsWorkflow',
+                id='test-server-stats-workflow',
+                task_queue=TaskQueue.NOMAD_INTERNAL_WORKFLOWS.value,
+            )
+
+        mock_collect.assert_called_once()

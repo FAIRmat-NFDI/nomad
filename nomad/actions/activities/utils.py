@@ -42,6 +42,7 @@ from nomad.workflows.activities import (
     process_entry_batch_from_file_activity,
     publish_externally_activity,
     publish_upload_activity,
+    server_stats_checkin_activity,
     setup_example_upload_activity,
     update_files_activity,
 )
@@ -71,6 +72,7 @@ def get_nomad_internal_activities() -> list[Callable]:
         process_entry_batch_from_file_activity,
         handle_batch_heartbeat_failure_activity,
         complete_upload_ownership_transfer_activity,
+        server_stats_checkin_activity,
     ]
 
 

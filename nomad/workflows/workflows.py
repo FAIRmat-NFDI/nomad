@@ -65,6 +65,7 @@ with workflow.unsafe.imports_passed_through():
         process_entry_batch_from_file_activity,
         publish_externally_activity,
         publish_upload_activity,
+        server_stats_checkin_activity,
         setup_example_upload_activity,
         update_files_activity,
     )
@@ -950,3 +951,13 @@ class PublishExternallyWorkflow:
                 retry_policy=retry_policy,
                 priority=PUBLISH_EXTERNALLY_PRIORITY,
             )
+
+
+@workflow.defn
+class ServerStatsWorkflow:
+    @workflow.run
+    async def run(self):
+        await workflow.execute_activity(
+            server_stats_checkin_activity,
+            start_to_close_timeout=timedelta(seconds=300),
+        )

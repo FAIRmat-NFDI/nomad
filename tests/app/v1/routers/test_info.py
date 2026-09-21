@@ -16,52 +16,58 @@
 # limitations under the License.
 #
 
-from datetime import timezone
+from unittest.mock import MagicMock
 
-import nomad.mongo.cache as cache_module
-from nomad.common import now
+from nomad.mongo.cache import SERVER_STATS_CACHE_KEY, MongoCache
+from nomad.server_stats import collect_server_stats
 
 
-def assert_info(client):
+def test_info_without_snapshot(client, mongo_function):
+    rv = client.get('info')
+    assert rv.status_code == 200
+    data = rv.json()
+    assert 'version' in data
+    assert 'parsers' in data
+    assert data['parsers'] == []
+    assert 'statistics' not in data
+    assert 'collect_time' not in data
+
+
+def test_info_does_not_collect_on_get(client, mongo_function, monkeypatch):
+    collect = MagicMock(side_effect=AssertionError('GET /info must not collect'))
+    monkeypatch.setattr('nomad.server_stats.collect_server_stats', collect)
+
+    rv = client.get('info')
+    assert rv.status_code == 200
+    collect.assert_not_called()
+    assert 'statistics' not in rv.json()
+
+
+def test_info_reads_cached_snapshot(
+    client, mongo_function, elastic_function, raw_files_function
+):
+    collect_server_stats()
+
+    cached = MongoCache.objects(key=SERVER_STATS_CACHE_KEY).first()
+    assert cached is not None
+
     rv = client.get('info')
     assert rv.status_code == 200
     data = rv.json()
     assert 'codes' in data
     assert 'parsers' in data
     assert 'statistics' in data
+    assert 'public_data_size' in data['statistics']
+    assert 'collect_time' in data
     assert len(data['parsers']) >= len(data['codes'])
 
 
-def get_cached():
-    mongo_backend = cache_module.MongoBackend()
-    return mongo_backend._get_cached(
-        cache_module.MongoCache.objects.order_by('-create_time').first().key
-    )
+def test_info_survives_startup_cache_flush(
+    client, mongo_function, elastic_function, raw_files_function
+):
+    collect_server_stats()
+    MongoCache.objects(key__ne=SERVER_STATS_CACHE_KEY).delete()
 
-
-def test_info(monkeypatch, client, mongo_function, elastic_function):
-    # We do not test expiration of the info cache because we cannot force mongoDB to
-    # check for expired documents and we do not want to wait for 60+ seconds until it
-    # happens on its own.
-
-    noon = now().replace(hour=12, minute=34, second=56, microsecond=789000)
-    morning = noon.replace(hour=6)
-    evening = noon.replace(hour=18)
-
-    monkeypatch.setattr(cache_module, 'now', lambda: morning)
-    assert_info(client)
-    cached = get_cached()
-    assert cached['create_time'].replace(tzinfo=timezone.utc) == morning
-
-    # cache is still valid (and wouldn't expire fast enough anyway)
-    monkeypatch.setattr(cache_module, 'now', lambda: noon)
-    assert_info(client)
-    cached = get_cached()
-    assert cached['create_time'].replace(tzinfo=timezone.utc) == morning
-
-    # forcing cache miss
-    get_cached().delete()
-    monkeypatch.setattr(cache_module, 'now', lambda: evening)
-    assert_info(client)
-    cached = get_cached()
-    assert cached['create_time'].replace(tzinfo=timezone.utc) == evening
+    rv = client.get('info')
+    assert rv.status_code == 200
+    assert 'statistics' in rv.json()
