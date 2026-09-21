@@ -31,12 +31,12 @@ import warnings  # TODO put somemore thought into warnings
 from email.mime.text import MIMEText
 from email.utils import make_msgid
 
-from elasticsearch_dsl import connections
 from mongoengine import connect, disconnect
 from mongoengine.connection import ConnectionFailure
 
 from nomad import utils
 from nomad.config import config
+from nomad.elastic_compat import create_elastic_client
 
 # The metainfo is defined and used during imports. This is problematic.
 # We import all parsers very early in the infrastructure setup. This will populate
@@ -193,17 +193,8 @@ def check_mongo():
 
 def setup_elastic():
     """Creates connection to elastic search."""
-    http_auth = None
-    if config.elastic.username and config.elastic.password:
-        http_auth = (config.elastic.username, config.elastic.password)
     global elastic_client
-    elastic_client = connections.create_connection(
-        hosts=[f'{config.elastic.host}:{config.elastic.port}'],
-        timeout=config.elastic.timeout,
-        max_retries=10,
-        retry_on_timeout=True,
-        http_auth=http_auth,
-    )
+    elastic_client = create_elastic_client()
     logger.info('setup elastic connection')
     from nomad.metainfo.elasticsearch_extension import (
         create_indices as create_v1_indices,

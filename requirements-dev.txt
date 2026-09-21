@@ -10,7 +10,7 @@ aiosmtpd==1.4.6           # via nomad-lab (pyproject.toml)
 alembic==1.19.1           # via jupyterhub, -r requirements.txt
 annotated-doc==0.0.5      # via fastapi, -r requirements.txt
 annotated-types==0.8.0    # via pydantic, -r requirements.txt
-anyio==4.14.2             # via httpx, httpx2, starlette, watchfiles, -r requirements.txt
+anyio==4.14.2             # via elasticsearch, httpx, httpx2, starlette, watchfiles, -r requirements.txt
 appdirs==1.4.4            # via molid, -r requirements.txt
 ase==3.29.0               # via matid, molid, -r requirements.txt, nomad-lab (pyproject.toml)
 asgiref==3.12.1           # via opentelemetry-instrumentation-asgi, -r requirements.txt
@@ -30,7 +30,7 @@ botocore==1.43.56         # via aiobotocore, -r requirements.txt
 cachecontrol==0.14.4      # via pip-audit
 cachetools==7.1.7         # via -r requirements.txt, nomad-lab (pyproject.toml)
 cbor2==6.1.4              # via msglc, -r requirements.txt
-certifi==2026.7.22        # via elasticsearch, httpcore, httpx, requests, -r requirements.txt
+certifi==2026.7.22        # via elastic-transport, elasticsearch7, httpcore, httpx, requests, -r requirements.txt
 certipy==0.2.3            # via jupyterhub, -r requirements.txt
 cffi==2.1.1 ; platform_python_implementation != 'PyPy'  # via cryptography, -r requirements.txt
 charset-normalizer==3.5.1  # via requests, -r requirements.txt
@@ -48,8 +48,9 @@ dnspython==2.8.0          # via email-validator, pymongo, -r requirements.txt
 docker==7.2.0             # via dockerspawner, -r requirements.txt
 dockerspawner==14.0.0     # via -r requirements.txt, nomad-lab (pyproject.toml)
 docstring-parser==0.18.0  # via -r requirements.txt, nomad-lab (pyproject.toml)
-elasticsearch==7.17.13    # via elasticsearch-dsl, -r requirements.txt, nomad-lab (pyproject.toml)
-elasticsearch-dsl==7.4.1  # via -r requirements.txt, nomad-lab (pyproject.toml)
+elastic-transport==9.4.2  # via elasticsearch, -r requirements.txt
+elasticsearch==9.5.0      # via -r requirements.txt, nomad-lab (pyproject.toml)
+elasticsearch7==7.17.13   # via -r requirements.txt, nomad-lab (pyproject.toml)
 email-validator==2.3.0    # via pydantic, -r requirements.txt
 escapism==1.1.0           # via dockerspawner, -r requirements.txt
 essential-generators==1.0  # via nomad-lab (pyproject.toml)
@@ -189,7 +190,7 @@ pytest-socket==0.8.1      # via nomad-lab (pyproject.toml)
 pytest-split==0.11.0      # via nomad-lab (pyproject.toml)
 pytest-timeout==2.4.0     # via nomad-lab (pyproject.toml)
 pytest-xdist==3.8.0       # via nomad-lab (pyproject.toml)
-python-dateutil==2.9.0.post0  # via aiobotocore, botocore, elasticsearch-dsl, jupyterhub, matplotlib, pandas, pendulum, rfc3161ng, temporalio, -r requirements.txt
+python-dateutil==2.9.0.post0  # via aiobotocore, botocore, elasticsearch, jupyterhub, matplotlib, pandas, pendulum, rfc3161ng, temporalio, -r requirements.txt
 python-dotenv==1.2.3      # via pydantic-settings, uvicorn, -r requirements.txt
 python-gitlab==8.5.0      # via nomad-lab (pyproject.toml)
 python-json-logger==4.2.0  # via jupyter-telemetry, -r requirements.txt
@@ -216,7 +217,8 @@ scipy==1.15.3 ; python_full_version < '3.11'  # via ase, pymatgen, -r requiremen
 scipy==1.17.1 ; python_full_version == '3.11.*'  # via ase, pymatgen-core, -r requirements.txt, nomad-lab (pyproject.toml)
 scipy==1.18.1 ; python_full_version >= '3.12'  # via ase, pymatgen-core, -r requirements.txt, nomad-lab (pyproject.toml)
 sentinels==1.1.1          # via mongomock, -r requirements.txt
-six==1.17.0               # via elasticsearch-dsl, python-dateutil, rdflib, -r requirements.txt
+six==1.17.0               # via python-dateutil, rdflib, -r requirements.txt
+sniffio==1.3.1            # via elastic-transport, elasticsearch, -r requirements.txt
 sortedcontainers==2.4.0   # via cyclonedx-python-lib
 soupsieve==2.9.2          # via beautifulsoup4, -r requirements.txt
 spglib==2.7.0             # via matid, pymatgen, pymatgen-core, -r requirements.txt
@@ -237,13 +239,13 @@ tqdm==4.70.0              # via molid, pymatgen, pymatgen-core, -r requirements.
 traitlets==5.16.1         # via jupyter-telemetry, jupyterhub, oauthenticator, -r requirements.txt
 truststore==0.10.4 ; sys_platform != 'emscripten'  # via httpcore2, httpx2, -r requirements.txt
 types-protobuf==7.35.1.20260825  # via temporalio, -r requirements.txt
-typing-extensions==4.16.0  # via aiobotocore, aiohttp, aiosignal, alembic, anyio, ase, asgiref, beanie, cryptography, cyclonedx-python-lib, exceptiongroup, fastapi, fastapi-cache2, flexcache, flexparser, grpcio, h5grove, httpx2, jwcrypto, multidict, mypy, nexus-rpc, opentelemetry-api, opentelemetry-exporter-otlp-proto-grpc, opentelemetry-exporter-otlp-proto-http, opentelemetry-sdk, opentelemetry-semantic-conventions, pint, pydantic, pydantic-core, pyjwt, pytest-asyncio, referencing, spglib, sqlalchemy, starlette, structlog, temporalio, typing-inspection, uvicorn, -r requirements.txt
+typing-extensions==4.16.0  # via aiobotocore, aiohttp, aiosignal, alembic, anyio, ase, asgiref, beanie, cryptography, cyclonedx-python-lib, elasticsearch, exceptiongroup, fastapi, fastapi-cache2, flexcache, flexparser, grpcio, h5grove, httpx2, jwcrypto, multidict, mypy, nexus-rpc, opentelemetry-api, opentelemetry-exporter-otlp-proto-grpc, opentelemetry-exporter-otlp-proto-http, opentelemetry-sdk, opentelemetry-semantic-conventions, pint, pydantic, pydantic-core, pyjwt, pytest-asyncio, referencing, spglib, sqlalchemy, starlette, structlog, temporalio, typing-inspection, uvicorn, -r requirements.txt
 typing-inspection==0.4.4  # via fastapi, pydantic, pydantic-settings, -r requirements.txt
 tzdata==2026.3            # via pandas, pendulum, -r requirements.txt
 uncertainties==3.2.3      # via pymatgen, pymatgen-core, -r requirements.txt
 unidecode==1.4.0          # via -r requirements.txt, nomad-lab (pyproject.toml)
 universal-pathlib==0.3.10  # via msglc, -r requirements.txt
-urllib3==2.7.0            # via botocore, docker, elasticsearch, requests, -r requirements.txt
+urllib3==2.7.0            # via botocore, docker, elastic-transport, elasticsearch7, requests, -r requirements.txt
 uvicorn==0.52.4           # via fastapi-cache2, h5grove, -r requirements.txt, nomad-lab (pyproject.toml)
 uvloop==0.22.1 ; platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32'  # via uvicorn, -r requirements.txt
 validators==0.35.0        # via -r requirements.txt, nomad-lab (pyproject.toml)

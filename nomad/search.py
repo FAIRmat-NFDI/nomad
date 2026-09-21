@@ -34,10 +34,8 @@ from collections.abc import Callable, Generator, Iterable, Iterator
 from enum import Enum
 from typing import Any, cast
 
-import elasticsearch.helpers
-from elasticsearch.exceptions import RequestError, TransportError
-from elasticsearch_dsl import A, Q, Search
-from elasticsearch_dsl.query import Query as EsQuery
+from elasticsearch.dsl import A, Q, Search
+from elasticsearch.dsl.query import Query as EsQuery
 from fastapi import status
 from pydantic import ValidationError
 
@@ -77,6 +75,12 @@ from nomad.app.v1.models.models import (
 )
 from nomad.config import config
 from nomad.datamodel import AuthorReference, EntryArchive, EntryMetadata, UserReference
+from nomad.elastic_compat import (
+    REQUEST_ERROR_TYPES,
+    TRANSPORT_ERROR_TYPES,
+    bulk,
+    execute_search,
+)
 from nomad.metainfo import Datetime, Package, Quantity
 from nomad.metainfo.elasticsearch_extension import (
     Elasticsearch,
@@ -148,11 +152,11 @@ def update_by_query(
         result = infrastructure.elastic_client.update_by_query(
             body=body, index=config.elastic.entries_index
         )
-    except TransportError as e:
+    except TRANSPORT_ERROR_TYPES as e:
         utils.get_logger(__name__).error(
             'es update_by_query script error',
             exc_info=e,
-            es_info=json.dumps(e.info, indent=2),
+            es_info=json.dumps(getattr(e, 'info', str(e)), indent=2),
         )
         raise SearchError(e)
 
@@ -187,9 +191,11 @@ def delete_by_query(
         result = infrastructure.elastic_client.delete_by_query(
             body=body, index=config.elastic.entries_index
         )
-    except TransportError as e:
+    except TRANSPORT_ERROR_TYPES as e:
         utils.get_logger(__name__).error(
-            'es delete_by_query error', exc_info=e, es_info=json.dumps(e.info, indent=2)
+            'es delete_by_query error',
+            exc_info=e,
+            es_info=json.dumps(getattr(e, 'info', str(e)), indent=2),
         )
         raise SearchError(e)
 
@@ -208,9 +214,11 @@ def refresh():
         infrastructure.elastic_client.indices.refresh(
             index=config.elastic.entries_index
         )
-    except TransportError as e:
+    except TRANSPORT_ERROR_TYPES as e:
         utils.get_logger(__name__).error(
-            'es delete_by_query error', exc_info=e, es_info=json.dumps(e.info, indent=2)
+            'es delete_by_query error',
+            exc_info=e,
+            es_info=json.dumps(getattr(e, 'info', str(e)), indent=2),
         )
         raise SearchError(e)
 
@@ -279,9 +287,7 @@ def update_metadata(
             )
 
     updates = list(elastic_updates())
-    _, failed = elasticsearch.helpers.bulk(
-        infrastructure.elastic_client, updates, stats_only=True
-    )
+    _, failed = bulk(infrastructure.elastic_client, updates, stats_only=True)
     failed = cast(int, failed)
 
     if refresh:
@@ -531,7 +537,7 @@ def _owner_es_query(owner: str | None, user_id: str | None = None):
     def query(query_type='term', **kwargs):
         return Q(query_type, **kwargs)
 
-    def viewers_query(user_id: str | None, *, force_groups: bool = False) -> Q:
+    def viewers_query(user_id: str | None, *, force_groups: bool = False) -> Any:
         """Filter for user viewers and group viewers.
 
         force_groups: If true, add group filter even if user_id is None."""
@@ -1035,7 +1041,7 @@ def _api_to_es_aggregation(
     agg: AggregationBase,
     post_agg_query: models.Query,
     create_es_query: Callable[[models.Query], EsQuery],
-) -> A:
+) -> None:
     """
     Creates an ES aggregation based on the API's aggregation model.
 
@@ -1044,7 +1050,7 @@ def _api_to_es_aggregation(
         agg: The aggregation information
     """
     agg_name = f'agg:{name}'
-    es_aggs = es_search.aggs
+    es_aggs: Any = es_search.aggs
     filter = None
 
     # When the aggregation has been configured with exclude_from_search, we need
@@ -1074,7 +1080,7 @@ def _api_to_es_aggregation(
                 A(metric_aggregation, field=metric_quantity.qualified_field),
             )
 
-        return
+        return None
 
     # Get quantity aggregation details
     agg = cast(QuantityAggregation, agg)
@@ -1253,8 +1259,10 @@ def _api_to_es_aggregation(
             A(
                 AggType.DATE_HISTOGRAM,
                 field=quantity.search_field,
-                interval=agg.interval,
                 format='yyyy-MM-dd',
+                **agg.model_dump(
+                    include={'calendar_interval', 'fixed_interval'}, exclude_none=True
+                ),
             ),
         )
 
@@ -1886,7 +1894,7 @@ def search(
     }
 
     if len(excluded_agg_quantities) > 0:
-        and_clauses = list(_and_clauses(query))
+        and_clauses = list(_and_clauses(cast(Query, query)))
         pre_clauses = [
             and_clause
             for and_clause in and_clauses
@@ -1923,8 +1931,8 @@ def search(
 
     # execute
     try:
-        es_response = search.execute()
-    except RequestError as e:
+        es_response = execute_search(search)
+    except REQUEST_ERROR_TYPES as e:
         raise SearchError(e)
     more_response_data = {}
 

@@ -16,8 +16,10 @@
 # limitations under the License.
 #
 
+from typing import Any
+
 from cachetools import cached
-from elasticsearch_dsl import Q
+from elasticsearch.dsl import Q
 from optimade.filterparser import LarkParser
 from optimade.filtertransformers.elasticsearch import ElasticsearchQuantity as Quantity
 from optimade.filtertransformers.elasticsearch import (
@@ -79,7 +81,7 @@ def _get_transformer(without_prefix, **kwargs):
     return ElasticTransformer(quantities=quantities, **kwargs)
 
 
-def parse_filter(filter_str: str, without_prefix=False) -> Q:
+def parse_filter(filter_str: str, without_prefix=False) -> Any:
     """Parses the given optimade filter str and returns a suitable elastic search query.
 
     Arguments:

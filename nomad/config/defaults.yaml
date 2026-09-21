@@ -70,7 +70,9 @@ elastic:
   entries_index: nomad_entries_v1
   host: localhost
   port: 9200
+  scheme: http
   timeout: 60
+  version: '7'
 temporal:
   host: localhost
   namespace: default

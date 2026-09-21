@@ -937,6 +937,16 @@ def test_authorized_users_email_whitelist_logs_deprecation_warning(monkeypatch):
             },
             id='boolean-versions',
         ),
+        pytest.param(
+            {'NOMAD_ELASTIC_VERSION': '"7"'},
+            {'elastic': {'version': '7'}},
+            id='string-literal-version',
+        ),
+        pytest.param(
+            {'NOMAD_ELASTIC_SCHEME': '"https"'},
+            {'elastic': {'scheme': 'https'}},
+            id='string-literal-scheme',
+        ),
     ],
 )
 def test_json_values(conf_env, conf_expected, monkeypatch):

@@ -237,6 +237,16 @@ def setup_tracing(app: 'FastAPI | None' = None):
         )
 
         PymongoInstrumentor().instrument()
-        ElasticsearchInstrumentor().instrument()
+        if config.elastic.version == '9':
+            ElasticsearchInstrumentor().instrument()
+        else:
+            # The OpenTelemetry Elasticsearch instrumentor currently patches
+            # only the un-namespaced current client. ES7 is intentionally kept
+            # behind nomad.elastic_compat, so its transport calls are not
+            # automatically instrumented.
+            logger.warning(
+                'elasticsearch_v7_tracing_unavailable',
+                configured_version='7',
+            )
         _setup_done = True
         _setup_pid = current_pid

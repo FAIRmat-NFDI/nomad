@@ -123,13 +123,13 @@ from collections import defaultdict
 from collections.abc import Callable, Iterator
 from typing import TYPE_CHECKING, Any, Optional, cast
 
-from elasticsearch.exceptions import TransportError
-from elasticsearch_dsl import Q
+from elasticsearch.dsl import Q
 from pint import Quantity as PintQuantity
 
 from nomad import utils
 from nomad.config import config
 from nomad.config.models.plugins import SchemaPackageEntryPoint
+from nomad.elastic_compat import TRANSPORT_ERROR_TYPES
 
 from . import DefinitionAnnotation
 from .data_type import Datatype, to_elastic_type
@@ -635,7 +635,7 @@ class Index:
 
         try:
             return getattr(self.elastic_client, name)(*args, **kwargs)
-        except TransportError as e:
+        except TRANSPORT_ERROR_TYPES as e:
             status = getattr(e, 'status_code', None) or getattr(e, 'status', None)
             if status == 413:
                 payload = kwargs.get('body', kwargs.get('operations', None))
@@ -940,13 +940,13 @@ class Elasticsearch(DefinitionAnnotation):
                 )
 
         if self.suggestion:
-            from elasticsearch_dsl import Completion
+            from elasticsearch.dsl import Completion
 
             # The standard analyzer will retain numbers unlike the simple
             # analyzer which is the default.
             self._mapping = Completion(analyzer='standard').to_dict()
         elif self._custom_mapping is not None:
-            from elasticsearch_dsl import Field
+            from elasticsearch.dsl import Field
 
             if isinstance(self._custom_mapping, Field):
                 self._mapping = self._custom_mapping.to_dict()
@@ -1139,7 +1139,7 @@ class SearchQuantity:
         )
         return self.wrap_dynamic(sub_query)
 
-    def wrap_dynamic(self, sub_query: Q):
+    def wrap_dynamic(self, sub_query: Any):
         """For dynamic quantities, wraps the given query in a nested query to
         target them correctly.
         """
@@ -1287,7 +1287,7 @@ def index_entries(entries: list, refresh: bool = False) -> dict[str, str]:
                         request_timeout=config.elastic.bulk_timeout,
                     )
                     break
-                except TransportError as e:
+                except TRANSPORT_ERROR_TYPES as e:
                     if (
                         not _is_retryable_bulk_error(e)
                         or attempt >= config.elastic.bulk_retry_attempts

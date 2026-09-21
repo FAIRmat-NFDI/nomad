@@ -35,6 +35,13 @@ sys.modules['optimade.server.logger'] = importlib.import_module(
     'nomad.app.optimade_logger'
 )
 
+# optimade-python-tools still imports the pre-8 ``elasticsearch_dsl`` module
+# name.  Elasticsearch 9 ships the DSL under ``elasticsearch.dsl``; install a
+# deliberate compatibility alias before importing optimade's transformers.
+import elasticsearch.dsl
+
+sys.modules.setdefault('elasticsearch_dsl', elasticsearch.dsl)
+
 
 # starlette>=1.0 removed `Router.on_startup/on_shutdown`.
 # FastAPI's `include_router()` still expects these attrs.

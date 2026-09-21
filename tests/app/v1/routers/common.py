@@ -24,6 +24,7 @@ from urllib.parse import unquote, urlencode
 import pytest
 from fastapi import status
 
+from nomad.app.v1.models.models import DateHistogramAggregation
 from nomad.datamodel import results
 from nomad.utils import deep_get
 from tests.utils import assert_at_least, assert_url_query_args, build_url
@@ -682,6 +683,46 @@ def aggregation_test_parameters(
             {
                 'date_histogram': {
                     'quantity': histogram_date['name'],
+                    'calendar_interval': histogram_date['interval'],
+                }
+            },
+            histogram_date['interval_size'],
+            histogram_date['interval_size'],
+            200,
+            'user1',
+            id='date-histogram-calendar-interval',
+        ),
+        pytest.param(
+            {
+                'date_histogram': {
+                    'quantity': histogram_date['name'],
+                    'fixed_interval': '24h',
+                }
+            },
+            histogram_date['interval_size'],
+            histogram_date['interval_size'],
+            200,
+            'user1',
+            id='date-histogram-fixed-interval',
+        ),
+        pytest.param(
+            {
+                'date_histogram': {
+                    'quantity': histogram_date['name'],
+                    'calendar_interval': '1d',
+                    'fixed_interval': '24h',
+                }
+            },
+            -1,
+            -1,
+            422,
+            'user1',
+            id='date-histogram-both-intervals',
+        ),
+        pytest.param(
+            {
+                'date_histogram': {
+                    'quantity': histogram_date['name'],
                     'interval': histogram_date['interval'],
                     'metrics': ['n_uploads'],
                 }
@@ -701,7 +742,12 @@ def aggregation_test_parameters(
             id='date-histogram-no-date',
         ),
         pytest.param(
-            {'date_histogram': {'quantity': histogram_date['name'], 'interval': '1xy'}},
+            {
+                'date_histogram': {
+                    'quantity': histogram_date['name'],
+                    'interval': '1xy',
+                }
+            },
             -1,
             -1,
             400,
@@ -1274,7 +1320,16 @@ def assert_aggregations(
     if agg_type != 'statistics':
         assert 'quantity' in agg_response
 
-    assert_at_least(agg, agg_response)
+    if agg_type == 'date_histogram':
+        # Date histogram responses expose the normalized interval fields.
+        expected_agg = DateHistogramAggregation(**agg).model_dump(exclude_none=True)
+        assert 'interval' not in agg_response
+        assert ('calendar_interval' in agg_response) != (
+            'fixed_interval' in agg_response
+        )
+    else:
+        expected_agg = agg
+    assert_at_least(expected_agg, agg_response)
 
     data = agg_response['data']
     n_data = len(data)

@@ -904,8 +904,81 @@ class HistogramAggregation(BucketAggregation):
         return values
 
 
+_CALENDAR_INTERVALS = frozenset(
+    {
+        'second',
+        '1s',
+        'minute',
+        '1m',
+        'hour',
+        '1h',
+        'day',
+        '1d',
+        'week',
+        '1w',
+        'month',
+        '1M',
+        'quarter',
+        '1q',
+        'year',
+        '1y',
+    }
+)
+
+
 class DateHistogramAggregation(BucketAggregation):
-    interval: str = Field('1M')  #  type: ignore
+    interval: str | None = Field(  # type: ignore
+        None,
+        description=strip(
+            """
+            The date histogram bucketing interval. Deprecated, use calendar_interval
+            or fixed_interval instead.
+            """
+        ),
+    )
+    calendar_interval: str | None = Field(
+        None,
+        description=strip(
+            """
+            The calendar interval for the date histogram (e.g. 1s, 1m, 1h, 1d, 1w, 1M, 1q, 1y).
+            Only one of calendar_interval or fixed_interval can be given.
+            """
+        ),
+    )
+    fixed_interval: str | None = Field(
+        None,
+        description=strip(
+            """
+            The fixed interval for the date histogram (e.g. 10m, 2h, 30s).
+            Only one of calendar_interval or fixed_interval can be given.
+            """
+        ),
+    )
+
+    @model_validator(mode='after')
+    def check_intervals(self):
+        specified = [
+            k
+            for k, v in [
+                ('interval', self.interval),
+                ('calendar_interval', self.calendar_interval),
+                ('fixed_interval', self.fixed_interval),
+            ]
+            if v is not None
+        ]
+        if len(specified) > 1:
+            raise ValueError(
+                f'Only one of {", ".join(specified)} can be given for date histogram aggregation.'
+            )
+        if self.interval is not None:
+            if self.interval in _CALENDAR_INTERVALS:
+                self.calendar_interval = self.interval
+            else:
+                self.fixed_interval = self.interval
+            self.interval = None
+        elif not specified:
+            self.calendar_interval = '1M'
+        return self
 
 
 class AutoDateHistogramAggregation(BucketAggregation):

@@ -21,7 +21,7 @@ from unittest.mock import Mock
 
 import numpy as np
 import pytest
-from elasticsearch_dsl import Keyword
+from elasticsearch.dsl import Keyword
 
 from nomad.config import config
 from nomad.datamodel.datamodel import SearchableQuantity
@@ -144,7 +144,7 @@ class Material(MSection):
     springer_labels = Quantity(
         type=str,
         shape=['*'],
-        a_elasticsearch=(Elasticsearch(mapping=Keyword())),
+        a_elasticsearch=(Elasticsearch(mapping=Keyword().to_dict())),
     )
 
 

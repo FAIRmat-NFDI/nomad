@@ -27,8 +27,6 @@ from pathlib import Path
 from typing import TypeAlias
 from unittest.mock import MagicMock
 
-import elasticsearch
-import elasticsearch.exceptions
 import pytest
 import pytest_asyncio
 from mongoengine import OperationError
@@ -42,6 +40,12 @@ from nomad.actions import TaskQueue
 from nomad.actions.activities.utils import get_nomad_internal_activities
 from nomad.actions.workflows.utils import get_nomad_internal_workflows
 from nomad.config import config
+from nomad.elastic_compat import (
+    CONFLICT_ERROR_TYPES,
+    NOT_FOUND_ERROR_TYPES,
+    TRANSPORT_ERROR_TYPES,
+    create_elastic_client,
+)
 from nomad.infrastructure import index_builtin_packages
 
 
@@ -293,11 +297,7 @@ def clear_elastic_infra(indices):
     """
     Removes and re-creates all indices and mappings.
     """
-    from elasticsearch_dsl import connections
-
-    connection = connections.create_connection(
-        hosts=[f'{config.elastic.host}:{config.elastic.port}']
-    )
+    connection = create_elastic_client(verify=False)
 
     for index in indices:
         try:
@@ -324,25 +324,25 @@ def clear_elastic(elastic_infra, indices):
                         refresh=True,
                     )
                     break  # Success! Break the retry loop
-                except elasticsearch.exceptions.ConflictError:
+                except CONFLICT_ERROR_TYPES:
                     if retry_count:
                         # Sleep and try again
                         time.sleep(0.5)
                         retry_count -= 1
                     else:
                         raise
-                except elasticsearch.exceptions.NotFoundError:
+                except NOT_FOUND_ERROR_TYPES:
                     # Happens if a test removed indices without recreating them.
                     clear_elastic_infra(indices)
                     break
-                except elasticsearch.exceptions.TransportError:
+                except TRANSPORT_ERROR_TYPES:
                     if retry_count:
                         # Sleep and try again
                         time.sleep(1)
                         retry_count -= 1
                     else:
                         raise
-    except elasticsearch.exceptions.NotFoundError:
+    except NOT_FOUND_ERROR_TYPES:
         # Happens if a test removed indices without recreating them.
         clear_elastic_infra(indices)
 

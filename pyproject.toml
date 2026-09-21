@@ -19,8 +19,8 @@ dependencies = [
   "cachetools>=4.2.4",
   "click>=7.1.2",
   "docstring-parser>=0.12",
-  "elasticsearch-dsl>=7,<8",
-  "elasticsearch>=7.17.3", # lower versions have incompatibilies with some numpy versions.
+  "elasticsearch>=9,<10",
+  "elasticsearch7>=7.17,<8",
   "fsspec>=2026.2.0",
   "h5py>=3.6.0",
   "httpx2>=2,<3",
@@ -204,6 +204,7 @@ plugins = ["pydantic.mypy"]
 extra-index-url = [
   "https://gitlab.mpcdf.mpg.de/api/v4/projects/2187/packages/pypi/simple",
 ]
+override-dependencies = ["elasticsearch>=9"]
 
 [tool.pytest.ini_options]
 asyncio_default_fixture_loop_scope = "function"
