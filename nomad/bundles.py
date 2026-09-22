@@ -51,16 +51,16 @@ from nomad.files import (
     zipfile,
 )
 from nomad.files import bundle_info_filename as BUNDLE_INFO_FILENAME
+from nomad.files.public_storage import (
+    choose_pack_fs,
+    complete_published_write,
+    detect_published_access,
+)
 from nomad.metainfo import Definition, Package, Quantity, Reference, Section, SubSection
 from nomad.metainfo.util import MDefNotFound
 from nomad.mongo.package import PackageDefinition
 from nomad.processing.base import ProcessStatus
 from nomad.processing.data import Entry, Upload, mongo_entry_metadata
-from nomad.public_storage import (
-    choose_pack_fs,
-    complete_published_write,
-    detect_published_access,
-)
 from nomad.schemas import get_schema
 
 

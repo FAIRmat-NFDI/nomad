@@ -48,9 +48,7 @@ from nomad.files import (
     empty_zip_file_size,
     measure_fs_reads,
 )
-from nomad.mongo.package import PackageDefinition
-from nomad.processing import Upload
-from nomad.public_storage import (
+from nomad.files.public_storage import (
     MARKER_FILENAME,
     ArtifactRecord,
     RemoteReadyMarker,
@@ -62,7 +60,9 @@ from nomad.public_storage import (
     invalidate_ready_cache,
     write_ready_marker,
 )
-from nomad.zip_index import RangeTailFile
+from nomad.files.zip_index import RangeTailFile
+from nomad.mongo.package import PackageDefinition
+from nomad.processing import Upload
 
 EntryWithFiles = tuple[datamodel.EntryMetadata, str]
 UploadWithFiles = tuple[str, list[datamodel.EntryMetadata], UploadFiles]
@@ -1154,7 +1154,7 @@ class TestPublicUploadFiles(UploadFilesContract):
             raise OSError('download interrupted')
 
         monkeypatch.setattr(
-            'nomad.public_storage.shutil.copyfileobj', interrupt_first_download
+            'nomad.files.public_storage.shutil.copyfileobj', interrupt_first_download
         )
         with pytest.raises(OSError, match='download interrupted'):
             complete_published_write(public.os_path, test_upload_id, 'public')
@@ -1164,7 +1164,9 @@ class TestPublicUploadFiles(UploadFilesContract):
         assert remote_fs.cat_file(remote_zip) == original_remote
         assert RemoteReadyMarker.load(public.os_path, remote_fs) is not None
 
-        monkeypatch.setattr('nomad.public_storage.shutil.copyfileobj', original_copy)
+        monkeypatch.setattr(
+            'nomad.files.public_storage.shutil.copyfileobj', original_copy
+        )
         complete_published_write(public.os_path, test_upload_id, 'public')
 
         with open(zip_file.os_path, 'rb') as file_obj:
@@ -1845,7 +1847,7 @@ class TestPublicUploadFiles(UploadFilesContract):
     def test_zip_metadata_cache_etag_mismatch_refetches(
         self, test_upload_id, monkeypatch, tmp_path
     ):
-        from nomad.zip_index import object_identity as original_identity
+        from nomad.files.zip_index import object_identity as original_identity
 
         monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
         monkeypatch.setattr(
@@ -1868,7 +1870,7 @@ class TestPublicUploadFiles(UploadFilesContract):
             return (_path, token['etag'], size)
 
         monkeypatch.setattr(zipfile, 'ZipFile', CountingZipFile)
-        monkeypatch.setattr('nomad.files.object_identity', fake_identity)
+        monkeypatch.setattr('nomad.files.uploads.object_identity', fake_identity)
 
         assert upload_files.raw_exists('examples_template')
         upload_files.close()
@@ -1944,7 +1946,7 @@ class TestPublicUploadFiles(UploadFilesContract):
     def test_zip_metadata_cache_corrupt_file_reparsed(
         self, test_upload_id, monkeypatch, tmp_path
     ):
-        from nomad.zip_index import IndexDiskStore, object_identity
+        from nomad.files.zip_index import IndexDiskStore, object_identity
 
         monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
         monkeypatch.setattr(

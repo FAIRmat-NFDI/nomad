@@ -46,7 +46,7 @@ import os
 import shutil
 import threading
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from cachetools import TTLCache
 from fsspec import AbstractFileSystem
@@ -54,10 +54,15 @@ from fsspec.implementations.local import LocalFileSystem
 
 from nomad.common import now
 from nomad.config import config
-from nomad.zip_index import object_identity
 
-if TYPE_CHECKING:
-    from nomad.files import DirectoryObject, PathObject
+from .filesystem import (
+    DirectoryObject,
+    PathObject,
+    empty_archive_file_size,
+    empty_hdf5_file_size,
+    empty_zip_file_size,
+)
+from .zip_index import object_identity
 
 logger = logging.getLogger(__name__)
 
@@ -420,20 +425,12 @@ def _cache_as_ready(os_path: str) -> None:
 
 
 def _upload_directory(upload_os_path: str, fs: AbstractFileSystem) -> DirectoryObject:
-    from nomad.files import DirectoryObject
-
     return DirectoryObject(upload_os_path, fs=fs)
 
 
 def _published_artifact_files(
     upload_os_path: str, access: Access, fs: AbstractFileSystem
 ) -> list[PathObject]:
-    from nomad.files import (
-        empty_archive_file_size,
-        empty_hdf5_file_size,
-        empty_zip_file_size,
-    )
-
     directory = _upload_directory(upload_os_path, fs)
     found = []
     for artifact, empty_size in (
@@ -453,8 +450,6 @@ def _has_published_artifacts(upload_os_path: str, fs: AbstractFileSystem) -> boo
 
 
 def _path_object(upload_os_path: str, name: str, fs: AbstractFileSystem) -> PathObject:
-    from nomad.files import PathObject
-
     return PathObject(os.path.join(upload_os_path, name), fs=fs)
 
 
