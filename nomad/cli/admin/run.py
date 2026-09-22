@@ -325,7 +325,11 @@ def run_hub():
     from jupyterhub.app import main
 
     if 'JUPYTERHUB_CRYPT_KEY' not in os.environ:
-        crypt_key = config.north.jupyterhub_crypt_key
+        crypt_key = (
+            config.north.jupyterhub_crypt_key.get_secret_value()
+            if config.north.jupyterhub_crypt_key
+            else None
+        )
         if crypt_key is None:
             crypt_key = (
                 subprocess.check_output('openssl rand -hex 32'.split(' '))

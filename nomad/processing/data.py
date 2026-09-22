@@ -243,8 +243,8 @@ def get_rfc3161_token(
         cert = config.rfc3161_timestamp.cert
     if username is None:
         username = config.rfc3161_timestamp.username
-    if password is None:
-        password = config.rfc3161_timestamp.password
+    if password is None and config.rfc3161_timestamp.password:
+        password = config.rfc3161_timestamp.password.get_secret_value()
     if hash_algorithm is None:
         hash_algorithm = config.rfc3161_timestamp.hash_algorithm
 
@@ -2273,7 +2273,8 @@ class Upload(Proc):
                     )
                 else:
                     upload_auth = client.Auth(
-                        user=config.keycloak.username, password=config.keycloak.password
+                        user=config.keycloak.username,
+                        password=config.keycloak.password.get_secret_value(),
                     )
                     response = requests.post(
                         upload_url, params=upload_parameters, data=f, auth=upload_auth

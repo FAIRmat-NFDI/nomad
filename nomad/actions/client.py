@@ -184,7 +184,11 @@ async def _connect_client(api_key: str | None) -> Client:
         ):
             tls = TLSConfig(
                 client_cert=_load_cert_or_key(config.temporal.tls_client_cert),
-                client_private_key=_load_cert_or_key(config.temporal.tls_client_key),
+                client_private_key=_load_cert_or_key(
+                    config.temporal.tls_client_key.get_secret_value()
+                    if config.temporal.tls_client_key
+                    else None
+                ),
                 server_root_ca_cert=_load_cert_or_key(
                     config.temporal.tls_server_root_ca_cert
                 ),
@@ -207,7 +211,11 @@ async def _connect_client(api_key: str | None) -> Client:
 
 async def get_client() -> Client:
     if not config.temporal.oidc.enabled:
-        return await _connect_client(config.temporal.api_key)
+        return await _connect_client(
+            config.temporal.api_key.get_secret_value()
+            if config.temporal.api_key
+            else None
+        )
 
     loop = asyncio.get_running_loop()
     managed = _get_managed_oidc_client(loop)

@@ -18,7 +18,7 @@
 
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, SecretStr
 
 from nomad.config.models.common import ConfigBaseModel, Options
 
@@ -177,8 +177,8 @@ class NORTH(ConfigBaseModel):
         The internal port that NOMAD services use to connect to the jupyterhub API.
     """,
     )
-    jupyterhub_crypt_key: str | None = Field(
-        None, description=_jupyterhub_config_description
+    jupyterhub_crypt_key: SecretStr | None = Field(
+        None, exclude=True, description=_jupyterhub_config_description
     )
 
     nomad_host: str | None = Field(
@@ -205,8 +205,9 @@ class NORTH(ConfigBaseModel):
         """,
     )
 
-    hub_service_api_token: str = Field(
-        'secret-token',
+    hub_service_api_token: SecretStr = Field(
+        SecretStr('secret-token'),
+        exclude=True,
         description="""
         A secret token shared between NOMAD and the NORTH jupyterhub.
         This needs to be the token of an admin service.""",

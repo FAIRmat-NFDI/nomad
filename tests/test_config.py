@@ -19,10 +19,11 @@
 import os
 import re
 import threading
+from typing import get_args
 
 import pytest
 import yaml
-from pydantic import ValidationError
+from pydantic import BaseModel, SecretStr, ValidationError
 
 import nomad.config
 from nomad.auth.scopes import _resolve_scopes
@@ -780,6 +781,95 @@ def test_services_base_path_normalization(configured, expected_public, expected_
 def test_services_base_path_rejects_malformed_paths(configured):
     with pytest.raises(ValidationError):
         Services(api_base_path=configured)
+
+
+def test_credential_fields_are_excluded_from_serialization():
+    credential_name = re.compile(
+        r'(api_key|access_token|client_key|codec_key|crypt_key|password|private_token|secret|token)$'
+    )
+    visited = set()
+
+    def check_model(model: BaseModel):
+        model_type = type(model)
+        if model_type in visited:
+            return
+        visited.add(model_type)
+
+        for field_name, field in model_type.model_fields.items():
+            if credential_name.search(field_name):
+                assert field.exclude, (
+                    f'{model_type.__name__}.{field_name} must set exclude=True'
+                )
+                assert field.annotation is SecretStr or SecretStr in get_args(
+                    field.annotation
+                ), f'{model_type.__name__}.{field_name} must use SecretStr'
+
+            value = getattr(model, field_name)
+            if isinstance(value, BaseModel):
+                check_model(value)
+
+    check_model(Config())
+
+
+def test_model_dump_excludes_credentials():
+    config = Config(
+        services={'api_secret': 'services-secret-that-is-at-least-32-bytes'},
+        north={
+            'jupyterhub_crypt_key': 'north-crypt-key',
+            'hub_service_api_token': 'north-api-token',
+        },
+        elastic={'password': 'elastic-password'},
+        temporal={
+            'api_key': 'temporal-api-key',
+            'payload_codec_key': 'payload-codec-key-that-is-32-bytes',
+            'tls_client_key': 'temporal-client-key',
+            'oidc': {'client_secret': 'temporal-oidc-secret'},
+        },
+        keycloak={
+            'password': 'keycloak-password',
+            'client_secret': 'keycloak-client-secret',
+        },
+        mongo={'password': 'mongo-password'},
+        mail={'password': 'mail-password'},
+        client={'password': 'client-password', 'access_token': 'client-token'},
+        datacite={'password': 'datacite-password'},
+        gitlab={'private_token': 'gitlab-token'},
+        rfc3161_timestamp={'password': 'timestamp-password'},
+    )
+
+    dumped = config.model_dump()
+    excluded_paths = [
+        ('services', 'api_secret'),
+        ('north', 'jupyterhub_crypt_key'),
+        ('north', 'hub_service_api_token'),
+        ('elastic', 'password'),
+        ('temporal', 'api_key'),
+        ('temporal', 'payload_codec_key'),
+        ('temporal', 'tls_client_key'),
+        ('temporal', 'oidc', 'client_secret'),
+        ('keycloak', 'password'),
+        ('keycloak', 'client_secret'),
+        ('mongo', 'password'),
+        ('mail', 'password'),
+        ('client', 'password'),
+        ('client', 'access_token'),
+        ('datacite', 'password'),
+        ('gitlab', 'private_token'),
+        ('rfc3161_timestamp', 'password'),
+    ]
+
+    for *parents, field_name in excluded_paths:
+        section = dumped
+        for parent in parents:
+            section = section[parent]
+        assert field_name not in section
+
+    # Exclusion only affects serialization, not internal consumers.
+    assert (
+        config.services.api_secret.get_secret_value()
+        == 'services-secret-that-is-at-least-32-bytes'
+    )
+    assert str(config.services.api_secret) == '**********'
 
 
 @pytest.mark.parametrize(

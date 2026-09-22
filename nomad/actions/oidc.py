@@ -53,7 +53,9 @@ async def fetch_oidc_access_token(settings: TemporalOIDC) -> OIDCAccessToken:
         response = await client.post(
             settings.token_url,
             data=data,
-            auth=httpx2.BasicAuth(settings.client_id, settings.client_secret),
+            auth=httpx2.BasicAuth(
+                settings.client_id, settings.client_secret.get_secret_value()
+            ),
         )
         response.raise_for_status()
         body = response.json()

@@ -68,7 +68,11 @@ class Keycloak:
                 server_url=config.keycloak.server_url + '/',
                 client_id=config.keycloak.client_id,
                 realm_name=config.keycloak.realm_name,
-                client_secret_key=config.keycloak.client_secret,
+                client_secret_key=(
+                    config.keycloak.client_secret.get_secret_value()
+                    if config.keycloak.client_secret
+                    else None
+                ),
             )
         return self.__oidc_client
 

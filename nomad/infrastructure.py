@@ -85,7 +85,10 @@ def setup_mongo():
         db=config.mongo.db_name, host=config.mongo.host, port=config.mongo.port
     )
     if config.mongo.username and config.mongo.password:
-        kwargs.update(username=config.mongo.username, password=config.mongo.password)
+        kwargs.update(
+            username=config.mongo.username,
+            password=config.mongo.password.get_secret_value(),
+        )
 
     try:
         mongo_client = connect(**kwargs)
@@ -130,7 +133,10 @@ async def init_async_mongo():
 
     kwargs = dict(host=config.mongo.host, port=config.mongo.port)
     if config.mongo.username and config.mongo.password:
-        kwargs.update(username=config.mongo.username, password=config.mongo.password)
+        kwargs.update(
+            username=config.mongo.username,
+            password=config.mongo.password.get_secret_value(),
+        )
 
     async_mongo_client = AsyncMongoClient(**kwargs, maxPoolSize=50, minPoolSize=50)
     async_mongo_loop = asyncio.get_running_loop()
@@ -286,7 +292,7 @@ def send_mail(name: str, email: str, message: str, subject: str) -> None:
 
     if config.mail.with_login:
         try:
-            server.login(config.mail.user, config.mail.password)
+            server.login(config.mail.user, config.mail.password.get_secret_value())
         except Exception as e:
             logger.warning('Could not log into mail server', exc_info=e)
     msg = MIMEText(message)

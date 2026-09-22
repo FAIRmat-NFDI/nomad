@@ -24,6 +24,7 @@ User fixtures:
 """
 
 import pytest
+from pydantic import SecretStr
 
 from nomad.auth import keycloak, user_management
 from nomad.auth.keycloak import KeycloakError, OIDCToken
@@ -193,7 +194,7 @@ class KeycloakMock:
 
 
 config.keycloak.realm_name = 'fairdi_nomad_test'
-config.keycloak.password = 'password'
+config.keycloak.password = SecretStr('password')
 
 _keycloak = keycloak.keycloak
 _user_management = user_management.user_management
