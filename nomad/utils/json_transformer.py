@@ -16,6 +16,8 @@
 # limitations under the License.
 #
 
+from __future__ import annotations
+
 import re
 from copy import deepcopy
 from typing import Any
@@ -26,8 +28,127 @@ from nomad.datamodel.metainfo.annotations import Condition, Rule, Rules
 
 
 class Transformer:
-    def __init__(self, mapping_dict: dict[str, 'Rules']):
-        self.mapping_dict = mapping_dict
+    def __init__(
+        self,
+        mapping_dict: dict[str, Rules]
+        | Rules
+        | Rule
+        | dict[str, Any]
+        | list[Any]
+        | None = None,
+        *,
+        source: str | None = None,
+        target: str | None = None,
+        default_value: Any = None,
+        conditions: list[Condition] | None = None,
+        use_rule: str | None = None,
+    ):
+        if target is not None:
+            rule = Rule(
+                source=source,
+                target=target,
+                default_value=default_value,
+                conditions=conditions,
+                use_rule=use_rule,
+            )
+            self.mapping_dict = {'default': Rules(name='default', rules={'rule': rule})}
+        elif mapping_dict is None:
+            self.mapping_dict = {}
+        elif isinstance(mapping_dict, Rules):
+            name = mapping_dict.name or 'default'
+            self.mapping_dict = {name: mapping_dict}
+        elif isinstance(mapping_dict, Rule):
+            self.mapping_dict = {
+                'default': Rules(name='default', rules={'rule': mapping_dict})
+            }
+        elif isinstance(mapping_dict, dict):
+            if mapping_dict and all(
+                isinstance(v, Rules) for v in mapping_dict.values()
+            ):
+                self.mapping_dict = mapping_dict
+            elif 'target' in mapping_dict:
+                rule = Rule(**mapping_dict)
+                self.mapping_dict = {
+                    'default': Rules(name='default', rules={'rule': rule})
+                }
+            elif mapping_dict and all(
+                isinstance(v, (Rule, dict)) and (isinstance(v, Rule) or 'target' in v)
+                for v in mapping_dict.values()
+            ):
+                rules_dict: dict[str, Rule] = {}
+                for k, v in mapping_dict.items():
+                    if isinstance(v, Rule):
+                        rules_dict[k] = v
+                    elif isinstance(v, dict):
+                        rules_dict[k] = Rule(**v)
+                self.mapping_dict = {'default': Rules(name='default', rules=rules_dict)}
+            else:
+                self.mapping_dict = mapping_dict
+        elif isinstance(mapping_dict, list):
+            rules_dict = {}
+            for i, r in enumerate(mapping_dict):
+                if isinstance(r, Rule):
+                    rules_dict[f'rule_{i}'] = r
+                elif isinstance(r, dict):
+                    rules_dict[f'rule_{i}'] = Rule(**r)
+            self.mapping_dict = {'default': Rules(name='default', rules=rules_dict)}
+        else:
+            self.mapping_dict = mapping_dict
+
+    @classmethod
+    def map(
+        cls,
+        data: Any,
+        source: str | None = None,
+        target: str | None = None,
+        default_value: Any = None,
+        conditions: list[Condition] | None = None,
+        use_rule: str | None = None,
+        rule: Rule | dict[str, Any] | None = None,
+        rules: Rules | dict[str, Any] | list[Any] | None = None,
+        target_data: Any = None,
+        inplace: bool = False,
+        delete_sources: bool = False,
+    ) -> Any:
+        """
+        Convenience method to transform data with minimal arguments in a single call.
+
+        Examples:
+            Transformer.map(data, source='a.b', target='c.d')
+            Transformer.map(data, target='sub_systems[n].m_def', default_value='Element', inplace=True)
+            Transformer.map(data, rule={'source': 'a', 'target': 'b'})
+        """
+        transformer = cls(
+            mapping_dict=rules or rule,
+            source=source,
+            target=target,
+            default_value=default_value,
+            conditions=conditions,
+            use_rule=use_rule,
+        )
+        return transformer.transform(
+            data,
+            target_data=target_data,
+            inplace=inplace,
+            delete_sources=delete_sources,
+        )
+
+    @staticmethod
+    def has_array_notation(rule: Rule) -> bool:
+        """
+        Checks whether a rule uses array index placeholders in target or source.
+        """
+        if rule.target:
+            _, target_indices = Transformer.get_path_sections(
+                rule.target, is_target=True
+            )
+            if target_indices:
+                return True
+        if rule.source:
+            _, source_indices = Transformer.get_path_sections(rule.source)
+            if source_indices:
+                return True
+        return False
 
     @staticmethod
     def parse_path(path: str) -> list[str | int]:
@@ -40,6 +161,8 @@ class Transformer:
         Returns:
             list[Union[str, int]]: A list containing string keys and integer indices.
         """
+        if not path:
+            return []
         pattern = re.compile(r'([^\[\].]+)|\[(\d+)\]')
         parts = []
         for match in pattern.finditer(path):
@@ -51,9 +174,14 @@ class Transformer:
         return parts
 
     @staticmethod
-    def apply_condition(condition: 'Condition', source: dict[str, Any]) -> bool:
+    def apply_condition(
+        condition: Condition,
+        source: dict[str, Any],
+        default_path: str | None = None,
+    ) -> bool:
         path = (
             condition.regex_condition.regex_path
+            or default_path
             or condition.regex_condition.regex_pattern
         )
         value = jmespath.search(path, source)
@@ -135,13 +263,14 @@ class Transformer:
                     current = current[part]
 
     @staticmethod
-    def get_array_regex(path):
+    def get_array_regex(path, prefix_only=False):
         """
         Converts a path with array indexes given as [*]/[n] to a regex pattern that matches and captures paths with any index.
         """
         re_pattern = re.escape(path)
+        suffix = r'(?:[\.\[].*)?$' if prefix_only else '$'
         re_pattern = (
-            '^' + re.sub(r'\\\[((n|\\\*)\d*?)\\\]', r'\[(\\d+)\]', re_pattern) + '$'
+            '^' + re.sub(r'\\\[((n|\\\*)\d*?)\\\]', r'\[(\\d+)\]', re_pattern) + suffix
         )
         return re.compile(re_pattern)
 
@@ -181,13 +310,23 @@ class Transformer:
         return path
 
     @staticmethod
-    def get_path_sections(path):
-        capture_pattern = re.compile(
-            r'(?P<index>\[(?:n\d*)\])|'
-            r'(?P<filter>\[(?:\*\]|\?.*?\]|\]))|'
-            # r'(?P<multi_select>\.\[(?!\?)[^\]]*?,[^\]]*?\])'
-            r'(?P<multi_select>\.?(?:\[(?!\?)[^\]]*\]|\{[^\}]*\}))'
+    def get_path_sections(path, is_target: bool = False):
+        if not path:
+            return [], []
+        pattern_str = (
+            (
+                r'(?P<index>\[(?:n\d*|\*)\])|'
+                r'(?P<filter>\[(?:\?.*?\]|\]))|'
+                r'(?P<multi_select>\.?(?:\[(?!\?)[^\]]*\]|\{[^\}]*\}))'
+            )
+            if is_target
+            else (
+                r'(?P<index>\[(?:n\d*)\])|'
+                r'(?P<filter>\[(?:\*\]|\?.*?\]|\]))|'
+                r'(?P<multi_select>\.?(?:\[(?!\?)[^\]]*\]|\{[^\}]*\}))'
+            )
         )
+        capture_pattern = re.compile(pattern_str)
         sections = [x for x in capture_pattern.finditer(path)]
         index_sections = [i for i in sections if i.group('index')]
         return sections, index_sections
@@ -208,39 +347,96 @@ class Transformer:
         )
 
         target_sections, target_index_sections = Transformer.get_path_sections(
-            target_path
+            target_path, is_target=True
         )
         if not source_index_sections and not target_index_sections:
             return {name: Rules(name=name, rules={name: rule})}
-        if len(source_index_sections) != len(target_index_sections):
-            raise ValueError(
-                'Different number of array index placeholders between source and target'
-            )
-        if [i.group() for i in source_index_sections] != [
-            i.group() for i in target_index_sections
-        ]:
-            raise ValueError(
-                'Mismatch between source and target array index placeholders'
-            )
+        if source_path is not None:
+            if len(source_index_sections) != len(target_index_sections):
+                raise ValueError(
+                    'Different number of array index placeholders between source and target'
+                )
+            if [i.group() for i in source_index_sections] != [
+                i.group() for i in target_index_sections
+            ]:
+                raise ValueError(
+                    'Mismatch between source and target array index placeholders'
+                )
 
-        array_match_path = Transformer.get_array_match_path(
-            source_path, source_sections
-        )
-        re_pattern = Transformer.get_array_regex(array_match_path)
+        if source_path is not None and source_index_sections:
+            match_path = source_path
+            match_sections = source_sections
+            match_index_sections = source_index_sections
+        else:
+            match_path = target_path
+            match_sections = target_sections
+            match_index_sections = target_index_sections
 
+        last_index_span_end = match_index_sections[-1].span()[1]
+        prefix_path = match_path[:last_index_span_end]
+
+        array_match_path = Transformer.get_array_match_path(prefix_path, match_sections)
+        re_pattern = Transformer.get_array_regex(array_match_path, prefix_only=True)
+
+        seen_indices = set()
         for i in data_paths:
             match = re_pattern.match(i)
             if match:
-                new_source_path = Transformer.get_new_path(
-                    match, source_path, source_index_sections
-                )
+                groups = match.groups()
+                if groups in seen_indices:
+                    continue
+                seen_indices.add(groups)
+
+                if source_path is not None:
+                    new_source_path = Transformer.get_new_path(
+                        match, source_path, source_index_sections
+                    )
+                else:
+                    new_source_path = None
+
                 new_target_path = Transformer.get_new_path(
                     match, target_path, target_index_sections
                 )
+
+                new_conditions = None
+                if rule.conditions:
+                    placeholder_map = {
+                        sec.group(): val
+                        for sec, val in zip(match_index_sections, groups)
+                    }
+                    new_conditions = []
+                    for cond in rule.conditions:
+                        cond_copy = cond.copy(deep=True)
+                        regex_path = cond_copy.regex_condition.regex_path
+                        if regex_path:
+                            _, cond_index_sections = Transformer.get_path_sections(
+                                regex_path
+                            )
+                            if cond_index_sections:
+                                new_regex_path = ''
+                                start = 0
+                                for sec in cond_index_sections:
+                                    ph = sec.group()
+                                    idx_val = placeholder_map.get(ph)
+                                    if (
+                                        idx_val is None
+                                        and len(match_index_sections) == 1
+                                    ):
+                                        idx_val = groups[0]
+                                    if idx_val is not None:
+                                        new_regex_path += (
+                                            regex_path[start : sec.span()[0]]
+                                            + f'[{idx_val}]'
+                                        )
+                                        start = sec.span()[1]
+                                new_regex_path += regex_path[start:]
+                                cond_copy.regex_condition.regex_path = new_regex_path
+                        new_conditions.append(cond_copy)
+
                 resolved_rules[f'{name}_resolved_{c}'] = Rule(
                     source=new_source_path,
                     target=new_target_path,
-                    conditions=rule.conditions,
+                    conditions=new_conditions,
                     default_value=rule.default_value,
                     use_rule=rule.use_rule,
                 )
@@ -285,6 +481,8 @@ class Transformer:
 
     @staticmethod
     def delete_path(data, path):
+        if not path:
+            return
         parts = Transformer.parse_path(path)
         current = data
         for i, part in enumerate(parts):
@@ -311,20 +509,22 @@ class Transformer:
                 data = Transformer.delete_source_paths(data, rule)
         elif isinstance(rules, Rules):
             for rule_name, rule in rules.rules.items():
-                try:
-                    Transformer.delete_path(data, rule.source)
-                except Exception as e:
-                    print(rule.source, e)
+                if rule.source:
+                    try:
+                        Transformer.delete_path(data, rule.source)
+                    except Exception as e:
+                        print(rule.source, e)
         elif isinstance(rules, Rule):
-            try:
-                Transformer.delete_path(data, rule.source)
-            except Exception as e:
-                print(rule.source, e)
+            if rules.source:
+                try:
+                    Transformer.delete_path(data, rules.source)
+                except Exception as e:
+                    print(rules.source, e)
         return data
 
     def resolve_reference(
-        self, rule: 'Rule', all_rules: dict[str, 'Rules'], visited=None
-    ) -> 'Rule':
+        self, rule: Rule, all_rules: dict[str, Rules], visited=None
+    ) -> Rule:
         """
         Resolves a rule reference specified in the `use_rule` field.
 
@@ -375,10 +575,10 @@ class Transformer:
 
     def transform_dict(
         self,
-        rule: 'Rule',
+        rule: Rule,
         source: dict[str, Any],
         target: Any,
-        all_rules: dict[str, 'Rules'],
+        all_rules: dict[str, Rules],
         parent_source_path: str = '',
         parent_target_path: str = '',
         visited=None,
@@ -400,10 +600,13 @@ class Transformer:
             Any: The updated target data structure.
         """
         resolved_rule = self.resolve_reference(rule, all_rules, visited)
-        if array_rules:
+        is_array_rule = array_rules or Transformer.has_array_notation(resolved_rule)
+        if is_array_rule:
             source_data_paths = Transformer.get_all_paths(source)
+            target_data_paths = Transformer.get_all_paths(target) if target else []
+            data_paths = list(dict.fromkeys(source_data_paths + target_data_paths))
             resolved_array_rules = self._resolve_array_rule(
-                source_data_paths, resolved_rule, 'resolved_array_rule'
+                data_paths, resolved_rule, 'resolved_array_rule'
             )
             for rule_name, array_rule in resolved_array_rules[
                 'resolved_array_rule'
@@ -426,7 +629,8 @@ class Transformer:
         conditions_met = True
         if resolved_rule.conditions:
             conditions_met = all(
-                self.apply_condition(cond, source) for cond in resolved_rule.conditions
+                self.apply_condition(cond, source, current_source_path)
+                for cond in resolved_rule.conditions
             )
 
         source_value = None
@@ -439,15 +643,25 @@ class Transformer:
             elif resolved_rule.default_value is not None:
                 self.set_value(current_target_path, resolved_rule.default_value, target)
         else:
-            if resolved_rule.default_value is not None:
-                self.set_value(current_target_path, resolved_rule.default_value, target)
+            if (
+                current_source_path is not None
+                and resolved_rule.default_value is not None
+            ):
+                if any(
+                    (cond.regex_condition.regex_path or current_source_path)
+                    == current_source_path
+                    for cond in resolved_rule.conditions
+                ):
+                    self.set_value(
+                        current_target_path, resolved_rule.default_value, target
+                    )
 
         return target
 
     def dict_to_dict(
         self,
         source: dict[str, Any],
-        rules: 'Rules',
+        rules: Rules,
         target: Any = None,
         array_rules: bool = False,
     ) -> Any:
@@ -478,6 +692,12 @@ class Transformer:
         inplace: bool = False,
         array_rules: bool = False,
         delete_sources: bool = False,
+        *,
+        source: str | None = None,
+        target: str | None = None,
+        default_value: Any = None,
+        conditions: list[Condition] | None = None,
+        rule: Rule | dict[str, Any] | None = None,
     ) -> Any:
         """
         Transforms the source data into the target data based on the specified mapping.
@@ -489,6 +709,11 @@ class Transformer:
             inplace (bool, optional): Whether to perform the transformation in place. Defaults to False.
             array_rules (bool, optional): Whether to resolve array rules. Defaults to False.
             delete_sources (bool, optional): Whether to delete source paths after transformation. Defaults to False.
+            source (str, optional): Optional source path for direct single-rule transformation.
+            target (str, optional): Optional target path for direct single-rule transformation.
+            default_value (Any, optional): Optional default value for direct single-rule transformation.
+            conditions (list[Condition], optional): Optional conditions for direct single-rule transformation.
+            rule (Rule or dict, optional): Optional rule for direct single-rule transformation.
 
         Raises:
             ValueError: If the specified mapping name does not exist.
@@ -498,15 +723,38 @@ class Transformer:
         """
         if inplace:
             target_data = deepcopy(source_data)
-        if not mapping_name:
-            mapping_name = list(source_data.keys())[0]
-        try:
-            if mapping_name not in self.mapping_dict:
+
+        if target is not None:
+            single_rule = Rule(
+                source=source,
+                target=target,
+                default_value=default_value,
+                conditions=conditions,
+            )
+            mapping = Rules(name='default', rules={'rule': single_rule})
+        elif rule is not None:
+            single_rule = rule if isinstance(rule, Rule) else Rule(**rule)
+            mapping = Rules(name='default', rules={'rule': single_rule})
+        else:
+            if not mapping_name:
+                if len(self.mapping_dict) == 1:
+                    mapping_name = list(self.mapping_dict.keys())[0]
+                elif 'default' in self.mapping_dict:
+                    mapping_name = 'default'
+                elif isinstance(source_data, dict) and source_data:
+                    first_key = list(source_data.keys())[0]
+                    if first_key in self.mapping_dict:
+                        mapping_name = first_key
+                    elif self.mapping_dict:
+                        mapping_name = list(self.mapping_dict.keys())[0]
+
+            if not mapping_name or mapping_name not in self.mapping_dict:
                 raise ValueError(
                     f"Mapping name '{mapping_name}' not found in the transformation dictionary"
                 )
             mapping = self.mapping_dict[mapping_name]
 
+        try:
             if target_data is None and any(
                 rule.target.startswith('[') for rule in mapping.rules.values()
             ):
