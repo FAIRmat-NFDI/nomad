@@ -685,6 +685,40 @@ def test_id_url_safe(
             False,
             id='no clash if inactive',
         ),
+        pytest.param(
+            {
+                'exclude': ['pkg.mod:*'],
+                'options': {
+                    'pkg.mod:Class': {
+                        'id_url_safe': 'A',
+                        'entry_point_type': 'schema_package',
+                    },
+                    'pkg-mod_Class': {
+                        'id_url_safe': 'A',
+                        'entry_point_type': 'schema_package',
+                    },
+                },
+            },
+            False,
+            id='no clash if wildcard excluded',
+        ),
+        pytest.param(
+            {
+                'include': ['pkg*'],
+                'options': {
+                    'pkg.mod:Class': {
+                        'id_url_safe': 'A',
+                        'entry_point_type': 'schema_package',
+                    },
+                    'pkg-mod_Class': {
+                        'id_url_safe': 'A',
+                        'entry_point_type': 'schema_package',
+                    },
+                },
+            },
+            True,
+            id='clash if wildcard included',
+        ),
     ],
 )
 def test_id_url_safe_collision(entry_points, collides, mockopen, monkeypatch):
