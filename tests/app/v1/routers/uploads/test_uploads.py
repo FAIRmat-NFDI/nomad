@@ -27,6 +27,7 @@ from typing import Any, Literal
 import pytest
 import requests
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from nomad import files, infrastructure, processing
 from nomad.common import now
@@ -35,8 +36,8 @@ from nomad.config.models.config import _DEFAULT_API_KEY
 from nomad.config.models.plugins import ExampleUploadEntryPoint
 from nomad.datamodel import EntryMetadata
 
-if config.services.api_secret == _DEFAULT_API_KEY:
-    config.services.api_secret = 'some-very-long-test-secret-string'
+if config.services.api_secret.get_secret_value() == _DEFAULT_API_KEY:
+    config.services.api_secret = SecretStr('some-very-long-test-secret-string')
 from nomad.files import PublicUploadFiles, StagingUploadFiles, UploadFiles
 from nomad.processing import Entry, ProcessStatus, Upload
 from tests.app.v1.routers.common import assert_response, perform_get

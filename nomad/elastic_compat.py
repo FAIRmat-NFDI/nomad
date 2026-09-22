@@ -133,7 +133,10 @@ def create_elastic_client(*, verify: bool = True):
 
     http_auth = None
     if config.elastic.username and config.elastic.password:
-        http_auth = (config.elastic.username, config.elastic.password)
+        http_auth = (
+            config.elastic.username,
+            config.elastic.password.get_secret_value(),
+        )
 
     # Elasticsearch 9 requires a URL scheme (`http://host:port`). The ES7 client
     # accepted `host:port` and inferred http; we always include the configured

@@ -438,7 +438,7 @@ class KeycloakUserManagement(UserManagement):
             self.__admin_client = KeycloakAdmin(
                 server_url=config.keycloak.server_url + '/',
                 username=config.keycloak.username,
-                password=config.keycloak.password,
+                password=config.keycloak.password.get_secret_value(),
                 realm_name=config.keycloak.realm_name,
                 verify=True,
             )

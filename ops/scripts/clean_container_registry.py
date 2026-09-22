@@ -31,7 +31,8 @@ print(
 )
 
 gl = gitlab.Gitlab(
-    'https://gitlab.mpcdf.mpg.de', private_token=config.gitlab.private_token
+    'https://gitlab.mpcdf.mpg.de',
+    private_token=config.gitlab.private_token.get_secret_value(),
 )
 
 project = next(

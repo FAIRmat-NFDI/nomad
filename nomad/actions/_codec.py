@@ -47,11 +47,17 @@ class EncryptionCodec(PayloadCodec):
         # Payloads using the default key retain the existing metadata format so
         # previously recorded workflow histories remain decryptable during replay.
         check_api_secret()
-        self.default_fernet = _create_fernet(config.services.api_secret)
+        self.default_fernet = _create_fernet(
+            config.services.api_secret.get_secret_value()
+        )
 
         codec_key = config.temporal.payload_codec_key
         self.key_id = config.temporal.payload_codec_key_id if codec_key else None
-        self.fernet = _create_fernet(codec_key) if codec_key else self.default_fernet
+        self.fernet = (
+            _create_fernet(codec_key.get_secret_value())
+            if codec_key
+            else self.default_fernet
+        )
 
     async def encode(self, payloads: Iterable[Payload]) -> list[Payload]:
         """Encrypt all payloads during encoding."""

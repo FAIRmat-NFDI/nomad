@@ -34,7 +34,9 @@ from .auth import get_current_user
 router = APIRouter()
 logger = get_logger(__name__)
 
-hub_api_headers = {'Authorization': f'Bearer {config.north.hub_service_api_token}'}
+hub_api_headers = {
+    'Authorization': f'Bearer {config.north.hub_service_api_token.get_secret_value()}'
+}
 
 
 async def check_tool(name: str) -> ToolModel:

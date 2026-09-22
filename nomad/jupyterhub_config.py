@@ -120,7 +120,7 @@ c.JupyterHub.services.append(
     {
         'name': 'nomad-service',
         'admin': True,
-        'api_token': config.north.hub_service_api_token,
+        'api_token': config.north.hub_service_api_token.get_secret_value(),
     }
 )
 

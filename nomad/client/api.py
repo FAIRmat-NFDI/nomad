@@ -76,7 +76,11 @@ class Auth(requests.auth.AuthBase):
     def __init__(
         self,
         user: str | None = config.client.user,
-        password: str | None = config.client.password,
+        password: str | None = (
+            config.client.password.get_secret_value()
+            if config.client.password
+            else None
+        ),
         from_api: bool = False,
     ):
         self.user = user
@@ -94,7 +98,9 @@ class Auth(requests.auth.AuthBase):
             self._token = None
         elif config.client.access_token:
             # use pre-set access token
-            self._token = dict(access_token=config.client.access_token)
+            self._token = dict(
+                access_token=config.client.access_token.get_secret_value()
+            )
         else:
             # no token, no auth
             self._token = None

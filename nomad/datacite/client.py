@@ -71,7 +71,9 @@ class DataCiteClient:
     def __init__(self):
         self.enabled = config.datacite.enabled
         self.host = config.datacite.mds_host
-        self.auth = HTTPBasicAuth(config.datacite.user, config.datacite.password)
+        self.auth = HTTPBasicAuth(
+            config.datacite.user, config.datacite.password.get_secret_value()
+        )
         self.prefix = config.datacite.prefix
 
     # Raw methods

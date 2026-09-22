@@ -46,7 +46,9 @@ class APITag(str, Enum):
     DEFAULT = 'north'
 
 
-hub_api_headers = {'Authorization': f'Bearer {config.north.hub_service_api_token}'}
+hub_api_headers = {
+    'Authorization': f'Bearer {config.north.hub_service_api_token.get_secret_value()}'
+}
 logger = get_logger(__name__)
 
 # JupyterHub is an external service. Bound every request so an unavailable hub

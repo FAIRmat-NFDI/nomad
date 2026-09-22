@@ -36,7 +36,9 @@ from nomad.config import config
 @click.option(
     '-w',
     '--password',
-    default=config.client.password,
+    default=(
+        config.client.password.get_secret_value() if config.client.password else None
+    ),
     help='the password used to login.',
 )
 @click.option(
@@ -71,7 +73,11 @@ def _create_auth(ctx):
     if ctx.obj.user is None:
         return Auth(
             user=config.client.user,
-            password=config.client.password,
+            password=(
+                config.client.password.get_secret_value()
+                if config.client.password
+                else None
+            ),
             from_api=ctx.obj.token_via_api,
         )
     else:

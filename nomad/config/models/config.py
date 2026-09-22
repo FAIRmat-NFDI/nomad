@@ -34,6 +34,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    SecretStr,
     computed_field,
     field_validator,
     model_validator,
@@ -105,9 +106,10 @@ class Services(ConfigBaseModel):
         The base path prefix for the NOMAD app and api.
     """,
     )
-    api_secret: str = Field(
-        _DEFAULT_API_KEY,
+    api_secret: SecretStr = Field(
+        SecretStr(_DEFAULT_API_KEY),
         min_length=32,
+        exclude=True,
         description="""
         A secret that is used to issue download and other tokens.
     """,
@@ -1022,8 +1024,9 @@ class Elastic(ConfigBaseModel):
         '',
         description='Username for authenticating with the Elasticsearch server.',
     )
-    password: str = Field(
-        '',
+    password: SecretStr = Field(
+        SecretStr(''),
+        exclude=True,
         description='Password for authenticating with the Elasticsearch server.',
     )
     host: str = Field(
@@ -1261,8 +1264,9 @@ class TemporalOIDC(ConfigBaseModel):
         None,
         description='Confidential OIDC client ID representing this NOMAD deployment.',
     )
-    client_secret: str | None = Field(
+    client_secret: SecretStr | None = Field(
         None,
+        exclude=True,
         description='Confidential OIDC client secret. Configure this through deployment secrets.',
     )
     scope: str | None = Field(
@@ -1351,17 +1355,19 @@ class Temporal(ConfigBaseModel):
         None,
         description='The bind address for the Prometheus metrics server. If not set, the runtime will not be configured with Prometheus metrics.',
     )
-    api_key: str | None = Field(
+    api_key: SecretStr | None = Field(
         None,
+        exclude=True,
         description='API Key used to connect to the Temporal server.',
     )
     oidc: TemporalOIDC = Field(
         default_factory=TemporalOIDC,
         description='OIDC client-credentials authentication for Temporal clients.',
     )
-    payload_codec_key: str | None = Field(
+    payload_codec_key: SecretStr | None = Field(
         None,
         min_length=32,
+        exclude=True,
         description='Optional key used to encrypt Temporal payloads. When unset, services.api_secret is used by default.',
     )
     payload_codec_key_id: str = Field(
@@ -1377,8 +1383,9 @@ class Temporal(ConfigBaseModel):
         None,
         description='Path to the client certificate (PEM format) or the raw certificate content string to use for mTLS.',
     )
-    tls_client_key: str | None = Field(
+    tls_client_key: SecretStr | None = Field(
         None,
+        exclude=True,
         description='Path to the client private key (PEM format) or the raw key content string to use for mTLS.',
     )
     tls_server_root_ca_cert: str | None = Field(
@@ -1433,16 +1440,18 @@ class Keycloak(ConfigBaseModel):
         'admin',
         description='Administrative Keycloak username used for service-level operations.',
     )
-    password: str = Field(
-        'password',
+    password: SecretStr = Field(
+        SecretStr('password'),
+        exclude=True,
         description='Administrative Keycloak password used for service-level operations.',
     )
     client_id: str = Field(
         'nomad_public',
         description='Keycloak client ID used by the NOMAD backend/UI.',
     )
-    client_secret: str | None = Field(
+    client_secret: SecretStr | None = Field(
         None,
+        exclude=True,
         description='Optional Keycloak client secret used for confidential clients.',
     )
 
@@ -1468,8 +1477,9 @@ class Mongo(ConfigBaseModel):
         None,
         description='Optional username for MongoDB authentication.',
     )
-    password: str | None = Field(
+    password: SecretStr | None = Field(
         None,
+        exclude=True,
         description='Optional password for MongoDB authentication.',
     )
     ownership_transfer_record_ttl: int = Field(
@@ -1537,8 +1547,9 @@ class Mail(ConfigBaseModel):
         '',
         description='SMTP username used for authentication (if with_login is True).',
     )
-    password: str = Field(
-        '',
+    password: SecretStr = Field(
+        SecretStr(''),
+        exclude=True,
         description='SMTP password used for authentication (if with_login is True).',
     )
     from_address: str = Field(
@@ -1670,12 +1681,14 @@ class Client(ConfigBaseModel):
         None,
         description='Optional username used by the Python NOMAD client for authentication.',
     )
-    password: str | None = Field(
+    password: SecretStr | None = Field(
         None,
+        exclude=True,
         description='Optional password used by the Python NOMAD client for authentication.',
     )
-    access_token: str | None = Field(
+    access_token: SecretStr | None = Field(
         None,
+        exclude=True,
         description='Optional bearer access token used by the Python NOMAD client.',
     )
     url: str = Field(
@@ -1701,15 +1714,17 @@ class DataCite(ConfigBaseModel):
         '*',
         description='DataCite username.',
     )
-    password: str = Field(
-        '*',
+    password: SecretStr = Field(
+        SecretStr('*'),
+        exclude=True,
         description='DataCite password.',
     )
 
 
 class GitLab(ConfigBaseModel):
-    private_token: str = Field(
-        'not set',
+    private_token: SecretStr = Field(
+        SecretStr('not set'),
+        exclude=True,
         description='Private token used for accessing the GitLab API (e.g. for CI integrations).',
     )
 
@@ -1805,8 +1820,9 @@ class RFC3161Timestamp(ConfigBaseModel):
         None,
         description='Optional username for authenticating to the RFC3161 timestamping server.',
     )
-    password: str | None = Field(
+    password: SecretStr | None = Field(
         None,
+        exclude=True,
         description='Optional password for authenticating to the RFC3161 timestamping server.',
     )
 

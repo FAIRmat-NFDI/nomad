@@ -17,6 +17,7 @@
 #
 
 import pytest
+from pydantic import SecretStr
 from temporalio.api.common.v1 import Payload
 
 from nomad.actions._codec import EncryptionCodec
@@ -28,7 +29,9 @@ from nomad.config.models.config import ModeEnum
 def codec_config(monkeypatch):
     monkeypatch.setattr(config.services, 'mode', ModeEnum.DEVELOPMENT)
     monkeypatch.setattr(
-        config.services, 'api_secret', 'local-secret-that-is-at-least-32-bytes'
+        config.services,
+        'api_secret',
+        SecretStr('local-secret-that-is-at-least-32-bytes'),
     )
     monkeypatch.setattr(config.temporal, 'payload_codec_key', None)
     monkeypatch.setattr(config.temporal, 'payload_codec_key_id', 'default')
@@ -39,7 +42,7 @@ async def test_configured_codec_key_is_recorded_and_used(codec_config, monkeypat
     monkeypatch.setattr(
         config.temporal,
         'payload_codec_key',
-        'federation-secret-that-is-at-least-32-bytes',
+        SecretStr('federation-secret-that-is-at-least-32-bytes'),
     )
     monkeypatch.setattr(config.temporal, 'payload_codec_key_id', 'federation-v1')
     codec = EncryptionCodec()
@@ -62,7 +65,7 @@ async def test_configured_codec_key_can_decode_default_payload(
     monkeypatch.setattr(
         config.temporal,
         'payload_codec_key',
-        'federation-secret-that-is-at-least-32-bytes',
+        SecretStr('federation-secret-that-is-at-least-32-bytes'),
     )
     monkeypatch.setattr(config.temporal, 'payload_codec_key_id', 'federation-v1')
 
@@ -74,7 +77,7 @@ async def test_unknown_codec_key_id_is_rejected(codec_config, monkeypatch):
     monkeypatch.setattr(
         config.temporal,
         'payload_codec_key',
-        'federation-secret-that-is-at-least-32-bytes',
+        SecretStr('federation-secret-that-is-at-least-32-bytes'),
     )
     monkeypatch.setattr(config.temporal, 'payload_codec_key_id', 'federation-v1')
     codec = EncryptionCodec()

@@ -20,6 +20,7 @@ import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import SecretStr
 
 from nomad.actions import client as client_module
 from nomad.config import config
@@ -104,7 +105,7 @@ async def test_get_client_passes_api_key_and_tls_config_basic(monkeypatch):
     monkeypatch.setattr(client_module.Client, 'connect', connect)
     monkeypatch.setattr(config.services, 'mode', ModeEnum.DEVELOPMENT)
     monkeypatch.setattr(config.telemetry.tracing, 'enabled', False)
-    monkeypatch.setattr(config.temporal, 'api_key', 'my-secret-key')
+    monkeypatch.setattr(config.temporal, 'api_key', SecretStr('my-secret-key'))
     monkeypatch.setattr(config.temporal, 'use_tls', True)
     monkeypatch.setattr(config.temporal, 'tls_client_cert', None)
     monkeypatch.setattr(config.temporal, 'tls_client_key', None)
@@ -131,7 +132,7 @@ async def test_get_client_passes_custom_tls_config(monkeypatch, tmp_path):
     monkeypatch.setattr(config.temporal, 'api_key', None)
     monkeypatch.setattr(config.temporal, 'use_tls', False)
     monkeypatch.setattr(config.temporal, 'tls_client_cert', str(cert_file))
-    monkeypatch.setattr(config.temporal, 'tls_client_key', 'raw_key_string')
+    monkeypatch.setattr(config.temporal, 'tls_client_key', SecretStr('raw_key_string'))
     monkeypatch.setattr(config.temporal, 'tls_server_root_ca_cert', None)
     monkeypatch.setattr(config.temporal, 'tls_domain', 'temporal.example.com')
 

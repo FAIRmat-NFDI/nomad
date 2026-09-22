@@ -81,7 +81,7 @@ HMAC_DIGESTMOD = hashlib.sha256
 def check_api_secret() -> None:
     if (
         config.services.mode == ModeEnum.PRODUCTION
-        and config.services.api_secret == _DEFAULT_API_KEY
+        and config.services.api_secret.get_secret_value() == _DEFAULT_API_KEY
     ):
         raise ValueError(
             'When running NOMAD in production mode, value for config.services.api_secret must be set to a minimum 32 character string through the environment variable NOMAD_SERVICES_API_SECRET. '
@@ -100,7 +100,9 @@ def generate_simple_token(user_id: str, expires_in: float) -> str:
     expires_at = now() + datetime.timedelta(seconds=expires_in)
     payload = dict(user=user_id, exp=expires_at)
     return jwt.encode(
-        payload=payload, key=config.services.api_secret, algorithm=JWT_ALGORITHM
+        payload=payload,
+        key=config.services.api_secret.get_secret_value(),
+        algorithm=JWT_ALGORITHM,
     )
 
 
@@ -122,7 +124,9 @@ async def get_user_from_simple_token(simple_token: str | None) -> AuthResult | N
 
     try:
         decoded = jwt.decode(
-            simple_token, config.services.api_secret, algorithms=[JWT_ALGORITHM]
+            simple_token,
+            config.services.api_secret.get_secret_value(),
+            algorithms=[JWT_ALGORITHM],
         )
         user = await User.a_get(user_id=decoded['user'])
         scopes = _resolve_scopes(['*:*']) - _resolve_scopes(['tokens:*'])
@@ -153,7 +157,7 @@ def generate_upload_token(user: User) -> str:
     check_api_secret()
     payload = uuid.UUID(user.user_id).bytes
     signature = hmac.new(
-        config.services.api_secret.encode('utf-8'),
+        config.services.api_secret.get_secret_value().encode('utf-8'),
         msg=payload,
         digestmod=HMAC_DIGESTMOD,
     )
@@ -182,7 +186,7 @@ async def get_user_from_upload_token(upload_token: str | None) -> AuthResult | N
         signature_bytes = utils.base64_decode(signature)
 
         expected = hmac.new(
-            config.services.api_secret.encode('utf-8'),
+            config.services.api_secret.get_secret_value().encode('utf-8'),
             msg=payload_bytes,
             digestmod=HMAC_DIGESTMOD,
         )
