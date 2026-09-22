@@ -19,6 +19,7 @@
 import os
 import re
 import shutil
+from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING, Literal, Union, cast
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -754,6 +755,28 @@ class EntryPoints(Options):
     options: dict[str, EntryPointType] = Field(
         dict(), description='The available plugin entry points.'
     )
+
+    def filtered_keys(self) -> list[str]:
+        """Return entry point keys matching the include and exclude patterns."""
+        available_keys = list(self.options)
+
+        if self.include is None:
+            included_keys = available_keys
+        else:
+            included_keys = []
+            for pattern in self.include:
+                included_keys.extend(
+                    key
+                    for key in available_keys
+                    if key not in included_keys and fnmatchcase(key, pattern)
+                )
+
+        excluded_patterns = self.exclude or []
+        return [
+            key
+            for key in included_keys
+            if not any(fnmatchcase(key, pattern) for pattern in excluded_patterns)
+        ]
 
 
 class PluginPackage(BaseModel):

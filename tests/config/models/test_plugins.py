@@ -26,10 +26,59 @@ from nomad.config.models.north import NORTHTool
 from nomad.config.models.plugins import (
     APIEntryPoint,
     DashboardEntryPoint,
+    EntryPoints,
     ExampleUploadEntryPoint,
     NORTHToolEntryPoint,
+    SchemaPackageEntryPoint,
     UploadResource,
 )
+
+
+@pytest.mark.parametrize(
+    'include, exclude, expected_keys',
+    [
+        pytest.param(None, None, ['package_a:one', 'package_a:two', 'package_b:one']),
+        pytest.param([], None, []),
+        pytest.param(
+            ['package_b:*', 'package_a:two'], None, ['package_b:one', 'package_a:two']
+        ),
+        pytest.param(['package_a:*'], ['*:two'], ['package_a:one']),
+        pytest.param(
+            ['package_a:*', '*:one'],
+            None,
+            ['package_a:one', 'package_a:two', 'package_b:one'],
+        ),
+        pytest.param(None, ['package_a:*'], ['package_b:one']),
+        pytest.param(
+            ['*'],
+            None,
+            ['package_a:one', 'package_a:two', 'package_b:one'],
+            id='include-all',
+        ),
+        pytest.param(['*'], ['*'], [], id='exclude-all'),
+        pytest.param(['missing:*'], None, [], id='unmatched-include'),
+        pytest.param(
+            None,
+            ['missing:*'],
+            ['package_a:one', 'package_a:two', 'package_b:one'],
+            id='unmatched-exclude',
+        ),
+        pytest.param(
+            ['package_b:*', '*'],
+            None,
+            ['package_b:one', 'package_a:one', 'package_a:two'],
+            id='include-pattern-order-with-catch-all',
+        ),
+    ],
+)
+def test_entry_points_filtered_keys_wildcards(include, exclude, expected_keys):
+    options = {
+        key: SchemaPackageEntryPoint()
+        for key in ['package_a:one', 'package_a:two', 'package_b:one']
+    }
+    entry_points = EntryPoints(options=options, include=include, exclude=exclude)
+
+    assert entry_points.filtered_keys() == expected_keys
 
 
 def mock_plugin_package(monkeypatch, directory):

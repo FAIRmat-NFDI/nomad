@@ -45,7 +45,7 @@ from nomad.config.models.pagination import PaginationBaseModel
 
 from .common import ConfigBaseModel, Options, OptionsGlob
 from .north import NORTH
-from .plugins import EntryPointType, PluginPackage, Plugins
+from .plugins import EntryPoints, EntryPointType, PluginPackage, Plugins
 from .ui import UI
 
 logger = logging.getLogger(__name__)
@@ -2464,7 +2464,7 @@ WARNING: Modifying the storage configuration of an existing installation would m
 
         # Iterate over all the activated entry points to assign URL-safe identifiers and
         # check for collisions
-        for entry_point_id in Options.model_validate(entry_points).filtered_keys():
+        for entry_point_id in EntryPoints.model_validate(entry_points).filtered_keys():
             config = entry_points.get('options', {}).get(entry_point_id)
             if not config:
                 continue
