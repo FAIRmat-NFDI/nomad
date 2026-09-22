@@ -651,3 +651,239 @@ def test_transform_with_inplace_deletion_transformation():
     assert result2 == result, (
         'Standard way didnt match inplace deletion transformation result'
     )
+
+
+def test_transform_array_rules_with_none_source_and_default_value():
+    """
+    Test that an array rule with source=None and default_value correctly fills in
+    the default value for repeating subsections in inplace and non-inplace transformations.
+    """
+    source = {
+        'sub_systems': [
+            {'nested_system': {'name': 'system_1'}},
+            {'nested_system': {'name': 'system_2'}},
+        ]
+    }
+    rules = Rules(
+        rules={
+            'add_element_m_def': Rule(
+                target='sub_systems[n1].nested_system.m_def',
+                default_value='nomad.datamodel.metainfo.basesections.v2.Element',
+            )
+        }
+    )
+    transformer = load_transformer({'main': rules})
+    result_inplace = transformer.transform(
+        source, 'main', inplace=True, array_rules=True
+    )
+    expected_m_def = 'nomad.datamodel.metainfo.basesections.v2.Element'
+    assert result_inplace['sub_systems'][0]['nested_system']['m_def'] == expected_m_def
+    assert result_inplace['sub_systems'][1]['nested_system']['m_def'] == expected_m_def
+
+    result_new = transformer.transform(source, 'main', target_data={}, array_rules=True)
+    assert result_new['sub_systems'][0]['nested_system']['m_def'] == expected_m_def
+    assert result_new['sub_systems'][1]['nested_system']['m_def'] == expected_m_def
+
+
+def test_transform_array_rules_with_missing_source_key_and_default_value():
+    """
+    Test that an array rule where the source path points to a non-existent key
+    correctly falls back to default_value for each array element.
+    """
+    source = {
+        'elemental_composition': [
+            {'element': 'H'},
+            {'element': 'O'},
+        ]
+    }
+    rules = Rules(
+        rules={
+            'add_element_m_def': Rule(
+                source='elemental_composition[n1].x',
+                target='sub_systems[n1].nested_system.m_def',
+                default_value='nomad.datamodel.metainfo.basesections.v2.Element',
+            )
+        }
+    )
+    transformer = load_transformer({'main': rules})
+    result = transformer.transform(source, 'main', target_data={}, array_rules=True)
+    expected_m_def = 'nomad.datamodel.metainfo.basesections.v2.Element'
+    assert len(result['sub_systems']) == 2
+    assert result['sub_systems'][0]['nested_system']['m_def'] == expected_m_def
+    assert result['sub_systems'][1]['nested_system']['m_def'] == expected_m_def
+
+
+def test_transform_array_rules_with_regex_conditions():
+    """
+    Test that regex conditions in array rules correctly resolve array index placeholders
+    (e.g., [n1]) and only transform items that satisfy the condition.
+    """
+    source = {
+        'sub_systems': [
+            {'system_type': 'element', 'name': 'H'},
+            {'system_type': 'molecule', 'name': 'H2O'},
+            {'system_type': 'element', 'name': 'O'},
+        ]
+    }
+    rules = Rules(
+        rules={
+            'copy_element_names': Rule(
+                source='sub_systems[n1].name',
+                target='elements[n1].symbol',
+                conditions=[
+                    Condition(
+                        regex_condition=RegexCondition(
+                            regex_path='sub_systems[n1].system_type',
+                            regex_pattern=r'^element$',
+                        )
+                    )
+                ],
+            )
+        }
+    )
+    transformer = load_transformer({'main': rules})
+    result = transformer.transform(source, 'main', target_data={}, array_rules=True)
+    assert result['elements'][0]['symbol'] == 'H'
+    assert (
+        'symbol' not in result['elements'][1]
+        or result['elements'][1].get('symbol') is None
+    )
+    assert result['elements'][2]['symbol'] == 'O'
+
+
+def test_transform_array_rules_with_none_source_and_regex_conditions():
+    """
+    Test that an array rule with source=None, default_value, and regex conditions
+    only sets default_value on array items that satisfy the condition.
+    """
+    source = {
+        'sub_systems': [
+            {'system_type': 'element', 'nested_system': {}},
+            {'system_type': 'molecule', 'nested_system': {}},
+        ]
+    }
+    rules = Rules(
+        rules={
+            'add_element_m_def': Rule(
+                target='sub_systems[n1].nested_system.m_def',
+                default_value='nomad.datamodel.metainfo.basesections.v2.Element',
+                conditions=[
+                    Condition(
+                        regex_condition=RegexCondition(
+                            regex_path='sub_systems[n1].system_type',
+                            regex_pattern=r'^element$',
+                        )
+                    )
+                ],
+            )
+        }
+    )
+    transformer = load_transformer({'main': rules})
+    result = transformer.transform(source, 'main', inplace=True, array_rules=True)
+    assert (
+        result['sub_systems'][0]['nested_system']['m_def']
+        == 'nomad.datamodel.metainfo.basesections.v2.Element'
+    )
+    assert 'm_def' not in result['sub_systems'][1]['nested_system']
+
+
+def test_transform_array_rules_with_delete_sources_and_none_source():
+    """
+    Test that delete_sources=True does not raise when a rule has source=None.
+    """
+    source = {'sub_systems': [{'nested_system': {}}]}
+    rules = Rules(
+        rules={
+            'add_m_def': Rule(
+                target='sub_systems[n1].nested_system.m_def',
+                default_value='DefaultDef',
+            )
+        }
+    )
+    transformer = load_transformer({'main': rules})
+    result = transformer.transform(
+        source, 'main', inplace=True, array_rules=True, delete_sources=True
+    )
+    assert result['sub_systems'][0]['nested_system']['m_def'] == 'DefaultDef'
+
+
+def test_transform_array_rules_with_wildcard_notation_and_default_value():
+    """
+    Test that both wildcard notation `a[*].b.c` and array placeholder `a[n].b.c`
+    can be used to populate all elements with a default_value.
+    """
+    source = {
+        'a': [
+            {'b': {}},
+            {'b': {}},
+            {'b': {}},
+        ]
+    }
+    rules = Rules(
+        rules={
+            'populate_c_wildcard': Rule(
+                target='a[*].b.c',
+                default_value='default_c_wildcard',
+            ),
+            'populate_d_placeholder': Rule(
+                target='a[n].b.d',
+                default_value='default_d_placeholder',
+            ),
+        }
+    )
+    transformer = load_transformer({'main': rules})
+    result = transformer.transform(source, 'main', inplace=True, array_rules=True)
+    assert len(result['a']) == 3
+    for item in result['a']:
+        assert item['b']['c'] == 'default_c_wildcard'
+        assert item['b']['d'] == 'default_d_placeholder'
+
+
+def test_transformer_map_convenience_method():
+    """
+    Test that Transformer.map allows mapping with minimal arguments in one call.
+    """
+    # 1. Simple key-to-key mapping
+    source = {'user': {'profile': {'name': 'Alice'}}}
+    result = Transformer.map(source, source='user.profile.name', target='client.name')
+    assert result == {'client': {'name': 'Alice'}}
+
+    # 2. Inplace array default value without array_rules=True flag
+    archive = {'sub_systems': [{'nested': {}}, {'nested': {}}]}
+    res = Transformer.map(
+        archive,
+        target='sub_systems[n].nested.m_def',
+        default_value='Element',
+        inplace=True,
+    )
+    assert res['sub_systems'][0]['nested']['m_def'] == 'Element'
+    assert res['sub_systems'][1]['nested']['m_def'] == 'Element'
+
+
+def test_transformer_init_with_direct_arguments():
+    """
+    Test initializing Transformer directly with rule kwargs, single dict, or without mapping_name.
+    """
+    # Initialize with keyword arguments
+    data = {'val': 10}
+    t1 = Transformer(source='val', target='output.result')
+    assert t1.transform(data) == {'output': {'result': 10}}
+
+    # Initialize with single rule dict
+    t2 = Transformer({'source': 'val', 'target': 'copied'})
+    assert t2.transform(data) == {'copied': 10}
+
+    # Transform with direct kwargs on Transformer()
+    t3 = Transformer()
+    assert t3.transform(data, source='val', target='direct') == {'direct': 10}
+
+
+def test_transformer_auto_detects_array_notation():
+    """
+    Test that Transformer automatically detects array notation without needing array_rules=True.
+    """
+    data = {'items': [{'x': 1}, {'x': 2}]}
+    t = Transformer(source='items[n].x', target='res[n].val')
+    # Notice: array_rules=True is omitted!
+    result = t.transform(data)
+    assert result == {'res': [{'val': 1}, {'val': 2}]}
