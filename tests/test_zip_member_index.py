@@ -27,7 +27,7 @@ import pytest
 from fsspec.implementations.zip import ZipFileSystem
 from upath import UPath
 
-from nomad.zip_index import (
+from nomad.files.zip_index import (
     IndexDiskStore,
     RangeTailFile,
     ZipMember,
