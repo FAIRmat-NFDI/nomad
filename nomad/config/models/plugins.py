@@ -505,7 +505,13 @@ class ExampleUploadEntryPoint(EntryPoint):
 
 
 class APIEntryPoint(EntryPoint):
-    """Base model for API plugin entry points."""
+    """Base model for API plugin entry points.
+
+    An API entry point either (a) returns a FastAPI instance from ``load()``
+    that will be mounted under ``{api_base_path}/apis/{id_url_safe}`` (or
+    under a custom ``prefix``), or (b) declares an ``external_url`` pointing
+    to an API served by a separate service.
+    """
 
     entry_point_type: Literal['api'] = Field(
         'api',
@@ -516,32 +522,55 @@ class APIEntryPoint(EntryPoint):
     prefix: str | None = Field(
         None,
         description=(
-            'The prefix for the API. The URL for the API will be the base URL of the NOMAD '
-            'installation followed by this prefix. The prefix must not collide with any other '
-            'API prefixes. There is no default, this field must be set.'
+            'The path under which the API is mounted, relative to the base path of '
+            'the NOMAD backend. If not set, it is automatically generated as '
+            '``apis/{id_url_safe}``, which guarantees a predictable, collision-free '
+            'location. You should not set this manually unless you know what you '
+            'are doing: a custom prefix must not collide with any other route served '
+            'by the NOMAD backend. Cannot be combined with ``external_url``.'
+        ),
+    )
+
+    external_url: str | None = Field(
+        None,
+        description=(
+            'Absolute URL to an API served outside of NOMAD. When set, '
+            '``load()`` is not called and no mount is performed.'
         ),
     )
 
     @model_validator(mode='before')
     @classmethod
-    def prefix_must_be_defined_and_valid(cls, v):
+    def _validate(cls, v):
         import urllib.parse
 
-        if 'prefix' not in v:
-            raise ValueError('prefix must be defined')
-        if not v['prefix']:
-            raise ValueError('prefix must be defined')
-        if urllib.parse.quote(v['prefix']) != v['prefix']:
-            raise ValueError('prefix must be a valid URL path')
+        if isinstance(v, BaseModel):
+            v = v.model_dump(exclude_none=True)
 
-        v['prefix'] = v['prefix'].strip('/')
+        prefix = v.get('prefix')
+        if prefix is not None:
+            if not isinstance(prefix, str):
+                raise ValueError('prefix must be a string')
+            if urllib.parse.quote(prefix) != prefix:
+                raise ValueError('prefix must be a valid URL path')
+            v['prefix'] = prefix.strip('/') or None
+
+        external_url = v.get('external_url')
+        if external_url:
+            parsed = urllib.parse.urlparse(external_url)
+            if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+                raise ValueError('external_url must be an absolute http(s) URL')
+            if v.get('prefix'):
+                raise ValueError('prefix cannot be combined with external_url')
+
         return v
 
-    def load(self) -> 'FastAPI':
+    def load(self) -> 'FastAPI | None':
         """Used to lazy-load the API instance. You should override this
-        method in your subclass. Note that any Python module imports required
-        for the API should be done within this function as well."""
-        pass
+        method in your subclass when serving the API from inside NOMAD. Leave
+        as-is when using ``external_url``. Note that any Python module imports
+        required for the API should be done within this function as well."""
+        return None
 
     def dict_safe(self):
         """Used to serialize the non-confidential parts of a plugin model. This
@@ -557,7 +586,7 @@ class DashboardEntryPoint(EntryPoint):
 
     A dashboard entry point either (a) returns a FastAPI instance from
     ``load()`` that will be mounted under
-    ``{app_base}/dashboards/{id_url_safe}``, or (b) declares an
+    ``{api_base_path}/dashboards/{id_url_safe}``, or (b) declares an
     ``external_url`` pointing to a dashboard served by a separate service.
     """
 

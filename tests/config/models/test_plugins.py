@@ -413,16 +413,9 @@ def test_example_upload_entry_point_load_invalid(config, error, monkeypatch):
 @pytest.mark.parametrize(
     'config, error, value',
     [
-        pytest.param({}, 'prefix must be defined', None, id='prefix-must-be-defined'),
-        pytest.param(
-            {'prefix': None},
-            'prefix must be defined',
-            None,
-            id='prefix-must-not-be-none',
-        ),
-        pytest.param(
-            {'prefix': ''}, 'prefix must be defined', None, id='prefix-must-not-empty'
-        ),
+        pytest.param({}, None, None, id='prefix-optional'),
+        pytest.param({'prefix': None}, None, None, id='prefix-none'),
+        pytest.param({'prefix': ''}, None, None, id='prefix-empty-treated-as-unset'),
         pytest.param({'prefix': '/foo/bar/'}, None, 'foo/bar', id='prefix-slashes'),
         pytest.param(
             {'prefix': 'not_$url& save'},
@@ -430,9 +423,33 @@ def test_example_upload_entry_point_load_invalid(config, error, monkeypatch):
             None,
             id='prefix-is-valid-url',
         ),
+        pytest.param(
+            {'external_url': 'https://example.com/api'},
+            None,
+            None,
+            id='external-url',
+        ),
+        pytest.param(
+            {'external_url': 'javascript:alert(1)'},
+            'external_url must be an absolute http',
+            None,
+            id='external-url-javascript-rejected',
+        ),
+        pytest.param(
+            {'external_url': '/relative/path'},
+            'external_url must be an absolute http',
+            None,
+            id='external-url-relative-rejected',
+        ),
+        pytest.param(
+            {'external_url': 'https://example.com/api', 'prefix': 'my/api'},
+            'prefix cannot be combined with external_url',
+            None,
+            id='external-url-and-prefix-rejected',
+        ),
     ],
 )
-def test_api_entry_point_invalid(config, error, value):
+def test_api_entry_point_validation(config, error, value):
     class MyAPIEntryPoint(APIEntryPoint):
         def load(self):
             pass
@@ -463,6 +480,20 @@ def test_api_entry_point():
         'id': 'test_api',
         'entry_point_type': 'api',
         'prefix': 'my/api',
+    }
+
+
+def test_api_entry_point_external():
+    entry_point = APIEntryPoint(
+        id='test_api',
+        external_url='https://example.com/api',
+    )
+
+    assert entry_point.load() is None
+    assert entry_point.dict_safe() == {
+        'id': 'test_api',
+        'entry_point_type': 'api',
+        'external_url': 'https://example.com/api',
     }
 
 
