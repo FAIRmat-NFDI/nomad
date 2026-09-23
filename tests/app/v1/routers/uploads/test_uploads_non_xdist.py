@@ -1575,12 +1575,12 @@ def test_get_published_raw_file_reuses_and_closes_one_zip_filesystem(
     """Metadata lookup and streaming share one ZIP parse for a file response."""
     opened = 0
     closed = 0
-    original_ensure = PublicUploadFiles._ensure_raw_zip
+    original_ensure = PublicUploadFiles._ensure_zip_index
     original_close = PublicUploadFiles.close
 
     def tracked_ensure(self):
         nonlocal opened
-        first_open = self._zip_index is None
+        first_open = self._zip is None
         result = original_ensure(self)
         if first_open:
             opened += 1
@@ -1588,12 +1588,12 @@ def test_get_published_raw_file_reuses_and_closes_one_zip_filesystem(
 
     def tracked_close(self):
         nonlocal closed
-        had_index = self._zip_index is not None
+        had_index = self._zip is not None
         original_close(self)
         if had_index:
             closed += 1
 
-    monkeypatch.setattr(PublicUploadFiles, '_ensure_raw_zip', tracked_ensure)
+    monkeypatch.setattr(PublicUploadFiles, '_ensure_zip_index', tracked_ensure)
     monkeypatch.setattr(PublicUploadFiles, 'close', tracked_close)
 
     response = client.get(

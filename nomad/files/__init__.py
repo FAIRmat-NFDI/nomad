@@ -60,9 +60,12 @@ from .uploads import (
     UploadFiles,
     ZipRawPathReader,
     _RawEntry,
+    _toc_cache,
+    _zip_cache,
     clear_index_caches,
 )
-from .zip_index import object_identity
+from msglc.reader import LazyReader
+from .index_cache import object_identity
 
 __all__ = [
     'BrowsableFileSource',
@@ -71,6 +74,7 @@ __all__ = [
     'DiskFileSource',
     'FSUtility',
     'FileSource',
+    'LazyReader',
     'PathObject',
     'PublicUploadFiles',
     'RawDirPage',
@@ -83,6 +87,8 @@ __all__ = [
     'UploadFiles',
     'ZipFileSource',
     'ZipRawPathReader',
+    '_toc_cache',
+    '_zip_cache',
     'bundle_info_filename',
     'clear_index_caches',
     'create_zipstream',

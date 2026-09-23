@@ -55,8 +55,8 @@ import stat
 import tarfile
 import warnings
 import zipfile
-from collections.abc import Iterable, Iterator
-from contextlib import contextmanager, suppress
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import ExitStack, contextmanager, suppress
 from dataclasses import dataclass
 from functools import cached_property
 from typing import IO, Any, Literal, NamedTuple, cast
@@ -66,7 +66,7 @@ import yaml
 from fsspec import AbstractFileSystem
 from fsspec.implementations.local import LocalFileSystem
 from h5py import File
-from msglc.reader import LazyItem
+from msglc.reader import LazyItem, LazyReader
 from upath import UPath
 
 from nomad import datamodel, utils
@@ -85,32 +85,33 @@ from nomad.common import (
 from nomad.config import config
 from nomad.config.models.config import BundleExportSettings, BundleImportSettings
 
+from .archive_toc import ArchiveTocIndex, build_archive_toc_index
 from .filesystem import (
     DirectoryObject,
     FSUtility,
     PathObject,
+    _apply_if_match,
+    _is_stale_object_error,
+    _remote_read_open_kwargs,
     _versioned_archive_file_object,
+    _versioned_archive_file_objects,
     bundle_info_filename,
 )
+from .index_cache import CachedIndex, IndexCache
 from .public_storage import (
     Access,
     choose_pack_fs,
-    choose_read_fs,
+    choose_read_fs_and_marker,
     clear_ready_cache,
     complete_published_write,
     delete_access_artifacts,
     delete_ready_marker,
     detect_published_access,
+    load_cached_marker,
     rename_published_artifacts,
 )
 from .sources import BrowsableFileSource, DiskFileSource, FileSource, _disk_file_source
-from .zip_index import (
-    IndexDiskStore,
-    RangeTailFile,
-    ZipMemberIndex,
-    object_identity,
-    open_zip_member,
-)
+from .zip_index import RangeTailFile, ZipMemberIndex, open_zip_member
 
 logger = logging.getLogger('nomad.files')
 
@@ -1427,9 +1428,71 @@ class ZipRawPathReader(RawPathReader):
     upload_files: PublicUploadFiles
 
 
+# One range GET covers header, sub-TOC and data for entries up to this size;
+# larger entries fall back to the filesystem's block size.
+_MAX_ENTRY_BLOCK = 32 * 1024 * 1024
+
+
+def _archive_toc_sizeof(index: ArchiveTocIndex) -> int:
+    return len(index.entries) * 250 + 1024
+
+
+def _zip_index_sizeof(index: ZipMemberIndex) -> int:
+    """Include index contents plus an allowance for cache bookkeeping."""
+    return index.memory_size + 1024
+
+
+_toc_cache: IndexCache[ArchiveTocIndex] = IndexCache(
+    'toc',
+    decode=ArchiveTocIndex.from_bytes,
+    encode=ArchiveTocIndex.to_bytes,
+    sizeof=_archive_toc_sizeof,
+)
+_zip_cache: IndexCache[ZipMemberIndex] = IndexCache(
+    'zip',
+    decode=ZipMemberIndex.from_bytes,
+    encode=ZipMemberIndex.to_bytes,
+    sizeof=_zip_index_sizeof,
+)
+
+
 def clear_index_caches() -> None:
-    """Drop process-level artifact-probe caches. Intended for tests."""
+    """Drop process-level artifact-probe, ZIP, and archive TOC caches. Intended for tests."""
     clear_ready_cache()
+    _toc_cache.clear()
+    _zip_cache.clear()
+
+
+class _SingleEntryArchive(Mapping[str, LazyReader]):
+    """Mapping view exposing exactly one combined-archive entry."""
+
+    def __init__(self, entry_id: str, entry: LazyReader):
+        self._entry_id = entry_id
+        self._entry = entry
+
+    def __getitem__(self, key: str) -> LazyReader:
+        if key != self._entry_id:
+            raise KeyError(key)
+        return self._entry
+
+    def __iter__(self):
+        yield self._entry_id
+
+    def __len__(self) -> int:
+        return 1
+
+
+@dataclass
+class _EntryAtOffset:
+    stack: ExitStack
+    entry: LazyReader
+
+    def __enter__(self) -> _EntryAtOffset:
+        self.stack.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return self.stack.__exit__(exc_type, exc_val, exc_tb)
 
 
 class PublicUploadFiles(UploadFiles):
@@ -1441,7 +1504,8 @@ class PublicUploadFiles(UploadFiles):
         fs: AbstractFileSystem | None = None,
     ):
         super().__init__(upload_id, create, fs=fs)
-        self._zip_index: ZipMemberIndex | None = None
+        self._zip: CachedIndex[ZipMemberIndex] | None = None
+        self._toc: CachedIndex[ArchiveTocIndex] | None = None
 
     @classmethod
     def _file_area(cls):
@@ -1457,7 +1521,27 @@ class PublicUploadFiles(UploadFiles):
     @cached_property
     def storage_fs(self) -> AbstractFileSystem:
         """The single backend from which this published upload is read."""
-        return choose_read_fs(self.os_path)
+        return self._read_selection[0]
+
+    @cached_property
+    def _read_selection(self) -> tuple[AbstractFileSystem, Access | None]:
+        """Keep the ready marker's access only for the chosen remote backend."""
+        storage_fs, marker = choose_read_fs_and_marker(self.os_path)
+        return storage_fs, None if marker is None else marker.access
+
+    @cached_property
+    def _remote_marker_access(self) -> Access | None:
+        """Load the direct-remote marker lazily when access is requested."""
+        storage_fs, marker_access = self._read_selection
+        if marker_access is not None:
+            return marker_access
+        if (
+            config.fs.public_fs.protocol
+            and config.fs.public_fs.read_mode != 'remote_then_local'
+        ):
+            marker = load_cached_marker(self.os_path, storage_fs)
+            return None if marker is None else marker.access
+        return None
 
     @cached_property
     def access(self) -> Access:
@@ -1476,6 +1560,9 @@ class PublicUploadFiles(UploadFiles):
         call, and the cached result is used in subsequent calls. The only way to
         change the access is to call :func:`re_pack`.
         """
+        marker_access = self._remote_marker_access
+        if marker_access is not None:
+            return marker_access
         return detect_published_access(self.os_path, self.storage_fs, choose_pack_fs())
 
     def raw_zip_file_object(self, access: str = None) -> PathObject:
@@ -1507,18 +1594,31 @@ class PublicUploadFiles(UploadFiles):
         ) as zip_fs:
             yield zip_fs
 
+    def _zip_read_hints(self) -> tuple[int | None, str | None]:
+        identity = None if self._zip is None else self._zip.identity
+        if identity is None:
+            return None, None
+        return identity.size, identity.etag
+
     def _open_raw_zip_fileobj(self) -> IO[bytes]:
         zip_obj = self.raw_zip_file_object()
         fs = self.storage_fs
         location = zip_obj.location
         if isinstance(fs, LocalFileSystem):
             return fs.open(location, 'rb')
-        return cast(IO[bytes], RangeTailFile.from_filesystem(fs, location))
+        size, _etag = self._zip_read_hints()
+        return cast(IO[bytes], RangeTailFile.from_filesystem(fs, location, size=size))
 
     def _open_zip_member_fileobj(self) -> IO[bytes]:
         """Open the ZIP object for a member read without prefetching the tail."""
         zip_obj = self.raw_zip_file_object()
-        return self.storage_fs.open(zip_obj.location, 'rb')
+        fs = self.storage_fs
+        size, etag = self._zip_read_hints()
+        file_obj = fs.open(
+            zip_obj.location, 'rb', **_remote_read_open_kwargs(fs, size=size)
+        )
+        _apply_if_match(fs, file_obj, etag, size=size)
+        return file_obj
 
     def _parse_raw_zip_index(self) -> ZipMemberIndex:
         fileobj = self._open_raw_zip_fileobj()
@@ -1537,52 +1637,126 @@ class PublicUploadFiles(UploadFiles):
                 with suppress(Exception):
                     fileobj.close()
 
-    def _index_store(self, kind: str) -> IndexDiskStore:
-        settings = config.fs.public_fs.metadata_cache
-        directory = settings.directory or os.path.join(
-            config.fs.local_tmp, 'nomad-zip-index'
-        )
-        return IndexDiskStore(directory, settings.max_disk_mb * 1024 * 1024, kind)
+    def _ensure_zip_index(self) -> ZipMemberIndex:
+        if self._zip is not None:
+            return self._zip.index
+        zip_obj = self.raw_zip_file_object()
 
-    def _ensure_raw_zip(self) -> ZipMemberIndex:
-        if self._zip_index is not None:
-            return self._zip_index
-        settings = config.fs.public_fs.metadata_cache
-        fs = self.storage_fs
-        location = self.raw_zip_file_object().location
-        if not settings.is_enabled(config.fs.public_fs.protocol):
-            zip_obj = self.raw_zip_file_object()
-            if not zip_obj.exists():
-                self._zip_index = ZipMemberIndex.empty()
-                return self._zip_index
-            self._zip_index = self._parse_raw_zip_index()
-            return self._zip_index
+        def uncached(index: ZipMemberIndex) -> ZipMemberIndex:
+            self._zip = CachedIndex(None, index, zip_obj.os_path)
+            return index
+
+        if not _zip_cache.is_enabled():
+            if zip_obj.exists():
+                return uncached(self._parse_raw_zip_index())
+            return uncached(ZipMemberIndex.empty())
+        cached = _zip_cache.get_or_build(
+            self.storage_fs,
+            zip_obj.location,
+            zip_obj.os_path,
+            build=self._parse_raw_zip_index,
+        )
+        if cached is None:
+            return uncached(ZipMemberIndex.empty())
+        self._zip = cached
+        return cached.index
+
+    def _discard_zip_index_cache(self) -> None:
+        if self._zip is not None:
+            _zip_cache.discard(self._zip)
+            self._zip = None
+
+    def _build_archive_toc(self, msg_file: PathObject) -> ArchiveTocIndex | None:
         try:
-            identity = object_identity(fs, location)
-        except FileNotFoundError:
-            self._zip_index = ZipMemberIndex.empty()
-            return self._zip_index
-        store = self._index_store('zip')
-        index: ZipMemberIndex | None = None
-        data = store.load(identity)
-        if data is not None:
-            try:
-                index = ZipMemberIndex.from_bytes(data)
-            except Exception:
-                logger.warning(
-                    'failed to decode cached ZIP index for %s',
-                    location,
-                    exc_info=True,
+            with FSUtility.open(msg_file.os_path, fs=self.storage_fs) as file_obj:
+                return build_archive_toc_index(file_obj)
+        except ValueError:
+            logger.warning(
+                'failed to build archive TOC for %s',
+                msg_file.location,
+                exc_info=True,
+            )
+            return None
+
+    def _archive_msg_candidates(self) -> list[PathObject]:
+        directory = DirectoryObject(self.os_path, fs=self.storage_fs)
+        return _versioned_archive_file_objects(
+            directory,
+            lambda suffix: f'archive-{self.access}{suffix}.msg.msg',
+            fs=self.storage_fs,
+        )
+
+    def _ensure_archive_toc(self) -> ArchiveTocIndex | None:
+        if self._toc is not None:
+            return self._toc.index
+        if not _toc_cache.is_enabled():
+            return None
+        # Only the preferred suffix may be served from memory. An older suffix
+        # that was cached while the preferred file was absent must not hide a
+        # newer archive that has since appeared.
+        candidates = self._archive_msg_candidates()
+        if candidates:
+            preferred = candidates[0]
+            cached = _toc_cache.get(self.storage_fs, preferred.location)
+            if cached is not None:
+                self._toc = cached
+                return cached.index
+        msg_file = self.msg_fp(self.access, fallback=True)
+        self._toc = _toc_cache.get_or_build(
+            self.storage_fs,
+            msg_file.location,
+            msg_file.os_path,
+            build=lambda: self._build_archive_toc(msg_file),
+        )
+        return None if self._toc is None else self._toc.index
+
+    def _discard_archive_toc_cache(self) -> None:
+        if self._toc is not None:
+            _toc_cache.discard(self._toc)
+            self._toc = None
+
+    def _open_entry_at_offset(
+        self, toc: ArchiveTocIndex, entry_id: str
+    ) -> _EntryAtOffset | None:
+        """Open one combined-archive entry at its cached offset; None means fall back."""
+        start, end = toc.span(entry_id)
+        cached = self._toc
+        identity = None if cached is None else cached.identity
+        msg_os_path = (
+            cached.os_path
+            if cached is not None
+            else self.msg_fp(self.access, fallback=True).os_path
+        )
+        object_size = None if identity is None else identity.size
+        etag = None if identity is None else identity.etag
+        stack = ExitStack()
+        try:
+            file_obj = stack.enter_context(
+                FSUtility.open(
+                    msg_os_path,
+                    fs=self.storage_fs,
+                    block_size=min(end - start, _MAX_ENTRY_BLOCK),
+                    size=object_size,
+                    if_match=etag,
                 )
-                store.discard(identity)
-        if index is None:
-            index = self._parse_raw_zip_index()
-            store.store(identity, index.to_bytes())
-        self._zip_index = index
-        return index
+            )
+            file_obj.seek(start)
+            entry = LazyReader(file_obj, from_combined=True)
+        except (ValueError, OSError):
+            stack.close()
+            logger.warning(
+                'failed to open cached archive entry %s at offset %d',
+                entry_id,
+                start,
+                exc_info=True,
+            )
+            self._discard_archive_toc_cache()
+            return None
+        return _EntryAtOffset(stack.pop_all(), entry)
 
     def close(self):
-        self._zip_index = None
+        self._zip = None
+        self._toc = None
 
     def raw_path_reader(self, path: str) -> RawPathReader:
         return ZipRawPathReader(self, path)
@@ -1638,7 +1812,7 @@ class PublicUploadFiles(UploadFiles):
         return staging_upload_files
 
     def is_empty(self) -> bool:
-        return self._ensure_raw_zip().is_empty()
+        return self._ensure_zip_index().is_empty()
 
     def delete(self) -> None:
         """Delete every configured copy of this published upload.
@@ -1689,12 +1863,12 @@ class PublicUploadFiles(UploadFiles):
     def raw_exists(self, path: str) -> bool:
         if not is_safe_relative_path(path):
             return False
-        return self._ensure_raw_zip().exists(path)
+        return self._ensure_zip_index().exists(path)
 
     def raw_isfile(self, path: str) -> bool:
         if not is_safe_relative_path(path):
             return False
-        return self._ensure_raw_zip().isfile(path)
+        return self._ensure_zip_index().isfile(path)
 
     def raw_listdir(
         self,
@@ -1706,7 +1880,7 @@ class PublicUploadFiles(UploadFiles):
         if not is_safe_relative_path(path) or depth == 0:
             return
 
-        index = self._ensure_raw_zip()
+        index = self._ensure_zip_index()
         for member in index.listdir(
             path, recursive=recursive, files_only=files_only, depth=depth
         ):
@@ -1726,24 +1900,35 @@ class PublicUploadFiles(UploadFiles):
         mode = mode or 'rb'
         encoding = kwargs.pop('encoding', None)
 
-        index = self._ensure_raw_zip()
-        member = index.get(file_path)
-        if member is None or member.is_dir or not member.zip_name:
-            raise KeyError(file_path)
+        member_file = None
+        for retry in (True, False):
+            index = self._ensure_zip_index()
+            member = index.get(file_path)
+            if member is None or member.is_dir or not member.zip_name:
+                raise KeyError(file_path)
 
-        fileobj = self._open_zip_member_fileobj()
-        try:
-            member_file = open_zip_member(fileobj, member)
-        except Exception as e:
-            if not getattr(fileobj, 'closed', False):
-                with suppress(Exception):
-                    fileobj.close()
-            if isinstance(e, (FileNotFoundError, IsADirectoryError, KeyError)):
-                raise KeyError(file_path) from e
-            if isinstance(e, zipfile.BadZipFile):
-                raise KeyError(file_path) from e
-            raise
-
+            fileobj = None
+            try:
+                fileobj = self._open_zip_member_fileobj()
+                member_file = open_zip_member(fileobj, member)
+                break
+            except Exception as e:
+                if fileobj is not None and not getattr(fileobj, 'closed', False):
+                    with suppress(Exception):
+                        fileobj.close()
+                if _is_stale_object_error(e):
+                    self._discard_zip_index_cache()
+                    if retry:
+                        continue
+                    raise
+                if isinstance(e, (FileNotFoundError, IsADirectoryError, KeyError)):
+                    raise KeyError(file_path) from e
+                if isinstance(e, zipfile.BadZipFile):
+                    if retry:
+                        self._discard_zip_index_cache()
+                        continue
+                    raise KeyError(file_path) from e
+                raise
         try:
             if 't' in mode:
                 yield io.TextIOWrapper(member_file, encoding=encoding)
@@ -1756,7 +1941,7 @@ class PublicUploadFiles(UploadFiles):
     def raw_file_size(self, file_path: str) -> int:
         assert is_safe_relative_path(file_path)
 
-        index = self._ensure_raw_zip()
+        index = self._ensure_zip_index()
         if not index.isfile(file_path):
             raise KeyError(file_path)
         if file_size := index.size(file_path):
@@ -1764,7 +1949,7 @@ class PublicUploadFiles(UploadFiles):
         raise KeyError(file_path)
 
     @contextmanager
-    def read_archive(self, entry_id: str) -> Iterator[ArchiveReader]:
+    def _open_full_archive(self, entry_id: str) -> Iterator[ArchiveReader]:
         try:
             with self._open_msg_file() as archive:
                 if entry_id not in archive:
@@ -1772,6 +1957,21 @@ class PublicUploadFiles(UploadFiles):
                 yield archive
         except FileNotFoundError as e:
             raise KeyError(entry_id) from e
+
+    @contextmanager
+    def read_archive(self, entry_id: str) -> Iterator[ArchiveReader]:
+        toc = self._ensure_archive_toc()
+        if toc is not None and toc.has_offsets():
+            if entry_id not in toc:
+                raise KeyError(entry_id)
+            if (opened := self._open_entry_at_offset(toc, entry_id)) is not None:
+                with opened:
+                    yield cast(
+                        ArchiveReader, _SingleEntryArchive(entry_id, opened.entry)
+                    )
+                return
+        with self._open_full_archive(entry_id) as archive:
+            yield archive
 
     def re_pack(self, with_embargo: bool) -> None:
         """
@@ -1796,6 +1996,8 @@ class PublicUploadFiles(UploadFiles):
 
         self.__dict__.pop('access', None)
         self.__dict__.pop('storage_fs', None)
+        self.__dict__.pop('_read_selection', None)
+        self.__dict__.pop('_remote_marker_access', None)
 
     def files_to_bundle(
         self, export_settings: BundleExportSettings
