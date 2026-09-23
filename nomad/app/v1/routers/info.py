@@ -21,10 +21,11 @@ API endpoint that deliver backend configuration details.
 """
 
 from enum import Enum
-from typing import Annotated
+from typing import Annotated, Any, Final
 
 from fastapi import Depends
 from fastapi.routing import APIRouter
+from fastapi_cache.decorator import cache
 from pydantic.fields import Field
 from pydantic.main import BaseModel
 
@@ -32,10 +33,12 @@ from nomad.app.v1.routers.auth import get_current_user
 from nomad.auth.scopes import Scope
 from nomad.config.models.plugins import PluginPackage
 from nomad.models.common import UTCDateTime
-from nomad.server_stats import load_server_stats, uncached_info_payload
+from nomad.server_stats import deployment_info, load_server_stats
 from nomad.utils import strip
 
 from ..models import User
+
+INFO_CACHE_TTL: Final[int] = 1 * 24 * 60 * 60  # 1 day in seconds
 
 router = APIRouter()
 
@@ -125,6 +128,11 @@ class InfoModel(BaseModel):
     )
 
 
+def _info_key_builder(func, namespace: str = '', **_: Any) -> str:
+    # The response does not depend on the user, so all requests share one entry.
+    return f'{namespace}:{func.__module__}:{func.__name__}'
+
+
 @router.get(
     '',
     tags=[APITag.DEFAULT],
@@ -133,18 +141,20 @@ class InfoModel(BaseModel):
     response_model_exclude_none=True,
     response_model=InfoModel,
 )
+@cache(expire=INFO_CACHE_TTL, key_builder=_info_key_builder)
 def get_info(
     _user: Annotated[
         User,
         Depends(get_current_user([Scope.INFO_READ])),
     ],
 ):
-    """Return cached information about the nomad backend.
+    """Return information about the nomad backend and its configuration.
 
-    This endpoint never collects statistics. It only reads the snapshot written
-    by the Temporal server-stats workflow.
+    The deployment information is computed on demand. The statistics are never
+    collected here; they are read from the snapshot written by the Temporal
+    server-stats workflow and are omitted if there is no snapshot yet.
     """
-    payload = load_server_stats()
-    if payload is None:
-        return uncached_info_payload()
+    payload = deployment_info()
+    if (stats := load_server_stats()) is not None:
+        payload |= stats
     return payload

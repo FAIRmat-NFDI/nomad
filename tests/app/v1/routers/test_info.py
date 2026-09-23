@@ -16,10 +16,12 @@
 # limitations under the License.
 #
 
+import json
 from unittest.mock import MagicMock
 
+from nomad.common import now
 from nomad.mongo.cache import SERVER_STATS_CACHE_KEY, MongoCache
-from nomad.server_stats import collect_server_stats
+from nomad.server_stats import SERVER_STATS_TTL, collect_server_stats
 
 
 def test_info_without_snapshot(client, mongo_function):
@@ -27,8 +29,9 @@ def test_info_without_snapshot(client, mongo_function):
     assert rv.status_code == 200
     data = rv.json()
     assert 'version' in data
-    assert 'parsers' in data
-    assert data['parsers'] == []
+    assert data['parsers']
+    assert data['codes']
+    assert data['normalizers']
     assert 'statistics' not in data
     assert 'collect_time' not in data
 
@@ -50,6 +53,7 @@ def test_info_reads_cached_snapshot(
 
     cached = MongoCache.objects(key=SERVER_STATS_CACHE_KEY).first()
     assert cached is not None
+    assert set(json.loads(cached.value)) == {'collect_time', 'statistics'}
 
     rv = client.get('info')
     assert rv.status_code == 200
@@ -71,3 +75,40 @@ def test_info_survives_startup_cache_flush(
     rv = client.get('info')
     assert rv.status_code == 200
     assert 'statistics' in rv.json()
+
+
+def test_info_ignores_legacy_full_snapshot(client, mongo_function):
+    timestamp_now = now()
+    MongoCache.upsert(
+        key=SERVER_STATS_CACHE_KEY,
+        value=json.dumps(
+            {
+                'collect_time': timestamp_now.isoformat(),
+                'parsers': ['stale'],
+                'statistics': {'n_entries': 42},
+            }
+        ).encode(),
+        create_time=timestamp_now,
+        expire_time=timestamp_now + SERVER_STATS_TTL,
+    )
+
+    rv = client.get('info')
+    assert rv.status_code == 200
+    data = rv.json()
+    assert data['parsers'] != ['stale']
+    assert data['statistics'] == {'n_entries': 42}
+
+
+def test_info_cache_headers(client, mongo_function, auth_headers):
+    rv = client.get('info')
+    assert rv.status_code == 200
+    assert rv.headers['Cache-Control'] == 'max-age=86400'
+    etag = rv.headers['ETag']
+
+    rv = client.get('info', headers={'If-None-Match': etag})
+    assert rv.status_code == 304
+
+    rv = client.get('info', headers=auth_headers['user1'])
+    assert rv.status_code == 200
+    assert rv.headers['ETag'] == etag
+    assert MongoCache.objects(key__ne=SERVER_STATS_CACHE_KEY).count() == 1
