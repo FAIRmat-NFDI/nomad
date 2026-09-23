@@ -635,6 +635,42 @@ def test_id_url_safe(
 
 
 @pytest.mark.parametrize(
+    'entry_point_config, expected_prefix',
+    [
+        pytest.param({}, 'apis/my_package-my_api', id='default-prefix'),
+        pytest.param(
+            {'id_url_safe': 'custom'}, 'apis/custom', id='default-prefix-custom-id'
+        ),
+        pytest.param({'prefix': '/my/api/'}, 'my/api', id='custom-prefix'),
+        pytest.param(
+            {'external_url': 'https://example.com/api'}, None, id='external-url'
+        ),
+    ],
+)
+def test_api_entry_point_prefix(
+    entry_point_config, expected_prefix, mockopen, monkeypatch
+):
+    """Tests that API entry points get the default ``apis/{id_url_safe}`` prefix
+    unless a custom prefix or an external_url is given."""
+    config_dict = {
+        'plugins': {
+            'options': {
+                'my_package:my_api': {
+                    'entry_point_type': 'api',
+                    **entry_point_config,
+                }
+            },
+        }
+    }
+    conf_yaml, conf_env = load_format(config_dict, 'yaml')
+    config = load_test_config(conf_yaml, conf_env, mockopen, monkeypatch)
+    config.load_plugins()
+
+    entry_point = config.plugins.entry_points.options['my_package:my_api']
+    assert entry_point.prefix == expected_prefix
+
+
+@pytest.mark.parametrize(
     'entry_points, collides',
     [
         pytest.param(

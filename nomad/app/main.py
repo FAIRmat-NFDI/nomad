@@ -243,13 +243,16 @@ if config.plugins is None:
 
 for entry_point in config.plugins.entry_points.filtered_values():
     if isinstance(entry_point, APIEntryPoint):
+        if entry_point.external_url is not None:
+            continue
         api_app = entry_point.load()
         assert isinstance(api_app, FastAPI), (
             f'Error loading entry point "{entry_point.id}": The load method of an API entry point must return a FastAPI instance'
         )
+        prefix = entry_point.prefix or f'apis/{entry_point.id_url_safe}'
         mount_with_trailing_slash_redirect(
             app,
-            config.services.join_path(entry_point.prefix),
+            config.services.join_path(prefix),
             api_app,
         )
     elif isinstance(entry_point, DashboardEntryPoint):

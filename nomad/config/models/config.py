@@ -2468,7 +2468,7 @@ WARNING: Modifying the storage configuration of an existing installation would m
         Also checks for collisions among all id_url_safe values.
 
         Args:
-            entry_points_options: Dictionary of entry point id to entry point config.
+            entry_points: Dictionary of entry point id to entry point config.
 
         Raises:
             ValueError: If a custom id_url_safe is not URL-safe or if there are
@@ -2517,3 +2517,11 @@ WARNING: Modifying the storage configuration of an existing installation would m
                 config['id_url_safe'] = url_safe_id
             else:
                 config.id_url_safe = url_safe_id
+
+            # Assign the default mount prefix for internally served API entry points
+            if entry_point_type == 'api':
+                if isinstance(config, dict):
+                    if not config.get('prefix') and not config.get('external_url'):
+                        config['prefix'] = f'apis/{url_safe_id}'
+                elif not config.prefix and not config.external_url:
+                    config.prefix = f'apis/{url_safe_id}'
