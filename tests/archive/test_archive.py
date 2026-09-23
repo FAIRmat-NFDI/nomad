@@ -221,7 +221,7 @@ def test_read_archive_multi(monkeypatch, example_uuid, example_entry):
 
     _toc_uuid_size = utils.default_hash_len + 1
     _toc_item_size = _toc_uuid_size + 25  # packed(uuid + [10-byte-pos, 10-byte-pos])
-    _entries_per_block = config.archive.block_size // _toc_item_size
+    _entries_per_block = 2**20 // _toc_item_size
 
     archive_size = _entries_per_block * 2 + 23
     f = BytesIO()

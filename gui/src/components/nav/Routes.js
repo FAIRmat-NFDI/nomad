@@ -32,7 +32,7 @@ import APIs from '../APIs'
 import SearchPage from '../search/SearchPage'
 import { SearchContext } from '../search/SearchContext'
 import NorthPage, {help as NORTHHelp} from '../north/NorthPage'
-import { appBase, encyclopediaBase, ui, apps } from '../../config'
+import { appBase, encyclopediaBase, apps, northEnabled } from '../../config'
 import EntryQuery from '../entry/EntryQuery'
 import ResolvePID from '../entry/ResolvePID'
 import DatasetPage, { help as datasetHelp } from '../dataset/DatasetPage'
@@ -286,7 +286,7 @@ export const routes = [
         },
         component: MetainfoPage
       },
-      ...(ui?.north?.enabled ? [
+      ...(northEnabled ? [
         {
           path: 'north',
           menu: 'NOMAD Remote Tools Hub',
