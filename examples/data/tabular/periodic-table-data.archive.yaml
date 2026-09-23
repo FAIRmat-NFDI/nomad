@@ -1,0 +1,5 @@
+# Instantiates the Element schema so that data.xlsx is parsed right away. Each row
+# of the table is turned into its own entry (see mapping_options in the schema).
+data:
+  m_def: '../upload/raw/periodic-table.archive.yaml#Element'
+  data_file: data.xlsx
