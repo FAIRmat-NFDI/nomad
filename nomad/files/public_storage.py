@@ -23,11 +23,11 @@ Pack never tees two zip writers. It writes once (``choose_pack_fs``), then
 ``.nomad-remote-ready.json``.
 
 ``choose_read_fs`` uses S3 only when that marker is present and every listed
-object still HEADs with the recorded size and etag. A process-local cache skips
-those artifact HEADs, but the marker itself is revalidated on every read so a
-delete is visible to other workers. Otherwise it stays on local NFS if anything
-is there (copy in flight, or copy failed). Legacy S3-only publishes with an
-empty local dir still read from S3.
+object still HEADs with the recorded size and etag. A per-node, disk-only cache
+keeps a successful validation for 60 seconds; its deadline is recorded when
+remote validation starts and never extended by reads. Otherwise it stays on
+local NFS if anything is there (copy in flight, or copy failed). Legacy S3-only
+publishes with an empty local dir still read from S3.
 
 Typical callers::
 
@@ -40,15 +40,17 @@ A remote I/O error while checking the marker is not treated as "use local".
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
 import shutil
-import threading
+import tempfile
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from cachetools import TTLCache
+import orjson
 from fsspec import AbstractFileSystem
 from fsspec.implementations.local import LocalFileSystem
 
@@ -62,7 +64,7 @@ from .filesystem import (
     empty_hdf5_file_size,
     empty_zip_file_size,
 )
-from .zip_index import object_identity
+from .index_cache import object_identity
 
 logger = logging.getLogger(__name__)
 
@@ -71,12 +73,10 @@ MARKER_SCHEMA_VERSION = 1
 Access = Literal['public', 'restricted']
 _ACCESSES: tuple[Access, Access] = ('public', 'restricted')
 
-# Positive artifact HEAD matches. The marker is revalidated on every read so a
-# delete is visible to other workers. Negatives are never cached: a dual-write
-# can finish, or a legacy object can appear, while this process runs.
-_READY_CACHE_TTL_SECONDS = 600
-_ready_cache: TTLCache = TTLCache(maxsize=16384, ttl=_READY_CACHE_TTL_SECONDS)
-_ready_cache_lock = threading.Lock()
+# A marker cache is deliberately disk-only. The OS page cache makes its small
+# JSON payload inexpensive, while the absence of an L1 keeps all workers on the
+# same freshness deadline. This is separate from the ZIP/TOC index cache.
+_MARKER_CACHE_SUFFIX = '.remote-ready.v1.json'
 
 _UNREADABLE_MARKER = (
     UnicodeDecodeError,
@@ -197,7 +197,7 @@ class RemoteReadyMarker:
                 _, etag, size = object_identity(fs, location)
             except FileNotFoundError:
                 return False
-            if size != artifact.size or etag != artifact.etag:
+            if size != artifact.size or etag.strip('"') != artifact.etag.strip('"'):
                 return False
         return True
 
@@ -296,11 +296,22 @@ def choose_read_fs(upload_os_path: str) -> AbstractFileSystem:
     No remote filesystem → local. ``remote_only`` → remote.
     ``remote_then_local`` follows the marker rule in the module docstring.
     """
+    return choose_read_fs_and_marker(upload_os_path)[0]
+
+
+def choose_read_fs_and_marker(
+    upload_os_path: str,
+) -> tuple[AbstractFileSystem, RemoteReadyMarker | None]:
+    """Choose the read filesystem and retain a marker accepted for that choice.
+
+    The marker is returned only when remote storage was selected through the
+    ready-marker path. Callers must not use it after falling back to local.
+    """
     remote_fs = _remote_fs()
     if remote_fs is None:
-        return LocalFileSystem()
+        return LocalFileSystem(), None
     if config.fs.public_fs.read_mode != 'remote_then_local':
-        return remote_fs
+        return remote_fs, None
     return _choose_remote_then_local(upload_os_path, remote_fs)
 
 
@@ -342,15 +353,28 @@ def rename_published_artifacts(
 
 
 def invalidate_ready_cache(os_path: str) -> None:
-    """Drop a cached "remote is ready" result after the marker or artifacts change."""
-    with _ready_cache_lock:
-        _ready_cache.pop(os_path, None)
+    """Remove this backend's disk marker entry after published data changes."""
+    path = _marker_cache_path(os_path)
+    if path is not None:
+        with suppress(OSError):
+            os.unlink(path)
 
 
 def clear_ready_cache() -> None:
-    """Drop process-level remote-ready caches. Intended for tests."""
-    with _ready_cache_lock:
-        _ready_cache.clear()
+    """Clear disk marker entries. Intended for tests and cache maintenance."""
+    directory = _marker_cache_directory()
+    if directory is None:
+        return
+    try:
+        with os.scandir(directory) as scan:
+            for entry in scan:
+                if entry.is_file() and entry.name.endswith(_MARKER_CACHE_SUFFIX):
+                    with suppress(OSError):
+                        os.unlink(entry.path)
+    except FileNotFoundError:
+        pass
+    except OSError:
+        logger.warning('failed to clear cached remote-ready markers in %s', directory)
 
 
 def detect_published_access(
@@ -374,29 +398,22 @@ def detect_published_access(
 
 def _choose_remote_then_local(
     upload_os_path: str, remote_fs: AbstractFileSystem
-) -> AbstractFileSystem:
-    marker = RemoteReadyMarker.load(upload_os_path, remote_fs)
+) -> tuple[AbstractFileSystem, RemoteReadyMarker | None]:
+    marker, rejected = _load_marker_for_read(
+        upload_os_path, remote_fs, require_validated=True
+    )
     if marker is None:
-        # Marker gone: drop a stale positive cache from this process. Other
-        # workers never saw the writer's invalidate_ready_cache.
-        invalidate_ready_cache(upload_os_path)
+        if rejected:
+            return LocalFileSystem(), None
         # Prefer local if this prefix still has artifacts (copy in progress,
         # or copy failed). Fall back to remote only for legacy publishes that
         # have remote objects and an empty local prefix.
         if _has_published_artifacts(upload_os_path, LocalFileSystem()):
-            return LocalFileSystem()
+            return LocalFileSystem(), None
         if _has_published_artifacts(upload_os_path, remote_fs):
-            _cache_as_ready(upload_os_path)
-            return remote_fs
-        return LocalFileSystem()
-
-    if _cached_as_ready(upload_os_path):
-        return remote_fs
-    if marker.matches_remote(remote_fs, upload_os_path):
-        _cache_as_ready(upload_os_path)
-        return remote_fs
-    # Marker exists but HEAD disagrees: do not serve a partial S3 copy.
-    return LocalFileSystem()
+            return remote_fs, None
+        return LocalFileSystem(), None
+    return remote_fs, marker
 
 
 def _remote_fs() -> AbstractFileSystem | None:
@@ -414,14 +431,177 @@ def _local_and_remote_filesystems() -> list[AbstractFileSystem]:
     return filesystems
 
 
-def _cached_as_ready(os_path: str) -> bool:
-    with _ready_cache_lock:
-        return bool(_ready_cache.get(os_path))
+def load_cached_marker(
+    upload_os_path: str,
+    fs: AbstractFileSystem,
+    *,
+    require_validated: bool = False,
+) -> RemoteReadyMarker | None:
+    """Load a fresh marker, validating artifacts when the caller requires it.
+
+    ``remote_only`` can use a parsed marker for its access value. A
+    ``remote_then_local`` caller only accepts entries which recorded a successful
+    artifact validation, so an access-only read can never open the remote gate.
+    """
+    return _load_marker_for_read(
+        upload_os_path, fs, require_validated=require_validated
+    )[0]
 
 
-def _cache_as_ready(os_path: str) -> None:
-    with _ready_cache_lock:
-        _ready_cache[os_path] = True
+def _load_marker_for_read(
+    upload_os_path: str,
+    fs: AbstractFileSystem,
+    *,
+    require_validated: bool,
+) -> tuple[RemoteReadyMarker | None, bool]:
+    cached = _load_marker_cache(upload_os_path)
+    if cached is not None:
+        marker, validated = cached
+        if validated or not require_validated:
+            return marker, False
+
+    validated_at = now().timestamp()
+    marker = RemoteReadyMarker.load(upload_os_path, fs)
+    if marker is None:
+        invalidate_ready_cache(upload_os_path)
+        return None, False
+    if require_validated:
+        if not marker.matches_remote(fs, upload_os_path):
+            # A marker that disagrees with remote objects is never persisted.
+            invalidate_ready_cache(upload_os_path)
+            return None, True
+        _store_marker_cache(upload_os_path, marker, validated_at, validated=True)
+    else:
+        _store_marker_cache(upload_os_path, marker, validated_at, validated=False)
+    return marker, False
+
+
+def _marker_cache_directory() -> str | None:
+    settings = config.fs.public_fs.metadata_cache
+    if not settings.is_enabled(config.fs.public_fs.protocol):
+        return None
+    return settings.directory or os.path.join(config.fs.local_tmp, 'nomad-zip-index')
+
+
+def _marker_cache_path(upload_os_path: str) -> str | None:
+    directory = _marker_cache_directory()
+    if directory is None:
+        return None
+    key = {
+        'backend': {
+            'protocol': config.fs.public_fs.protocol,
+            'bucket': config.fs.public_fs.bucket,
+            'simplify_path': config.fs.public_fs.simplify_path,
+            'extra': config.fs.public_fs.extra,
+        },
+        'upload_path': upload_os_path,
+    }
+    digest = hashlib.sha256(
+        orjson.dumps(key, default=str, option=orjson.OPT_SORT_KEYS)
+    ).hexdigest()
+    return os.path.join(directory, f'{digest}{_MARKER_CACHE_SUFFIX}')
+
+
+def _load_marker_cache(
+    upload_os_path: str,
+) -> tuple[RemoteReadyMarker, bool] | None:
+    revalidate_seconds = config.fs.public_fs.metadata_cache.revalidate_seconds
+    if revalidate_seconds <= 0:
+        return None
+    path = _marker_cache_path(upload_os_path)
+    if path is None:
+        return None
+    try:
+        with open(path, 'rb') as file_obj:
+            payload = orjson.loads(file_obj.read())
+        validated_at = payload['validated_at']
+        if (
+            not isinstance(validated_at, (int, float))
+            or not float('-inf') < validated_at < float('inf')
+            or not -5.0 <= now().timestamp() - validated_at < revalidate_seconds
+        ):
+            raise ValueError('expired or invalid marker cache timestamp')
+        marker = RemoteReadyMarker.from_dict(payload['marker'])
+        validated = payload['validated']
+        if not isinstance(validated, bool):
+            raise ValueError('invalid marker cache validation state')
+        return marker, validated
+    except FileNotFoundError:
+        return None
+    except (OSError, orjson.JSONDecodeError, TypeError, ValueError, KeyError):
+        with suppress(OSError):
+            os.unlink(path)
+        return None
+
+
+def _store_marker_cache(
+    upload_os_path: str,
+    marker: RemoteReadyMarker,
+    validated_at: float,
+    *,
+    validated: bool,
+) -> None:
+    if config.fs.public_fs.metadata_cache.revalidate_seconds <= 0:
+        return
+    path = _marker_cache_path(upload_os_path)
+    if path is None:
+        return
+    tmp_path: str | None = None
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        payload = orjson.dumps(
+            {
+                'validated_at': validated_at,
+                'validated': validated,
+                'marker': marker.to_dict(),
+            },
+            option=orjson.OPT_SORT_KEYS,
+        )
+        with tempfile.NamedTemporaryFile(
+            dir=os.path.dirname(path), delete=False
+        ) as tmp:
+            tmp.write(payload)
+            tmp_path = tmp.name
+        os.replace(tmp_path, path)
+        tmp_path = None
+    except OSError:
+        logger.warning('failed to store cached remote-ready marker at %s', path)
+    finally:
+        if tmp_path is not None:
+            with suppress(OSError):
+                os.unlink(tmp_path)
+    _sweep_marker_cache()
+
+
+def _sweep_marker_cache() -> None:
+    directory = _marker_cache_directory()
+    if directory is None:
+        return
+    max_bytes = config.fs.public_fs.metadata_cache.max_disk_mb * 1024 * 1024
+    if max_bytes <= 0:
+        return
+    try:
+        entries: list[tuple[float, str, int]] = []
+        with os.scandir(directory) as scan:
+            for entry in scan:
+                if entry.is_file() and entry.name.endswith(_MARKER_CACHE_SUFFIX):
+                    stat_result = entry.stat()
+                    entries.append(
+                        (stat_result.st_mtime, entry.path, stat_result.st_size)
+                    )
+        total = sum(size for _, _, size in entries)
+        if total <= max_bytes:
+            return
+        for _, path, size in sorted(entries):
+            if total <= max_bytes:
+                break
+            with suppress(OSError):
+                os.unlink(path)
+            total -= size
+    except FileNotFoundError:
+        pass
+    except OSError:
+        logger.warning('failed to sweep cached remote-ready markers in %s', directory)
 
 
 def _upload_directory(upload_os_path: str, fs: AbstractFileSystem) -> DirectoryObject:
@@ -576,7 +756,7 @@ def _artifact_record_from_dict(data: Any) -> ArtifactRecord:
         raise ValueError('invalid artifact size')
     if not isinstance(etag, str) or not etag:
         raise ValueError('invalid artifact etag')
-    return ArtifactRecord(name=name, size=size, etag=etag.strip('"'))
+    return ArtifactRecord(name=name, size=size, etag=etag)
 
 
 def _records_from_existing(

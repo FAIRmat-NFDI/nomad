@@ -27,17 +27,13 @@ directory sizes.
 
 from __future__ import annotations
 
-import hashlib
 import io
-import logging
-import os
-import re
 import struct
-import tempfile
+import sys
 import zipfile
 from collections.abc import Iterable, Iterator, Mapping
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from types import MappingProxyType
 from typing import IO
 
@@ -46,9 +42,6 @@ from fsspec import AbstractFileSystem
 
 from nomad.config import config
 
-logger = logging.getLogger(__name__)
-
-_SAFE_ETAG_RE = re.compile(r'[^A-Za-z0-9._-]')
 _STRUCT_FILE_HEADER = '<4s2B4HL2L2H'
 _SIZE_FILE_HEADER = struct.calcsize(_STRUCT_FILE_HEADER)
 _STRING_FILE_HEADER = b'PK\x03\x04'
@@ -58,24 +51,6 @@ def zip_tail_prefetch_bytes() -> int:
     """Return the configured ZIP tail prefetch size in bytes."""
     prefetch_kb = config.fs.public_fs.zip_tail_prefetch_kb
     return max(0, int(prefetch_kb)) * 1024
-
-
-def object_identity(fs: AbstractFileSystem, path: str) -> tuple[str, str, int]:
-    """Return ``(path, etag, size)`` for a ZIP object from one ``info()`` call."""
-    try:
-        info = fs.info(path, refresh=True)
-    except TypeError:
-        info = fs.info(path)
-
-    size = int(info['size'])
-
-    etag = info.get('ETag') or info.get('etag')
-    if etag is None:
-        last_modified = info.get('mtime') or info.get('LastModified')
-        etag = str(last_modified) if last_modified is not None else str(size)
-    else:
-        etag = str(etag).strip('"')
-    return (path, etag, size)
 
 
 def normalize_zip_member_path(path: str) -> str:
@@ -129,8 +104,11 @@ class RangeTailFile(io.RawIOBase):
         fs: AbstractFileSystem,
         path: str,
         prefetch_bytes: int | None = None,
+        *,
+        size: int | None = None,
     ) -> RangeTailFile:
-        size = cls._file_size(fs, path)
+        if size is None:
+            size = cls._file_size(fs, path)
         if prefetch_bytes is None:
             prefetch_bytes = zip_tail_prefetch_bytes()
         prefetch_bytes = min(max(0, prefetch_bytes), size)
@@ -302,15 +280,41 @@ class ZipMemberIndex:
     previous ``zip_fs.du`` behaviour).
     """
 
-    __slots__ = ('_members', '_dir_sizes')
+    __slots__ = ('_members', '_dir_sizes', 'memory_size')
 
     def __init__(
         self,
         members: Mapping[str, ZipMember],
         dir_sizes: Mapping[str, int],
     ):
-        self._members = MappingProxyType(dict(members))
-        self._dir_sizes = MappingProxyType(dict(dir_sizes))
+        members = dict(members)
+        dir_sizes = dict(dir_sizes)
+        self._members = MappingProxyType(members)
+        self._dir_sizes = MappingProxyType(dir_sizes)
+        # Conservative live footprint, computed once for this immutable index.
+        # Shared strings/scalars may be counted more than once; long and Unicode
+        # filenames must contribute their actual size instead of a fixed allowance.
+        member_fields = fields(ZipMember)
+        self.memory_size = (
+            sys.getsizeof(self)
+            + sys.getsizeof(self._members)
+            + sys.getsizeof(self._dir_sizes)
+            + sys.getsizeof(members)
+            + sys.getsizeof(dir_sizes)
+            + sum(
+                sys.getsizeof(path)
+                + sys.getsizeof(member)
+                + sum(
+                    sys.getsizeof(getattr(member, field.name))
+                    for field in member_fields
+                )
+                for path, member in members.items()
+            )
+            + sum(
+                sys.getsizeof(path) + sys.getsizeof(size)
+                for path, size in dir_sizes.items()
+            )
+        )
 
     @classmethod
     def empty(cls) -> ZipMemberIndex:
@@ -548,90 +552,3 @@ def open_zip_member(fileobj: IO[bytes], member: ZipMember) -> zipfile.ZipExtFile
             f'File {member.path!r} is encrypted, password required for extraction'
         )
     return zipfile.ZipExtFile(fileobj, 'r', zinfo, None, True)
-
-
-_KIND_RE = re.compile(r'^[a-z]+$')
-
-
-class IndexDiskStore:
-    """Per-node on-disk cache of immutable object indexes keyed by identity.
-
-    Index files are keyed by object identity ``(path, etag, size)`` and a payload
-    ``kind`` (for example ``zip`` or ``toc``). All kinds share one directory and
-    are swept together when ``max_bytes`` is exceeded.
-    """
-
-    def __init__(self, directory: str, max_bytes: int, kind: str):
-        if not _KIND_RE.match(kind):
-            raise ValueError(f'invalid index kind: {kind!r}')
-        self._directory = directory
-        self._max_bytes = max_bytes
-        self._kind = kind
-
-    def key_filename(self, identity: tuple[str, str, int]) -> str:
-        path, etag, size = identity
-        path_hash = hashlib.sha1(path.encode()).hexdigest()
-        safe_etag = _SAFE_ETAG_RE.sub('_', etag)[:64]
-        return f'{path_hash}-{safe_etag}-{size}.{self._kind}.v1.msgpack'
-
-    def load(self, identity: tuple[str, str, int]) -> bytes | None:
-        path = os.path.join(self._directory, self.key_filename(identity))
-        if not os.path.isfile(path):
-            return None
-        with open(path, 'rb') as fileobj:
-            return fileobj.read()
-
-    def discard(self, identity: tuple[str, str, int]) -> None:
-        path = os.path.join(self._directory, self.key_filename(identity))
-        with suppress(OSError):
-            os.unlink(path)
-
-    def store(self, identity: tuple[str, str, int], data: bytes) -> None:
-        final_path = os.path.join(self._directory, self.key_filename(identity))
-        tmp_path: str | None = None
-        try:
-            os.makedirs(self._directory, exist_ok=True)
-            with tempfile.NamedTemporaryFile(dir=self._directory, delete=False) as tmp:
-                tmp.write(data)
-                tmp_path = tmp.name
-            os.replace(tmp_path, final_path)
-            tmp_path = None
-        except OSError:
-            logger.warning(
-                'failed to store cached index at %s', final_path, exc_info=True
-            )
-            if tmp_path is not None:
-                with suppress(OSError):
-                    os.unlink(tmp_path)
-            return
-        self._sweep()
-
-    def _sweep(self) -> None:
-        if self._max_bytes <= 0:
-            return
-        try:
-            entries: list[tuple[float, str, int]] = []
-            with os.scandir(self._directory) as scan:
-                for entry in scan:
-                    if not entry.is_file() or not entry.name.endswith('.v1.msgpack'):
-                        continue
-                    stat_result = entry.stat()
-                    entries.append(
-                        (stat_result.st_mtime, entry.path, stat_result.st_size)
-                    )
-            total = sum(size for _, _, size in entries)
-            if total <= self._max_bytes:
-                return
-            entries.sort(key=lambda item: item[0])
-            for _, path, size in entries:
-                if total <= self._max_bytes:
-                    break
-                with suppress(OSError):
-                    os.unlink(path)
-                total -= size
-        except OSError:
-            logger.warning(
-                'failed to sweep cached indexes in %s',
-                self._directory,
-                exc_info=True,
-            )

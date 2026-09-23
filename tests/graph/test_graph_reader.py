@@ -4911,11 +4911,11 @@ def test_file_system_reader_pools_and_closes_published_zip(user1, example_data):
         assert 'id_published' in reader.upload_pool
         upload_files = reader.upload_pool['id_published']
         assert isinstance(upload_files, PublicUploadFiles)
-        assert upload_files._zip_index is not None
+        assert upload_files._zip is not None
         assert response['m_is'] == 'Directory'
         assert 'test_content' in response
 
-    assert upload_files._zip_index is None
+    assert upload_files._zip is None
 
 
 def test_file_system_reader_reuses_zip_index_across_queries(
@@ -4946,8 +4946,8 @@ def test_file_system_reader_reuses_zip_index_across_queries(
         response = reader.sync_read('id_published')
         upload_files = reader.upload_pool['id_published']
         assert response['m_is'] == 'Directory'
-        assert upload_files._zip_index is not None
-    assert upload_files._zip_index is None
+        assert upload_files._zip is not None
+    assert upload_files._zip is None
     first_parses = zipfile_calls['n']
     assert first_parses >= 1
 
@@ -4956,8 +4956,46 @@ def test_file_system_reader_reuses_zip_index_across_queries(
         upload_files = reader.upload_pool['id_published']
         assert response['m_is'] == 'Directory'
         assert 'test_content' in response
-        assert upload_files._zip_index is not None
+        assert upload_files._zip is not None
     assert zipfile_calls['n'] == first_parses
+
+
+def test_file_system_reader_reuses_archive_toc_across_queries(
+    monkeypatch, tmp_path, user1, example_data
+):
+    from nomad.archive.utils import check_archive_version as original_check
+    from nomad.config import config
+
+    monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+    monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'directory', str(tmp_path))
+
+    version_calls = {'n': 0}
+
+    def counting_check(file_or_path, *args, **kwargs):
+        version_calls['n'] += 1
+        return original_check(file_or_path, *args, **kwargs)
+
+    monkeypatch.setattr('nomad.files.archive_toc.check_archive_version', counting_check)
+
+    required = {
+        'm_request': {'directive': 'plain'},
+        Token.ARCHIVE: {
+            'metadata': {
+                'm_request': {'directive': 'plain', 'include': ['entry_id']},
+            }
+        },
+    }
+
+    with EntryReader(required, user=user1) as reader:
+        first = reader.sync_read('id_01')
+    first_calls = version_calls['n']
+    assert first_calls >= 1
+
+    with EntryReader(required, user=user1) as reader:
+        second = reader.sync_read('id_03')
+    assert version_calls['n'] == first_calls
+    assert first['archive']['metadata']['entry_id'] == 'id_01'
+    assert second['archive']['metadata']['entry_id'] == 'id_03'
 
 
 def test_file_system_reader_reuses_zip_index_across_queries_with_ref(

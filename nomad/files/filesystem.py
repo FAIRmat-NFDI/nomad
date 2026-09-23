@@ -37,6 +37,8 @@ from fsspec.implementations.tar import TarFileSystem
 from fsspec.implementations.zip import ZipFileSystem
 from h5py import File
 from pathvalidate import sanitize_filename
+from s3fs.core import S3File
+from s3fs.utils import FileExpired
 from upath import UPath
 
 from nomad.config import config
@@ -155,6 +157,51 @@ class _TimedReadFile(io.BufferedIOBase):
         return self._file.closed
 
 
+def _remote_read_open_kwargs(
+    fs: AbstractFileSystem,
+    *,
+    size: int | None = None,
+    block_size: int | None = None,
+) -> dict[str, int]:
+    """Kwargs for a binary open: ``block_size`` always, ``size`` only on remote fs."""
+    kwargs: dict[str, int] = {}
+    if block_size is not None:
+        kwargs['block_size'] = block_size
+    if size is not None and not isinstance(fs, LocalFileSystem):
+        kwargs['size'] = size
+    return kwargs
+
+
+def _apply_if_match(
+    fs: AbstractFileSystem,
+    file_obj: IO[bytes],
+    etag: str | None,
+    *,
+    size: int | None = None,
+) -> None:
+    if etag is None or isinstance(fs, LocalFileSystem):
+        return
+    if isinstance(file_obj, S3File) and size is not None:
+        details = dict(file_obj._details or {})
+        details.setdefault('name', file_obj.path)
+        details.setdefault('size', size)
+        details.setdefault('ETag', etag)
+        details.setdefault('type', 'file')
+        file_obj.details = details
+    req_kw = getattr(file_obj, 'req_kw', None)
+    if isinstance(req_kw, dict):
+        req_kw['IfMatch'] = etag
+
+
+def _is_stale_object_error(error: Exception) -> bool:
+    """Recognize S3 identity mismatches without retrying unrelated I/O errors."""
+    if isinstance(error, FileExpired):
+        return True
+    # s3fs translates ClientError to OSError and preserves it as the cause.
+    response = getattr(error.__cause__ or error, 'response', {})
+    return response.get('Error', {}).get('Code') in {'PreconditionFailed', '412'}
+
+
 class FSUtility:
     @staticmethod
     def remote_path(path: str | UPath | PathObject) -> str:
@@ -208,6 +255,9 @@ class FSUtility:
         mode: Literal['r', 'w', 'a'] = 'r',
         *,
         fs: AbstractFileSystem | None = None,
+        block_size: int | None = None,
+        size: int | None = None,
+        if_match: str | None = None,
     ):
         """
         Open the target as plain IO object.
@@ -226,7 +276,9 @@ class FSUtility:
             # thus needs a local cache for writing and appending
             cached_fs = SimpleCacheFileSystem(fs=fs)
 
-        with cached_fs.open(location, f'{mode}b') as file:
+        open_kwargs = _remote_read_open_kwargs(fs, size=size, block_size=block_size)
+        with cached_fs.open(location, f'{mode}b', **open_kwargs) as file:
+            _apply_if_match(fs, file, if_match, size=size)
             if mode == 'r' and _current_read_stats.get():
                 yield _TimedReadFile(file)
             else:
@@ -417,6 +469,24 @@ class DirectoryObject(PathObject):
         return self.join_file(f'archive-{access}.h5', fs=fs)
 
 
+def _versioned_archive_file_objects(
+    target_dir: DirectoryObject,
+    file_name: Callable[[str], str],
+    *,
+    fs: AbstractFileSystem | None = None,
+) -> list[PathObject]:
+    """PathObjects for each archive version suffix, without probing ``exists``."""
+    suffixes = config.fs.archive_version_suffix
+    fs = fs or target_dir._fs
+    actual_dir = DirectoryObject(target_dir.os_path, fs=fs)
+    if not isinstance(suffixes, list):
+        suffixes = [suffixes]
+    if len(suffixes) <= 1:
+        suffix = f'-{suffixes[0]}' if suffixes[0] else ''
+        return [actual_dir.join_file(file_name(suffix))]
+    return [actual_dir.join_file(file_name(f'-{suffix}')) for suffix in suffixes]
+
+
 def _versioned_archive_file_object(
     target_dir: DirectoryObject,
     file_name: Callable[[str], str],
@@ -429,24 +499,10 @@ def _versioned_archive_file_object(
     will be created in, the recipe to construct the name from a version suffix, and
     a bool that denotes if alternative version suffixes should be considered.
     """
-    suffixes = config.fs.archive_version_suffix
-
-    fs = fs or target_dir._fs
-
-    if not isinstance(suffixes, list):
-        suffixes = [suffixes]
-
-    if len(suffixes) <= 1:
-        return target_dir.join_file(
-            file_name(f'-{suffixes[0]}' if suffixes[0] else ''), fs=fs
-        )
-
-    if not fallback:
-        return target_dir.join_file(file_name(f'-{suffixes[0]}'), fs=fs)
-
-    for suffix in suffixes:
-        current_file = target_dir.join_file(file_name(f'-{suffix}'), fs=fs)
+    candidates = _versioned_archive_file_objects(target_dir, file_name, fs=fs)
+    if not fallback or len(candidates) == 1:
+        return candidates[0]
+    for current_file in candidates:
         if current_file.exists():
             return current_file
-
-    return target_dir.join_file(file_name(f'-{suffixes[0]}'), fs=fs)
+    return candidates[0]

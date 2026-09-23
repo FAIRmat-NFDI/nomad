@@ -619,27 +619,48 @@ class Oasis(ConfigBaseModel):
 
 
 class MetadataCache(ConfigBaseModel):
-    """Per-node on-disk cache of immutable ZIP member indexes."""
+    """Per-node cache of published indexes and remote-ready markers."""
 
     enabled: Literal['auto'] | bool = Field(
         'auto',
-        description="""Whether to cache parsed ZIP member indexes on local disk.
+        description="""Whether to cache parsed ZIP member/archive TOC indexes and
+remote-ready marker validations.
 
 ``auto`` enables the cache when ``protocol == 's3'``. Set ``true`` to force it
 on (for example in local tests) and ``false`` to disable it.""",
     )
     directory: str | None = Field(
         None,
-        description="""Directory for cached index files. When unset, indexes are stored
-under ``<config.fs.local_tmp>/nomad-zip-index``. The directory is shared by all
-Gunicorn workers on the node.""",
+        description="""Directory for cached ZIP/archive TOC index files and remote-ready
+marker entries. When unset, entries are stored under
+``<config.fs.local_tmp>/nomad-zip-index``. The
+directory is shared by all Gunicorn workers on the node.""",
     )
     max_disk_mb: int = Field(
         1024,
         ge=0,
-        description="""Maximum total size of cached index files on disk, in MiB.
+        description="""Maximum total size of each cached index/marker file kind on disk, in MiB.
 
 Set to 0 to disable sweeping (unbounded growth).""",
+    )
+    memory_max_mb: int = Field(
+        64,
+        ge=0,
+        description="""Maximum in-process cache of parsed indexes, in MiB,
+per index kind (ZIP member index and archive TOC each have this budget).
+
+Bounded by estimated live Python footprint, not item count. Set to 0 to
+disable the memory cache (the on-disk cache is unchanged).""",
+    )
+    revalidate_seconds: int = Field(
+        60,
+        ge=0,
+        description="""Seconds to trust a memory-cached identity or disk-cached ready marker
+validation before remote metadata calls.
+
+Within this TTL a warm index read performs no remote HEAD/info and a warm
+remote-ready marker skips its GET and artifact HEADs. Set to 0 to validate on
+every request.""",
     )
 
     def is_enabled(self, protocol: str | None) -> bool:
@@ -796,11 +817,14 @@ fall back to additional range reads.""",
     )
     metadata_cache: MetadataCache = Field(
         default_factory=MetadataCache,
-        description="""Per-node on-disk cache of immutable ZIP member indexes.
+        description="""Per-node cache of ZIP member/archive TOC indexes and remote-ready markers.
 
-Enabled automatically for S3 public storage. Index files are immutable, keyed
-by object identity, validated by one HEAD/info call per request, and shared by
-all workers on the node.""",
+Enabled automatically for S3 public storage. Index files are keyed by object
+identity (never upload id alone). A process-level memory cache skips the
+HEAD/info call within ``revalidate_seconds``; after that TTL, or when memory
+caching is disabled, each request validates with one HEAD/info. A validated
+remote-ready marker uses the same revalidation period before its marker GET and
+artifact HEADs are repeated. Disk files are shared by all workers on the node.""",
     )
 
     @model_validator(mode='after')

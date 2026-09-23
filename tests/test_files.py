@@ -17,14 +17,17 @@
 #
 
 import hashlib
+import io
 import itertools
 import os
 import pathlib
 import re
 import shutil
+import time
 import uuid
 import zipfile
 from collections.abc import Generator, Iterable
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any
 
@@ -47,6 +50,7 @@ from nomad.files import (
     empty_archive_file_size,
     empty_zip_file_size,
     measure_fs_reads,
+    public_storage,
 )
 from nomad.files.public_storage import (
     MARKER_FILENAME,
@@ -130,6 +134,58 @@ def test_measure_fs_reads_counts_only_within_context(tmp_path):
     with FSUtility.open(path) as f:
         f.read()
     assert stats.read_bytes == 4096
+
+
+def test_s3_cached_identity_skips_head_on_first_read(monkeypatch):
+    from types import SimpleNamespace
+
+    from s3fs import S3FileSystem
+
+    from nomad.files.index_cache import CachedIndex, ObjectIdentity
+
+    calls: list[tuple[str, dict]] = []
+
+    class Body:
+        async def read(self):
+            return b'x'
+
+        def close(self):
+            pass
+
+    async def call_s3(operation, *args, **kwargs):
+        calls.append((operation, kwargs))
+        if operation == 'head_object':
+            return {'ContentLength': 100, 'ETag': '"abc"'}
+        assert operation == 'get_object'
+        return {'ContentLength': 100, 'ETag': '"abc"', 'Body': Body()}
+
+    fs = S3FileSystem(anon=True, skip_instance_cache=True)
+    monkeypatch.setattr(fs, '_call_s3', call_s3)
+    with FSUtility.open(
+        'bucket/key', fs=fs, size=100, if_match='"abc"', block_size=20
+    ) as file_obj:
+        assert file_obj.read(1) == b'x'
+
+    assert [operation for operation, _ in calls] == ['get_object']
+    assert calls[0][1]['IfMatch'] == '"abc"'
+
+    calls.clear()
+    with fs.open('bucket/key', 'rb', block_size=20) as file_obj:
+        assert file_obj.read(1) == b'x'
+
+    assert [operation for operation, _ in calls] == ['head_object', 'get_object']
+    assert calls[1][1]['IfMatch'] == '"abc"'
+
+    calls.clear()
+    public = object.__new__(PublicUploadFiles)
+    public.__dict__['storage_fs'] = fs
+    public._zip = CachedIndex(ObjectIdentity('bucket/key', '"abc"', 100), None, '')
+    public.raw_zip_file_object = lambda: SimpleNamespace(location='bucket/key')
+    with public._open_zip_member_fileobj() as file_obj:
+        assert file_obj.read(1) == b'x'
+
+    assert [operation for operation, _ in calls] == ['get_object']
+    assert calls[0][1]['IfMatch'] == '"abc"'
 
 
 def test_measure_fs_reads_nested_contexts_accumulate(tmp_path):
@@ -660,6 +716,22 @@ class RecordingRemoteFS:
         return self._inner.mv(path1, path2, **kwargs)
 
 
+def _published_msg_calls(
+    calls: list[tuple[str, str, dict]], access: str
+) -> list[tuple[str, str, dict]]:
+    needle = f'archive-{access}-'
+    return [
+        call for call in calls if needle in call[1] and call[1].endswith('.msg.msg')
+    ]
+
+
+def _published_zip_calls(
+    calls: list[tuple[str, str, dict]], access: str
+) -> list[tuple[str, str, dict]]:
+    needle = f'raw-{access}.plain.zip'
+    return [call for call in calls if call[1].endswith(needle) or needle in call[1]]
+
+
 def _copy_upload_tree_to_memory_fs(
     upload_files: PublicUploadFiles, memory_fs: MemoryFileSystem
 ) -> None:
@@ -690,7 +762,7 @@ class TestPublicUploadFiles(UploadFilesContract):
         tmp_path,
         test_upload_id,
         entry_specs='pp',
-        read_mode='remote_then_local',
+        read_mode='remote_only',
     ):
         monkeypatch.setattr(config.fs.public_fs, 'protocol', None)
         _, entries, upload_files = create_public_upload(
@@ -868,7 +940,7 @@ class TestPublicUploadFiles(UploadFilesContract):
         with remote_upload_files.raw_file(entries[0].mainfile) as file_obj:
             assert file_obj.read()
 
-    def test_remote_then_local_caches_positive_artifact_probe(
+    def test_remote_then_local_disk_cache_skips_marker_and_artifact_requests(
         self, test_upload_id, monkeypatch, tmp_path
     ):
         proxy, _entries, _upload_files = self._setup_recording_archive_fs(
@@ -886,8 +958,7 @@ class TestPublicUploadFiles(UploadFilesContract):
         proxy.calls.clear()
         second = PublicUploadFiles(test_upload_id)
         assert second.storage_fs is proxy
-        assert self._calls_for_artifacts(proxy.calls) == []
-        assert any(MARKER_FILENAME in call[1] for call in proxy.calls)
+        assert proxy.calls == []
         second.close()
 
     def test_remote_then_local_does_not_cache_negative_artifact_probe(
@@ -973,7 +1044,7 @@ class TestPublicUploadFiles(UploadFilesContract):
         cached = PublicUploadFiles(test_upload_id)
         assert cached.storage_fs is proxy
         assert self._calls_for_artifacts(proxy.calls) == []
-        assert attempts['n'] == 3
+        assert attempts['n'] == 2
         cached.close()
 
     def test_local_then_remote_pack_copies_artifacts_and_writes_marker(
@@ -1012,6 +1083,71 @@ class TestPublicUploadFiles(UploadFilesContract):
         assert remote_fs.exists(_remote_marker_location(public.os_path))
         assert not os.path.exists(os.path.join(public.os_path, MARKER_FILENAME))
 
+    def test_remote_marker_access_is_reused_after_storage_selection(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        proxy, _entries, _upload_files = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id, read_mode='remote_then_local'
+        )
+        original_load = RemoteReadyMarker.load
+        loads = {'count': 0}
+
+        def count_load(cls, upload_os_path, fs):
+            loads['count'] += 1
+            return original_load(upload_os_path, fs)
+
+        monkeypatch.setattr(RemoteReadyMarker, 'load', classmethod(count_load))
+        public = PublicUploadFiles(test_upload_id)
+        assert public.storage_fs is proxy
+        proxy.calls.clear()
+        assert public.access == 'public'
+        assert loads['count'] == 1
+        assert proxy.calls == []
+
+    def test_remote_only_loads_marker_once_when_access_is_requested(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        proxy, _entries, _upload_files = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id, read_mode='remote_only'
+        )
+        original_load = RemoteReadyMarker.load
+        loads = {'count': 0}
+
+        def count_load(cls, upload_os_path, fs):
+            loads['count'] += 1
+            return original_load(upload_os_path, fs)
+
+        monkeypatch.setattr(RemoteReadyMarker, 'load', classmethod(count_load))
+        public = PublicUploadFiles(test_upload_id)
+        assert public.access == 'public'
+        assert public.access == 'public'
+        assert public.storage_fs is proxy
+        assert loads['count'] == 1
+
+    def test_remote_then_local_does_not_reload_a_missing_marker_for_access(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        proxy, _entries, upload_files = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id, read_mode='remote_then_local'
+        )
+        proxy.rm(_remote_marker_location(upload_files.os_path))
+        for name in os.listdir(upload_files.os_path):
+            path = os.path.join(upload_files.os_path, name)
+            if os.path.isfile(path):
+                os.remove(path)
+        original_load = RemoteReadyMarker.load
+        loads = {'count': 0}
+
+        def count_load(cls, upload_os_path, fs):
+            loads['count'] += 1
+            return original_load(upload_os_path, fs)
+
+        monkeypatch.setattr(RemoteReadyMarker, 'load', classmethod(count_load))
+        public = PublicUploadFiles(test_upload_id)
+        assert public.storage_fs is proxy
+        assert public.access == 'public'
+        assert loads['count'] == 1
+
     def test_remote_then_local_stale_ready_cache_rechecks_marker(
         self, monkeypatch, test_upload_id
     ):
@@ -1020,14 +1156,110 @@ class TestPublicUploadFiles(UploadFilesContract):
         staging.pack(_entries, with_embargo=False)
         staging.delete()
 
+        clock = {'value': datetime.fromtimestamp(1_000_000)}
+        monkeypatch.setattr(public_storage, 'now', lambda: clock['value'])
+
         warm = PublicUploadFiles(test_upload_id)
         assert warm.storage_fs is remote_fs
         warm.close()
 
         remote_fs.rm(_remote_marker_location(warm.os_path))
+        clock['value'] = datetime.fromtimestamp(1_000_061)
 
         after = PublicUploadFiles(test_upload_id)
         assert isinstance(after.storage_fs, LocalFileSystem)
+
+    def test_remote_marker_revalidate_zero_disables_disk_cache(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        proxy, _entries, upload_files = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id, read_mode='remote_then_local'
+        )
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'revalidate_seconds', 0)
+
+        assert PublicUploadFiles(test_upload_id).storage_fs is proxy
+        cache_path = public_storage._marker_cache_path(upload_files.os_path)
+        assert cache_path is not None
+        assert not os.path.exists(cache_path)
+
+        proxy.calls.clear()
+        assert PublicUploadFiles(test_upload_id).storage_fs is proxy
+        assert any(MARKER_FILENAME in call[1] for call in proxy.calls)
+        assert not os.path.exists(cache_path)
+
+    def test_remote_marker_disk_cache_expires_without_extending_deadline(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        proxy, _entries, upload_files = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id, read_mode='remote_then_local'
+        )
+        clock = {'value': datetime.fromtimestamp(1_000_000)}
+        monkeypatch.setattr(public_storage, 'now', lambda: clock['value'])
+
+        assert PublicUploadFiles(test_upload_id).storage_fs is proxy
+        proxy.calls.clear()
+        clock['value'] = datetime.fromtimestamp(1_000_030)
+        assert PublicUploadFiles(test_upload_id).storage_fs is proxy
+        assert proxy.calls == []
+
+        clock['value'] = datetime.fromtimestamp(1_000_061)
+        assert PublicUploadFiles(test_upload_id).storage_fs is proxy
+        assert any(MARKER_FILENAME in call[1] for call in proxy.calls)
+        assert upload_files.os_path
+
+    def test_corrupt_remote_marker_disk_cache_refetches(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        proxy, _entries, upload_files = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id, read_mode='remote_then_local'
+        )
+        assert PublicUploadFiles(test_upload_id).storage_fs is proxy
+        cache_path = public_storage._marker_cache_path(upload_files.os_path)
+        assert cache_path is not None
+        pathlib.Path(cache_path).write_bytes(b'not json')
+
+        proxy.calls.clear()
+        assert PublicUploadFiles(test_upload_id).storage_fs is proxy
+        assert any(MARKER_FILENAME in call[1] for call in proxy.calls)
+
+    def test_remote_only_cache_does_not_bypass_remote_then_local_validation(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        proxy, _entries, _upload_files = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id, read_mode='remote_only'
+        )
+        assert PublicUploadFiles(test_upload_id).access == 'public'
+
+        monkeypatch.setattr(config.fs.public_fs, 'read_mode', 'remote_then_local')
+        proxy.calls.clear()
+        assert PublicUploadFiles(test_upload_id).storage_fs is proxy
+        assert self._calls_for_artifacts(proxy.calls)
+
+    def test_rejected_marker_with_empty_local_prefix_stays_local(
+        self, monkeypatch, test_upload_id, tmp_path
+    ):
+        proxy, _entries, upload_files = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id, read_mode='remote_then_local'
+        )
+        marker = RemoteReadyMarker.load(upload_files.os_path, proxy)
+        assert marker is not None
+        RemoteReadyMarker(
+            schema_version=marker.schema_version,
+            upload_id=marker.upload_id,
+            access=marker.access,
+            created_at=marker.created_at,
+            artifacts=tuple(
+                ArtifactRecord(name=item.name, size=item.size, etag='wrong')
+                for item in marker.artifacts
+            ),
+        ).save(upload_files.os_path, proxy)
+        for name in os.listdir(upload_files.os_path):
+            path = os.path.join(upload_files.os_path, name)
+            if os.path.isfile(path):
+                os.remove(path)
+
+        public = PublicUploadFiles(test_upload_id)
+        assert isinstance(public.storage_fs, LocalFileSystem)
 
     def test_local_then_remote_copy_writes_marker_for_zip_only_publish(
         self, monkeypatch, test_upload_id
@@ -1316,7 +1548,7 @@ class TestPublicUploadFiles(UploadFilesContract):
         mismatched = RemoteReadyMarker(
             schema_version=marker.schema_version,
             upload_id=marker.upload_id,
-            access=marker.access,
+            access='restricted',
             created_at=marker.created_at,
             artifacts=tuple(
                 ArtifactRecord(name=item.name, size=item.size, etag='not-the-etag')
@@ -1328,6 +1560,7 @@ class TestPublicUploadFiles(UploadFilesContract):
 
         public = PublicUploadFiles(test_upload_id)
         assert isinstance(public.storage_fs, LocalFileSystem)
+        assert public.access == 'public'
 
     def test_repack_renames_both_sides_and_rewrites_marker(
         self, test_upload_id, monkeypatch, tmp_path
@@ -1345,7 +1578,9 @@ class TestPublicUploadFiles(UploadFilesContract):
         assert remote_dir.zip_fp('public').exists()
 
         packed = PublicUploadFiles(test_upload_id)
+        assert packed.access == 'public'
         packed.re_pack(with_embargo=True)
+        assert packed.access == 'restricted'
         packed.close()
 
         assert not local_dir.zip_fp('public').exists()
@@ -1730,7 +1965,7 @@ class TestPublicUploadFiles(UploadFilesContract):
         assert nested
         assert not upload_files.is_empty()
 
-        assert upload_files._zip_index is not None
+        assert upload_files._zip is not None
         with upload_files.raw_file('examples_template/template.json', 'rb') as raw_file:
             assert raw_file.read()
 
@@ -1739,7 +1974,7 @@ class TestPublicUploadFiles(UploadFilesContract):
         assert len(list(tmp_path.glob('*.v1.msgpack'))) == 1
 
         upload_files.close()
-        assert upload_files._zip_index is None
+        assert upload_files._zip is None
         upload_files.close()
 
         other = PublicUploadFiles(test_upload_id)
@@ -1747,7 +1982,7 @@ class TestPublicUploadFiles(UploadFilesContract):
         list(other.raw_listdir('', recursive=True))
         with other.raw_file('examples_template/template.json', 'rb') as raw_file:
             assert raw_file.read()
-        assert other._zip_index is not None
+        assert other._zip is not None
         assert zipfile_calls['n'] == first_parses
         other.close()
 
@@ -1831,7 +2066,7 @@ class TestPublicUploadFiles(UploadFilesContract):
         assert counting_fs.cat_file_calls == 1
         assert len(list(tmp_path.glob('*.v1.msgpack'))) == 1
         upload_files.close()
-        assert upload_files._zip_index is None
+        assert upload_files._zip is None
 
         other = PublicUploadFiles(test_upload_id)
         assert other.raw_exists('examples_template')
@@ -1847,12 +2082,13 @@ class TestPublicUploadFiles(UploadFilesContract):
     def test_zip_metadata_cache_etag_mismatch_refetches(
         self, test_upload_id, monkeypatch, tmp_path
     ):
-        from nomad.files.zip_index import object_identity as original_identity
+        from nomad.files.index_cache import object_identity as original_identity
 
         monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
         monkeypatch.setattr(
             config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
         )
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'revalidate_seconds', 0)
         _, _, upload_files = create_public_upload(
             test_upload_id, entry_specs='p', with_upload=False
         )
@@ -1870,7 +2106,7 @@ class TestPublicUploadFiles(UploadFilesContract):
             return (_path, token['etag'], size)
 
         monkeypatch.setattr(zipfile, 'ZipFile', CountingZipFile)
-        monkeypatch.setattr('nomad.files.uploads.object_identity', fake_identity)
+        monkeypatch.setattr('nomad.files.index_cache.object_identity', fake_identity)
 
         assert upload_files.raw_exists('examples_template')
         upload_files.close()
@@ -1887,7 +2123,7 @@ class TestPublicUploadFiles(UploadFilesContract):
         assert refreshed.raw_exists('examples_template')
         refreshed.close()
         assert zipfile_calls['n'] == 2
-        assert len(list(tmp_path.glob('*.v1.msgpack'))) == 2
+        assert len(list(tmp_path.glob('*.zip.v1.msgpack'))) == 1
 
     def test_zip_metadata_cache_close_then_ensure_reuses_disk(
         self, test_upload_id, monkeypatch, tmp_path
@@ -1908,9 +2144,9 @@ class TestPublicUploadFiles(UploadFilesContract):
                 super().__init__(*args, **kwargs)
 
         monkeypatch.setattr(zipfile, 'ZipFile', CountingZipFile)
-        upload_files._ensure_raw_zip()
+        upload_files._ensure_zip_index()
         upload_files.close()
-        upload_files._ensure_raw_zip()
+        upload_files._ensure_zip_index()
         assert zipfile_calls['n'] == 1
         upload_files.close()
 
@@ -1946,7 +2182,7 @@ class TestPublicUploadFiles(UploadFilesContract):
     def test_zip_metadata_cache_corrupt_file_reparsed(
         self, test_upload_id, monkeypatch, tmp_path
     ):
-        from nomad.files.zip_index import IndexDiskStore, object_identity
+        from nomad.files.index_cache import IndexDiskStore, object_identity
 
         monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
         monkeypatch.setattr(
@@ -1977,6 +2213,7 @@ class TestPublicUploadFiles(UploadFilesContract):
         )
         key_path.write_bytes(b'garbage')
         upload_files.close()
+        clear_index_caches()
 
         other = PublicUploadFiles(test_upload_id)
         assert other.raw_exists('examples_template')
@@ -1985,6 +2222,893 @@ class TestPublicUploadFiles(UploadFilesContract):
         assert zipfile_calls['n'] == 2
         assert key_path.read_bytes() != b'garbage'
         assert len(list(tmp_path.glob('*.zip.v1.msgpack'))) == 1
+
+    def test_archive_toc_cache_warm_disk_skips_version_check(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        from nomad.archive.utils import check_archive_version as original_check
+        from nomad.files.archive_toc import ArchiveTocIndex
+
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
+        )
+        _, entries, upload_files = create_public_upload(
+            test_upload_id, entry_specs='pp', with_upload=False
+        )
+        entry_a, entry_b = entries[0].entry_id, entries[1].entry_id
+        with upload_files.read_archive(entry_a) as archive:
+            cached_a = to_json(archive[entry_a])
+        assert len(list(tmp_path.glob('*.toc.v1.msgpack'))) == 1
+        upload_files.close()
+
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', False)
+        baseline = PublicUploadFiles(test_upload_id)
+        with baseline.read_archive(entry_a) as archive:
+            assert to_json(archive[entry_a]) == cached_a
+        with baseline.read_archive(entry_b) as archive:
+            cached_b = to_json(archive[entry_b])
+        baseline.close()
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+
+        toc_data = next(tmp_path.glob('*.toc.v1.msgpack')).read_bytes()
+        index = ArchiveTocIndex.from_bytes(toc_data)
+        start, end = index.span(entry_b)
+        expected_block_size = min(end - start, 32 * 1024 * 1024)
+
+        version_calls = {'n': 0}
+        open_calls: list[dict] = []
+
+        def counting_check(file_or_path, *args, **kwargs):
+            version_calls['n'] += 1
+            return original_check(file_or_path, *args, **kwargs)
+
+        original_open = FSUtility.open
+
+        @contextmanager
+        def recording_open(*args, **kwargs):
+            open_calls.append(dict(kwargs))
+            with original_open(*args, **kwargs) as file_obj:
+                yield file_obj
+
+        monkeypatch.setattr(
+            'nomad.files.archive_toc.check_archive_version', counting_check
+        )
+        monkeypatch.setattr('nomad.files.FSUtility.open', recording_open)
+
+        other = PublicUploadFiles(test_upload_id)
+        with other.read_archive(entry_b) as archive:
+            assert to_json(archive[entry_b]) == cached_b
+        assert version_calls['n'] == 0
+        assert open_calls[-1].get('block_size') == expected_block_size
+        other.close()
+
+    def test_archive_toc_cache_unknown_entry_no_io(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
+        )
+        _, entries, upload_files = create_public_upload(
+            test_upload_id, entry_specs='pp', with_upload=False
+        )
+        with upload_files.read_archive(entries[0].entry_id) as archive:
+            assert to_json(archive[entries[0].entry_id])
+        upload_files.close()
+
+        open_calls = {'n': 0}
+        original_open = FSUtility.open
+
+        @contextmanager
+        def counting_open(*args, **kwargs):
+            open_calls['n'] += 1
+            with original_open(*args, **kwargs) as file_obj:
+                yield file_obj
+
+        monkeypatch.setattr('nomad.files.FSUtility.open', counting_open)
+        other = PublicUploadFiles(test_upload_id)
+        with pytest.raises(KeyError):
+            with other.read_archive('missing-entry'):
+                pass
+        assert open_calls['n'] == 0
+        other.close()
+
+    def test_archive_toc_cache_corrupt_file_reparsed(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        from nomad.files.index_cache import IndexDiskStore, object_identity
+
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
+        )
+        _, entries, upload_files = create_public_upload(
+            test_upload_id, entry_specs='pp', with_upload=False
+        )
+        entry_id = entries[0].entry_id
+        with upload_files.read_archive(entry_id) as archive:
+            expected = to_json(archive[entry_id])
+        assert len(list(tmp_path.glob('*.toc.v1.msgpack'))) == 1
+
+        msg_file = upload_files.msg_fp(upload_files.access, fallback=True)
+        identity = object_identity(upload_files.storage_fs, msg_file.location)
+        key_path = tmp_path / IndexDiskStore(str(tmp_path), 1024, 'toc').key_filename(
+            identity
+        )
+        key_path.write_bytes(b'garbage')
+        upload_files.close()
+        clear_index_caches()
+
+        other = PublicUploadFiles(test_upload_id)
+        with other.read_archive(entry_id) as archive:
+            assert to_json(archive[entry_id]) == expected
+        other.close()
+        assert key_path.read_bytes() != b'garbage'
+
+    def test_archive_toc_cache_disabled_unchanged(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        from nomad.archive.utils import check_archive_version as original_check
+
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', False)
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
+        )
+        _, entries, upload_files = create_public_upload(
+            test_upload_id, entry_specs='pp', with_upload=False
+        )
+        version_calls = {'n': 0}
+
+        def counting_check(file_or_path, *args, **kwargs):
+            version_calls['n'] += 1
+            return original_check(file_or_path, *args, **kwargs)
+
+        monkeypatch.setattr('nomad.archive.utils.check_archive_version', counting_check)
+        entry_a, entry_b = entries[0].entry_id, entries[1].entry_id
+        with upload_files.read_archive(entry_a) as archive:
+            assert to_json(archive[entry_a])
+        upload_files.close()
+        first_calls = version_calls['n']
+        assert first_calls >= 1
+        assert list(tmp_path.glob('*.toc.v1.msgpack')) == []
+
+        other = PublicUploadFiles(test_upload_id)
+        with other.read_archive(entry_b) as archive:
+            assert to_json(archive[entry_b])
+        other.close()
+        assert version_calls['n'] > first_calls
+
+    def test_archive_toc_prefers_newer_suffix_over_cached_fallback(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
+        )
+        monkeypatch.setattr(config.fs, 'archive_version_suffix', ['v1.2', 'v1'])
+        _, entries, upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        entry_id = entries[0].entry_id
+        access = upload_files.access
+        newer = os.path.join(upload_files.os_path, f'archive-{access}-v1.2.msg.msg')
+        older = os.path.join(upload_files.os_path, f'archive-{access}-v1.msg.msg')
+        newer_bytes = pathlib.Path(newer).read_bytes()
+        os.rename(newer, older)
+        upload_files.close()
+
+        cached = PublicUploadFiles(test_upload_id)
+        with cached.read_archive(entry_id) as archive:
+            expected = to_json(archive[entry_id])
+        cached.close()
+        pathlib.Path(newer).write_bytes(newer_bytes)
+
+        opened: list[str] = []
+        original_open = FSUtility.open
+
+        @contextmanager
+        def recording_open(path, *args, **kwargs):
+            opened.append(str(path))
+            with original_open(path, *args, **kwargs) as file_obj:
+                yield file_obj
+
+        monkeypatch.setattr(FSUtility, 'open', recording_open)
+        current = PublicUploadFiles(test_upload_id)
+        with current.read_archive(entry_id) as archive:
+            assert to_json(archive[entry_id]) == expected
+        current.close()
+        assert any(path.endswith(f'archive-{access}-v1.2.msg.msg') for path in opened)
+        assert not any(path.endswith(f'archive-{access}-v1.msg.msg') for path in opened)
+
+    def test_legacy_archive_toc_is_not_reparsed(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        from nomad.archive.utils import check_archive_version as original_check
+        from nomad.archive.utils import v2_magic
+
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
+        )
+        _, entries, upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        entry_id = entries[0].entry_id
+        msg_file = upload_files.msg_fp(upload_files.access, fallback=True)
+        pathlib.Path(msg_file.os_path).write_bytes(v2_magic + b'\x00' * 64)
+        upload_files.close()
+        clear_index_caches()
+
+        version_calls = {'n': 0}
+        full_opens = {'n': 0}
+
+        def counting_check(file_or_path, *args, **kwargs):
+            version_calls['n'] += 1
+            return original_check(file_or_path, *args, **kwargs)
+
+        @contextmanager
+        def fake_full_archive(self, requested_id):
+            full_opens['n'] += 1
+            yield {requested_id: {'metadata': {'entry_id': requested_id}}}
+
+        monkeypatch.setattr(
+            'nomad.files.archive_toc.check_archive_version', counting_check
+        )
+        monkeypatch.setattr(PublicUploadFiles, '_open_full_archive', fake_full_archive)
+
+        first = PublicUploadFiles(test_upload_id)
+        with first.read_archive(entry_id) as archive:
+            assert archive[entry_id]['metadata']['entry_id'] == entry_id
+        first_calls = version_calls['n']
+        assert first_calls >= 1
+        assert full_opens['n'] == 1
+        assert len(list(tmp_path.glob('*.toc.v1.msgpack'))) == 1
+        first.close()
+
+        second = PublicUploadFiles(test_upload_id)
+        with second.read_archive(entry_id) as archive:
+            assert archive[entry_id]['metadata']['entry_id'] == entry_id
+        second.close()
+        assert version_calls['n'] == first_calls
+        assert full_opens['n'] == 2
+
+    def test_archive_toc_cache_consumer_error_does_not_discard(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        from nomad.archive.utils import check_archive_version as original_check
+
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
+        )
+        _, entries, upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        entry_id = entries[0].entry_id
+        with upload_files.read_archive(entry_id) as archive:
+            to_json(archive[entry_id])
+        assert len(list(tmp_path.glob('*.toc.v1.msgpack'))) == 1
+        upload_files.close()
+
+        upload_files = PublicUploadFiles(test_upload_id)
+        with pytest.raises(ValueError, match='consumer'):
+            with upload_files.read_archive(entry_id) as archive:
+                to_json(archive[entry_id])
+                raise ValueError('consumer')
+        assert len(list(tmp_path.glob('*.toc.v1.msgpack'))) == 1
+        upload_files.close()
+
+        version_calls = {'n': 0}
+
+        def counting_check(file_or_path, *args, **kwargs):
+            version_calls['n'] += 1
+            return original_check(file_or_path, *args, **kwargs)
+
+        monkeypatch.setattr(
+            'nomad.files.archive_toc.check_archive_version', counting_check
+        )
+
+        other = PublicUploadFiles(test_upload_id)
+        with other.read_archive(entry_id) as archive:
+            assert to_json(archive[entry_id])
+        assert version_calls['n'] == 0
+        other.close()
+
+    def test_archive_toc_cache_lazy_reader_failure_falls_back(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        import nomad.files as files_module
+
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
+        )
+        _, entries, upload_files = create_public_upload(
+            test_upload_id, entry_specs='pp', with_upload=False
+        )
+        entry_id = entries[0].entry_id
+        with upload_files.read_archive(entry_id) as archive:
+            expected = to_json(archive[entry_id])
+        assert len(list(tmp_path.glob('*.toc.v1.msgpack'))) == 1
+        upload_files.close()
+
+        original_lazy_reader = files_module.LazyReader
+        calls = {'n': 0}
+
+        class FailingLazyReader(original_lazy_reader):
+            def __init__(self, *args, **kwargs):
+                calls['n'] += 1
+                if calls['n'] == 1:
+                    raise ValueError('bad offset')
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr('nomad.files.uploads.LazyReader', FailingLazyReader)
+
+        other = PublicUploadFiles(test_upload_id)
+        with other.read_archive(entry_id) as archive:
+            assert to_json(archive[entry_id]) == expected
+        assert list(tmp_path.glob('*.toc.v1.msgpack')) == []
+        other.close()
+
+    def test_archive_toc_memory_cache_warm_read_is_single_open(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        proxy, entries, _upload_files = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id
+        )
+        entry_id = entries[0].entry_id
+        cold = PublicUploadFiles(test_upload_id)
+        with cold.read_archive(entry_id) as archive:
+            expected = to_json(archive[entry_id])
+        cold.close()
+        proxy.calls.clear()
+
+        warm = PublicUploadFiles(test_upload_id)
+        with warm.read_archive(entry_id) as archive:
+            assert to_json(archive[entry_id]) == expected
+        warm.close()
+
+        msg_calls = [
+            call
+            for call in _published_msg_calls(proxy.calls, warm.access)
+            if call[0] not in ('exists', 'size')
+        ]
+        assert [call[0] for call in msg_calls] == ['open']
+        assert 'size' in msg_calls[0][2]
+        assert 'block_size' in msg_calls[0][2]
+        assert msg_calls[0][2]['size'] is not None
+        assert msg_calls[0][2]['block_size'] is not None
+
+    def test_archive_toc_memory_cache_ttl_expiry_revalidates(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        clock = {'now': 1_000_000.0}
+        monkeypatch.setattr(time, 'monotonic', lambda: clock['now'])
+        proxy, entries, _upload_files = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id
+        )
+        entry_id = entries[0].entry_id
+        cold = PublicUploadFiles(test_upload_id)
+        with cold.read_archive(entry_id) as archive:
+            expected = to_json(archive[entry_id])
+        cold.close()
+        proxy.calls.clear()
+
+        clock['now'] += 61
+        expired = PublicUploadFiles(test_upload_id)
+        with expired.read_archive(entry_id) as archive:
+            assert to_json(archive[entry_id]) == expected
+        expired.close()
+
+        msg_calls = [
+            call
+            for call in _published_msg_calls(proxy.calls, expired.access)
+            if call[0] not in ('exists', 'size')
+        ]
+        assert [call[0] for call in msg_calls] == ['info', 'open']
+        assert msg_calls[0][2].get('refresh') is True
+        assert 'size' in msg_calls[1][2]
+        assert 'block_size' in msg_calls[1][2]
+
+    def test_archive_toc_memory_cache_identity_change_rebuilds(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        clock = {'now': 1_000_000.0}
+        monkeypatch.setattr(time, 'monotonic', lambda: clock['now'])
+        proxy, entries, _upload_files = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id, entry_specs='pp'
+        )
+        entry_a = entries[0].entry_id
+        cold = PublicUploadFiles(test_upload_id)
+        with cold.read_archive(entry_a) as archive:
+            to_json(archive[entry_a])
+        msg_path = cold.msg_fp(cold.access, fallback=False).location
+        cold.close()
+
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', None)
+        _, new_entries, new_local = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        _copy_upload_tree_to_memory_fs(new_local, proxy._inner)
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', 's3')
+        new_entry_id = new_entries[0].entry_id
+
+        clock['now'] += 61
+        rebuilt = PublicUploadFiles(test_upload_id)
+        with rebuilt.read_archive(new_entry_id) as archive:
+            assert to_json(archive[new_entry_id])
+        rebuilt.close()
+        with pytest.raises(KeyError):
+            with PublicUploadFiles(test_upload_id).read_archive(entries[1].entry_id):
+                pass
+        assert any(
+            call[0] == 'info' and call[2].get('refresh') is True
+            for call in proxy.calls
+            if call[1] == msg_path
+        )
+
+    def test_archive_toc_memory_cache_byte_bound_evicts(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'memory_max_mb', 0.002)
+        proxy, entries_a, _upload_a = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id, entry_specs='p'
+        )
+        other_id = f'test_upload_{uuid.uuid4().hex}'
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', None)
+        _, entries_b, upload_b = create_public_upload(
+            other_id, entry_specs='p', with_upload=False
+        )
+        _copy_upload_tree_to_memory_fs(upload_b, proxy._inner)
+        monkeypatch.setattr(config.fs.public_fs, 'protocol', 's3')
+
+        first = PublicUploadFiles(test_upload_id)
+        with first.read_archive(entries_a[0].entry_id):
+            pass
+        first_key = first.msg_fp(first.access, fallback=False).location
+        first.close()
+        from nomad.files import _toc_cache
+
+        assert _toc_cache.peek(first_key) is not None
+
+        second = PublicUploadFiles(other_id)
+        with second.read_archive(entries_b[0].entry_id):
+            pass
+        second_key = second.msg_fp(second.access, fallback=False).location
+        second.close()
+        assert _toc_cache.peek(first_key) is None
+        assert _toc_cache.peek(second_key) is not None
+
+        DirectoryObject(PublicUploadFiles.base_folder_for(other_id)).delete()
+
+    def test_archive_toc_memory_cache_revalidate_zero_always_heads(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'revalidate_seconds', 0)
+        proxy, entries, _upload_files = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id
+        )
+        entry_id = entries[0].entry_id
+        cold = PublicUploadFiles(test_upload_id)
+        with cold.read_archive(entry_id):
+            pass
+        cold.close()
+        proxy.calls.clear()
+
+        warm = PublicUploadFiles(test_upload_id)
+        with warm.read_archive(entry_id):
+            pass
+        warm.close()
+        msg_calls = [
+            call
+            for call in _published_msg_calls(proxy.calls, warm.access)
+            if call[0] not in ('exists', 'size')
+        ]
+        assert [call[0] for call in msg_calls] == ['info', 'open']
+        assert msg_calls[0][2].get('refresh') is True
+
+    def test_archive_toc_memory_cache_disabled_still_uses_disk(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        from nomad.archive.utils import check_archive_version as original_check
+
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'memory_max_mb', 0)
+        proxy, entries, _upload_files = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id
+        )
+        entry_id = entries[0].entry_id
+        cold = PublicUploadFiles(test_upload_id)
+        with cold.read_archive(entry_id) as archive:
+            expected = to_json(archive[entry_id])
+        cold.close()
+        assert len(list(tmp_path.glob('*.toc.v1.msgpack'))) == 1
+        proxy.calls.clear()
+
+        version_calls = {'n': 0}
+
+        def counting_check(file_or_path, *args, **kwargs):
+            version_calls['n'] += 1
+            return original_check(file_or_path, *args, **kwargs)
+
+        monkeypatch.setattr(
+            'nomad.files.archive_toc.check_archive_version', counting_check
+        )
+        warm = PublicUploadFiles(test_upload_id)
+        with warm.read_archive(entry_id) as archive:
+            assert to_json(archive[entry_id]) == expected
+        warm.close()
+        assert version_calls['n'] == 0
+        msg_methods = [
+            call[0] for call in _published_msg_calls(proxy.calls, warm.access)
+        ]
+        assert 'info' in msg_methods
+        assert 'open' in msg_methods
+        from nomad.files import _toc_cache
+
+        assert (
+            _toc_cache.peek(warm.msg_fp(warm.access, fallback=False).location) is None
+        )
+
+    def test_archive_toc_if_match_set_to_quoted_etag(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        proxy, entries, _upload_files = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id, entry_specs='p'
+        )
+        entry_id = entries[0].entry_id
+        cold = PublicUploadFiles(test_upload_id)
+        with cold.read_archive(entry_id):
+            pass
+        assert cold._toc is not None and cold._toc.identity is not None
+        etag = cold._toc.identity.etag
+        assert etag.startswith('"') and etag.endswith('"')
+        cold.close()
+
+        captured: dict[str, Any] = {}
+        original_open = FSUtility.open
+
+        @contextmanager
+        def open_with_req_kw(*args, **kwargs):
+            captured['if_match'] = kwargs.get('if_match')
+            with original_open(*args, **kwargs) as file_obj:
+                yield file_obj
+
+        monkeypatch.setattr('nomad.files.FSUtility.open', open_with_req_kw)
+        other = PublicUploadFiles(test_upload_id)
+        with other.read_archive(entry_id) as archive:
+            to_json(archive[entry_id])
+        other.close()
+        assert captured['if_match'] == etag
+
+    def test_archive_toc_if_match_failure_falls_back(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
+        )
+        _, entries, upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        entry_id = entries[0].entry_id
+        with upload_files.read_archive(entry_id) as archive:
+            expected = to_json(archive[entry_id])
+        assert len(list(tmp_path.glob('*.toc.v1.msgpack'))) == 1
+        upload_files.close()
+
+        original_open = FSUtility.open
+        opens = {'n': 0}
+
+        class ExpiredFile:
+            def __init__(self):
+                self.req_kw: dict[str, str] = {}
+
+            def tell(self):
+                return 0
+
+            def seek(self, *args, **kwargs):
+                return 0
+
+            def read(self, *args, **kwargs):
+                raise OSError('expired')
+
+            def close(self):
+                return None
+
+        @contextmanager
+        def open_maybe_expired(*args, **kwargs):
+            opens['n'] += 1
+            if opens['n'] == 1:
+                yield ExpiredFile()
+                return
+            with original_open(*args, **kwargs) as file_obj:
+                yield file_obj
+
+        monkeypatch.setattr('nomad.files.FSUtility.open', open_maybe_expired)
+        other = PublicUploadFiles(test_upload_id)
+        with other.read_archive(entry_id) as archive:
+            assert to_json(archive[entry_id]) == expected
+        assert list(tmp_path.glob('*.toc.v1.msgpack')) == []
+        other.close()
+        from nomad.files import _toc_cache
+
+        assert (
+            _toc_cache.peek(other.msg_fp(other.access, fallback=False).location) is None
+        )
+
+    def test_zip_memory_cache_warm_read_is_single_open(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        proxy, _entries, _upload_files = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id, entry_specs='p'
+        )
+        member = 'examples_template/template.json'
+        cold = PublicUploadFiles(test_upload_id)
+        with cold.raw_file(member, 'rb') as raw_file:
+            expected = raw_file.read()
+        cold.close()
+        proxy.calls.clear()
+
+        warm = PublicUploadFiles(test_upload_id)
+        with warm.raw_file(member, 'rb') as raw_file:
+            assert raw_file.read() == expected
+        zip_calls = _published_zip_calls(proxy.calls, warm.access)
+        assert [call[0] for call in zip_calls if call[0] not in ('exists', 'size')] == [
+            'open'
+        ]
+        assert 'size' in [call[2] for call in zip_calls if call[0] == 'open'][0]
+        warm.close()
+
+    def test_zip_memory_cache_ttl_expiry_revalidates(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        clock = {'now': 1_000_000.0}
+        monkeypatch.setattr(time, 'monotonic', lambda: clock['now'])
+        proxy, _entries, _upload_files = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id, entry_specs='p'
+        )
+        member = 'examples_template/template.json'
+        cold = PublicUploadFiles(test_upload_id)
+        with cold.raw_file(member, 'rb') as raw_file:
+            expected = raw_file.read()
+        cold.close()
+        proxy.calls.clear()
+
+        clock['now'] += 61
+        expired = PublicUploadFiles(test_upload_id)
+        with expired.raw_file(member, 'rb') as raw_file:
+            assert raw_file.read() == expected
+        expired.close()
+        zip_calls = [
+            call
+            for call in _published_zip_calls(proxy.calls, expired.access)
+            if call[0] not in ('exists', 'size')
+        ]
+        assert [call[0] for call in zip_calls] == ['info', 'open']
+        assert zip_calls[0][2].get('refresh') is True
+        assert 'size' in zip_calls[1][2]
+
+    def test_zip_memory_cache_identity_change_rebuilds(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        clock = {'now': 1_000_000.0}
+        monkeypatch.setattr(time, 'monotonic', lambda: clock['now'])
+        proxy, _entries, _upload_files = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id, entry_specs='p'
+        )
+        cold = PublicUploadFiles(test_upload_id)
+        listing = [info.path for info in cold.raw_listdir('', recursive=True)]
+        assert 'examples_template/template.json' in listing
+        zip_path = cold.raw_zip_file_object().location
+        cold.close()
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w') as zip_file:
+            zip_file.writestr('only_new.txt', b'hello')
+        proxy._inner.pipe(zip_path, buf.getvalue())
+
+        clock['now'] += 61
+        rebuilt = PublicUploadFiles(test_upload_id)
+        new_listing = [info.path for info in rebuilt.raw_listdir('', recursive=True)]
+        rebuilt.close()
+        assert 'only_new.txt' in new_listing
+        assert 'examples_template/template.json' not in new_listing
+
+    def test_zip_memory_cache_stale_index_retries(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        proxy, _entries, _upload_files = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id, entry_specs='p'
+        )
+        member = 'examples_template/template.json'
+        cold = PublicUploadFiles(test_upload_id)
+        with cold.raw_file(member, 'rb') as raw_file:
+            assert raw_file.read()
+        zip_path = cold.raw_zip_file_object().location
+        from nomad.files import _zip_cache
+
+        old_entry = _zip_cache.peek(zip_path)
+        assert old_entry is not None
+        old_identity = old_entry.identity
+        cold.close()
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, 'w') as zip_file:
+            zip_file.writestr(member, b'replaced-member-bytes')
+        proxy._inner.pipe(zip_path, buf.getvalue())
+        assert _zip_cache.peek(zip_path) is not None
+        assert _zip_cache.peek(zip_path).identity == old_identity
+
+        stale = PublicUploadFiles(test_upload_id)
+        with stale.raw_file(member, 'rb') as raw_file:
+            assert raw_file.read() == b'replaced-member-bytes'
+        stale.close()
+        replaced = _zip_cache.peek(zip_path)
+        assert replaced is not None
+        assert replaced.identity != old_identity
+
+    def test_zip_read_oserror_is_not_a_missing_file(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
+        )
+        _, _entries, upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        member = 'examples_template/template.json'
+        with upload_files.raw_file(member, 'rb') as raw_file:
+            raw_file.read()
+        zip_path = upload_files.raw_zip_file_object().location
+        upload_files.close()
+
+        def fail_open(*args, **kwargs):
+            raise OSError('connection reset')
+
+        monkeypatch.setattr('nomad.files.uploads.open_zip_member', fail_open)
+        current = PublicUploadFiles(test_upload_id)
+        with pytest.raises(OSError, match='connection reset'):
+            with current.raw_file(member, 'rb'):
+                pass
+        from nomad.files import _zip_cache
+
+        assert _zip_cache.peek(zip_path) is not None
+        current.close()
+
+    @pytest.mark.parametrize('error_kind', ['expired', 'precondition'])
+    def test_zip_stale_s3_etag_rebuilds_before_retry(
+        self, test_upload_id, monkeypatch, tmp_path, error_kind
+    ):
+        from botocore.exceptions import ClientError
+        from s3fs.errors import translate_boto_error
+        from s3fs.utils import FileExpired
+
+        from nomad.files import _zip_cache
+
+        proxy, _, _ = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id, entry_specs='p'
+        )
+        member = 'examples_template/template.json'
+        cold = PublicUploadFiles(test_upload_id)
+        with cold.raw_file(member) as raw_file:
+            raw_file.read()
+        path = cold.raw_zip_file_object().location
+        old_identity = _zip_cache.peek(path).identity
+        cold.close()
+
+        replacement = io.BytesIO()
+        with zipfile.ZipFile(replacement, 'w') as archive:
+            archive.writestr(member, b'updated')
+        proxy._inner.pipe(path, replacement.getvalue())
+        current_etag = proxy.info(path)['ETag']
+        opened = []
+        original_open = proxy.open
+
+        class ConditionalFile(io.BytesIO):
+            def __init__(self):
+                super().__init__(replacement.getvalue())
+                self.req_kw = {}
+
+            def read(self, *args):
+                if self.req_kw.get('IfMatch') != current_etag:
+                    if error_kind == 'expired':
+                        raise FileExpired(path, self.req_kw.get('IfMatch'))
+                    raise translate_boto_error(
+                        ClientError(
+                            {
+                                'Error': {
+                                    'Code': 'PreconditionFailed',
+                                    'Message': 'changed',
+                                }
+                            },
+                            'GetObject',
+                        )
+                    )
+                return super().read(*args)
+
+        def conditional_open(location, mode='rb', **kwargs):
+            if location != path:
+                return original_open(location, mode, **kwargs)
+            file = ConditionalFile()
+            opened.append(file)
+            return file
+
+        monkeypatch.setattr(proxy, 'open', conditional_open)
+        with PublicUploadFiles(test_upload_id).raw_file(member) as raw_file:
+            assert raw_file.read() == b'updated'
+        assert len(opened) == 2
+        assert all(file.closed for file in opened)
+        assert opened[0].req_kw['IfMatch'] == old_identity.etag
+        assert opened[1].req_kw['IfMatch'] == current_etag
+        assert _zip_cache.peek(path).identity.etag == current_etag
+
+    def test_zip_repeated_s3_expiry_stops_after_one_retry(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        from s3fs.utils import FileExpired
+
+        from nomad.files import _zip_cache
+
+        self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id, entry_specs='p'
+        )
+        public = PublicUploadFiles(test_upload_id)
+        attempts = []
+
+        def expire(fileobj, member):
+            attempts.append(fileobj)
+            raise FileExpired('raw.zip', 'stale')
+
+        monkeypatch.setattr(public, '_open_zip_member_fileobj', io.BytesIO)
+        monkeypatch.setattr('nomad.files.uploads.open_zip_member', expire)
+        with pytest.raises(FileExpired):
+            with public.raw_file('examples_template/template.json'):
+                pass
+        assert len(attempts) == 2
+        assert all(file.closed for file in attempts)
+        assert _zip_cache.peek(public.raw_zip_file_object().location) is None
+
+    def test_zip_memory_cache_disabled_still_uses_disk(
+        self, test_upload_id, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'memory_max_mb', 0)
+        proxy, _entries, _upload_files = self._setup_recording_archive_fs(
+            monkeypatch, tmp_path, test_upload_id, entry_specs='p'
+        )
+        member = 'examples_template/template.json'
+        cold = PublicUploadFiles(test_upload_id)
+        with cold.raw_file(member, 'rb') as raw_file:
+            expected = raw_file.read()
+        cold.close()
+        assert len(list(tmp_path.glob('*.zip.v1.msgpack'))) == 1
+        proxy.calls.clear()
+
+        zipfile_calls = {'n': 0}
+        original_zipfile = zipfile.ZipFile
+
+        class CountingZipFile(original_zipfile):
+            def __init__(self, *args, **kwargs):
+                zipfile_calls['n'] += 1
+                super().__init__(*args, **kwargs)
+
+        monkeypatch.setattr(zipfile, 'ZipFile', CountingZipFile)
+        warm = PublicUploadFiles(test_upload_id)
+        with warm.raw_file(member, 'rb') as raw_file:
+            assert raw_file.read() == expected
+        warm.close()
+        assert zipfile_calls['n'] == 0
+        zip_methods = [
+            call[0]
+            for call in _published_zip_calls(proxy.calls, warm.access)
+            if call[0] not in ('exists', 'size')
+        ]
+        assert 'info' in zip_methods
+        assert 'open' in zip_methods
+        from nomad.files import _zip_cache
+
+        assert _zip_cache.peek(warm.raw_zip_file_object().location) is None
 
 
 def assert_upload_files(

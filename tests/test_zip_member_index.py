@@ -27,12 +27,12 @@ import pytest
 from fsspec.implementations.zip import ZipFileSystem
 from upath import UPath
 
+from nomad.config import config
+from nomad.files.index_cache import IndexCache, IndexDiskStore, object_identity
 from nomad.files.zip_index import (
-    IndexDiskStore,
     RangeTailFile,
     ZipMember,
     ZipMemberIndex,
-    object_identity,
     open_zip_member,
 )
 
@@ -406,6 +406,45 @@ def test_object_identity_prefers_refresh_and_falls_back():
     assert etag2 == 'v2'
     assert size2 == len(data)
     assert fallback_fs.info_calls == 1
+
+
+@pytest.mark.parametrize('segment', ['x' * 190, 'α' * 90])
+def test_memory_budget_accounts_for_long_filenames(tmp_path, monkeypatch, segment):
+    monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+    monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'directory', str(tmp_path))
+    monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'memory_max_mb', 1)
+    cache = IndexCache(
+        'zip',
+        decode=ZipMemberIndex.from_bytes,
+        encode=ZipMemberIndex.to_bytes,
+        sizeof=lambda index: index.memory_size + 1024,
+    )
+    for prefix, fits in [('', True), ((segment + '/') * 10, False)]:
+        infos = []
+        for number in range(1000):
+            info = zipfile.ZipInfo(f'{prefix}file_{number}.txt')
+            info.header_offset = number * 100
+            infos.append(info)
+        index = ZipMemberIndex.from_infolist(infos)
+        # Disk deserialization may retain separate strings for the same path.
+        index = ZipMemberIndex.from_bytes(index.to_bytes())
+        fs = CountingRangeFS(b'archive', path=f'object-{fits}')
+        result = cache.get_or_build(fs, fs.path, '/archive', build=lambda: index)
+        assert result.index is index  # oversized indexes remain usable by callers
+        assert (cache.peek(fs.path) is not None) == fits
+        assert (index.memory_size < 1024 * 1024) == fits
+
+
+def test_object_identity_keeps_quoted_etag_and_disk_key_is_safe(tmp_path):
+    data = stored_zip_bytes(NESTED_ZIP_ENTRIES)
+    fs = CountingRangeFS(data, etag='"abc123"')
+    identity = object_identity(fs, fs.path)
+    assert identity[1] == '"abc123"'
+    filename = IndexDiskStore(str(tmp_path), max_bytes=1024, kind='toc').key_filename(
+        identity
+    )
+    assert '"' not in filename
+    assert filename.endswith('.toc.v1.msgpack')
 
 
 def test_index_disk_store_load_store_and_corruption(tmp_path):
