@@ -122,7 +122,7 @@ def update_by_query(
     **kwargs,
 ):
     """
-    Uses the given painless script to update the entries by given query.
+    Uses the given painless script to update the entries by given query and owner.
 
     In most cases, the elasticsearch entry index should not be updated field by field;
     you should run `index` instead and fully replace documents from mongodb and
@@ -135,11 +135,8 @@ def update_by_query(
         query = {}
 
     es_query_normalized = normalize_api_query(cast(Query, query))
-    # Validates the owner/user_id combination (raises if not permitted). The
-    # resulting owner query is intentionally not applied: these operations are
-    # scoped by the caller-provided query.
-    _owner_es_query(owner=owner, user_id=user_id)
-    es_query_validated = _api_to_es_query(es_query_normalized)
+    owner_query = _owner_es_query(owner=owner, user_id=user_id)
+    es_query_validated = _api_to_es_query(es_query_normalized) & owner_query
 
     body = {
         'script': {'source': update_script, 'lang': 'painless'},
@@ -173,17 +170,14 @@ def delete_by_query(
     refresh: bool = False,
 ):
     """
-    Deletes all entries that match the given query.
+    Deletes all entries that match the given query and owner.
     """
     if query is None:
         query = {}
 
     es_query_normalized = normalize_api_query(cast(Query, query))
-    # Validates the owner/user_id combination (raises if not permitted). The
-    # resulting owner query is intentionally not applied: these operations are
-    # scoped by the caller-provided query.
-    _owner_es_query(owner=owner, user_id=user_id)
-    es_query_validated = _api_to_es_query(es_query_normalized)
+    owner_query = _owner_es_query(owner=owner, user_id=user_id)
+    es_query_validated = _api_to_es_query(es_query_normalized) & owner_query
 
     body = {'query': es_query_validated.to_dict()}
 
