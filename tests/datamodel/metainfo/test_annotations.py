@@ -20,12 +20,14 @@ import pytest
 from pydantic import ValidationError
 
 from nomad.datamodel.metainfo.annotations import (
+    DisplayAnnotation,
     ELNAnnotation,
-    PlotAnnotation,
     PlotlyGraphObjectAnnotation,
+    QuantityDisplayAnnotation,
+    SectionDisplayAnnotation,
 )
 from nomad.datamodel.metainfo.plot import PlotlyError
-from nomad.metainfo import Quantity
+from nomad.metainfo import Package, Quantity, Section, SubSection
 
 
 @pytest.mark.parametrize(
@@ -67,87 +69,6 @@ def test_eln_validation(quantity, annotation, result, error):
 
 
 @pytest.mark.parametrize(
-    'annotation, result, error',
-    [
-        pytest.param({'x': 'x', 'y': 'y'}, None, False, id='plain'),
-        pytest.param(
-            {
-                'x': ['1', '2'],
-                'y': ['1', '2'],
-                'label': 'test',
-                'lines': [{}, {}],
-                'layout': {},
-                'config': {},
-            },
-            None,
-            False,
-            id='full',
-        ),
-        pytest.param(
-            {
-                'x': ['1', '2'],
-                'y': ['1'],
-                'label': 'test',
-                'lines': [{}, {}],
-                'layout': {},
-                'config': {},
-            },
-            None,
-            True,
-            id='x-y-mismatch',
-        ),
-        pytest.param({'y': ['1']}, None, True, id='x-and-y-required-y'),
-        pytest.param({'x': ['1']}, None, True, id='x-and-y-required-x'),
-        pytest.param({}, None, True, id='x-and-y-required'),
-        pytest.param(
-            {'x_axis': '1', 'y_axis': '1'},
-            {'x': '1', 'y': '1'},
-            False,
-            id='deprecated-aliases',
-        ),
-        pytest.param({'x': './a/0/b', 'y': 'a/b'}, None, False, id='x-y-pattern-ok'),
-        pytest.param({'x': './a', 'y': 'a/../b'}, None, True, id='x-y-pattern-fail'),
-        pytest.param({'x': 'a/:/b', 'y': 'a/:/b'}, None, False, id='slice-all'),
-        pytest.param({'x': 'a/1:2/b', 'y': 'a/1:2/b'}, None, False, id='slice-1:2'),
-        pytest.param(
-            {'x': 'a/:/a/b', 'y': 'a/:/a/b'}, None, False, id='slice-multiple-after'
-        ),
-        pytest.param(
-            {'x': 'a/-2:-1/b', 'y': 'a/-2:-1/b'}, None, False, id='slice-negative'
-        ),
-        pytest.param(
-            {'x': 'a/:/a/:/b', 'y': 'a/:/a/:/b'}, None, False, id='slice-multiple'
-        ),
-        pytest.param({'x': ':/::/b', 'y': ':/::/b'}, None, True, id='slice-too-many'),
-        pytest.param(
-            {'x': 'a/:a/b', 'y': 'a/:a/b'}, None, True, id='slice-invalid-surrounding'
-        ),
-        pytest.param(
-            {'x': 'a/:/:/b', 'y': 'a/:/:/b'}, None, True, id='slice-two-in-row'
-        ),
-        pytest.param({'x': 'a/:', 'y': 'a/:'}, None, True, id='slice-last'),
-        pytest.param(
-            {'x': 'a/1:2.1/b', 'y': 'a/1:2.1/b'}, None, True, id='slice-non-integer'
-        ),
-        pytest.param(
-            {'x': 'a/1:2:5/b', 'y': 'a/1:2:5/b'},
-            None,
-            True,
-            id='slice-step-unsupported',
-        ),
-    ],
-)
-def test_plot_validation(annotation, result, error):
-    if error:
-        with pytest.raises(ValidationError):
-            PlotAnnotation(**annotation)
-    else:
-        assert PlotAnnotation(**annotation).dict(exclude_none=True) == (
-            result or annotation
-        )
-
-
-@pytest.mark.parametrize(
     'annotation, result, error_type, error',
     [
         pytest.param({'x': 'x'}, None, PlotlyError, True, id='data-required'),
@@ -163,3 +84,135 @@ def test_plotly_graph_object_validation(annotation, result, error_type, error):
         assert PlotlyGraphObjectAnnotation(**annotation).dict(exclude_none=True) == (
             result or annotation
         )
+
+
+@pytest.mark.parametrize(
+    'definition, annotation, error',
+    [
+        pytest.param(
+            Section(name='test'),
+            {'visible': {'exclude': ['a']}},
+            False,
+            id='section-filter',
+        ),
+        pytest.param(
+            Section(name='test'), {'order': ['a', 'b']}, False, id='section-order'
+        ),
+        pytest.param(
+            Section(name='test'), {'visible': False}, True, id='section-bool-visible'
+        ),
+        pytest.param(
+            Section(name='test'), {'editable': True}, True, id='section-bool-editable'
+        ),
+        pytest.param(Section(name='test'), {'unit': 'kg'}, True, id='section-unit'),
+        pytest.param(Quantity(type=str), {'visible': False}, False, id='quantity-bool'),
+        pytest.param(
+            Quantity(type=float, unit='g'), {'unit': 'kg'}, False, id='quantity-unit'
+        ),
+        pytest.param(
+            Quantity(type=str),
+            {'visible': {'exclude': ['a']}},
+            True,
+            id='quantity-filter',
+        ),
+        pytest.param(Quantity(type=str), {'order': ['a']}, True, id='quantity-order'),
+        pytest.param(
+            SubSection(name='sub'), {'visible': False}, False, id='subsection-bool'
+        ),
+        pytest.param(
+            SubSection(name='sub'),
+            {'visible': {'include': ['a']}},
+            True,
+            id='subsection-filter',
+        ),
+        pytest.param(
+            SubSection(name='sub'), {'unit': 'kg'}, True, id='subsection-unit'
+        ),
+    ],
+)
+def test_display_validation(definition, annotation, error):
+    """A `display` annotation is checked against the definition it annotates."""
+    if error:
+        with pytest.raises(ValidationError):
+            annotation_model = DisplayAnnotation(**annotation)
+            annotation_model.m_definition = definition
+    else:
+        annotation_model = DisplayAnnotation(**annotation)
+        annotation_model.m_definition = definition
+        assert annotation_model.model_dump(exclude_unset=True) == annotation
+
+
+@pytest.mark.parametrize(
+    'model, definition, error',
+    [
+        pytest.param(
+            SectionDisplayAnnotation(order=['a']),
+            Section(name='test'),
+            False,
+            id='section-model-on-section',
+        ),
+        pytest.param(
+            SectionDisplayAnnotation(order=['a']),
+            Quantity(type=str),
+            True,
+            id='section-model-on-quantity',
+        ),
+        pytest.param(
+            QuantityDisplayAnnotation(unit='kg'),
+            Quantity(type=float, unit='g'),
+            False,
+            id='quantity-model-on-quantity',
+        ),
+        pytest.param(
+            QuantityDisplayAnnotation(unit='kg'),
+            Section(name='test'),
+            True,
+            id='quantity-model-on-section',
+        ),
+    ],
+)
+def test_display_specialized_models(model, definition, error):
+    """The specialized display models are checked for where they are used."""
+    if error:
+        with pytest.raises(ValidationError):
+            model.m_definition = definition
+    else:
+        model.m_definition = definition
+
+
+@pytest.mark.parametrize(
+    'display, valid',
+    [
+        pytest.param({'visible': {'exclude': ['a']}, 'order': ['a']}, True, id='valid'),
+        pytest.param({'visible': False}, False, id='boolean-visible-on-section'),
+        pytest.param({'unit': 'kg'}, False, id='unit-on-section'),
+    ],
+)
+def test_display_annotation_is_registered(display, valid):
+    """
+    A `display` annotation given as plain data is validated rather than silently
+    passed through, and a valid one keeps its values.
+    """
+    package = Package.m_from_dict(
+        {
+            'm_def': 'nomad.metainfo.metainfo.Package',
+            'sections': {
+                'Test': {
+                    'm_annotations': {'display': display},
+                    'quantities': {'a': {'type': 'str'}},
+                }
+            },
+        }
+    )
+    section = package.all_definitions['Test']
+    annotation = section.m_get_annotations('display')
+    errors, _ = package.m_all_validate()
+
+    if valid:
+        assert isinstance(annotation, DisplayAnnotation)
+        assert not errors
+        assert section.m_to_dict()['m_annotations']['display'] == [display]
+    else:
+        # An invalid annotation is replaced by a stub that carries the error.
+        assert annotation.m_error is not None
+        assert len(errors) == 1
