@@ -23,8 +23,8 @@ import threading
 import warnings
 from enum import Enum
 from importlib.metadata import entry_points, version
-from typing import Any, Literal
-from urllib.parse import quote
+from typing import Any, ClassVar, Literal
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from fsspec import AbstractFileSystem, filesystem
 from fsspec.implementations.local import LocalFileSystem
@@ -681,6 +681,205 @@ def reset_target_fs_state() -> None:
         _ensured_target_fs.clear()
 
 
+class NomadStorageGateway(ConfigBaseModel):
+    """
+    Configuration for integrating with an external storage gateway service
+    (e.g., ``nomad-storage-gateway``).
+
+    This is an experimental feature. When enabled, NOMAD delegates specific data-plane
+    operations (whole published ZIP downloads, extracting individual files from those
+    archives, streaming directory ZIP bundles, or streaming binary entry archives)
+    directly to the gateway, bypassing Python ASGI worker processes and local disk
+    buffering. Each offload path has its own flag so they can be enabled independently.
+    """
+
+    enabled: bool = Field(
+        False,
+        description=(
+            'Master toggle for storage gateway integration. If False, all file '
+            'extraction and archive requests are handled locally by the NOMAD backend.'
+        ),
+    )
+    raw_files: bool = Field(
+        False,
+        description=(
+            'Redirect single raw file and directory bundle download requests to the storage gateway. '
+            'The gateway extracts members or streams directory ZIPs directly from the published ZIP archive.'
+        ),
+    )
+    file_url: str | None = Field(
+        None,
+        description=(
+            'Custom endpoint URL for single raw file extraction. If omitted, defaults to '
+            '`{public_endpoint_url}/file`.'
+        ),
+    )
+    zip: bool = Field(
+        False,
+        description=(
+            'Redirect whole published upload ZIP downloads (`GET /uploads/{id}/raw`) to the '
+            'storage gateway (`/zip/{upload_id}`). Directory bundles and individual files '
+            'stay on `raw_files`.'
+        ),
+    )
+    zip_url: str | None = Field(
+        None,
+        description=(
+            'Custom endpoint URL for directory and whole upload ZIP streaming. If omitted, defaults to '
+            '`{public_endpoint_url}/zip`.'
+        ),
+    )
+    archives: bool = Field(
+        False,
+        description=(
+            'Redirect full calculation entry archive requests to the storage gateway for '
+            'direct high-throughput msgpack or JSON streaming.'
+        ),
+    )
+    archive_url: str | None = Field(
+        None,
+        description=(
+            'Custom endpoint URL for entry archive streaming. If omitted, defaults to '
+            '`{public_endpoint_url}/archive`.'
+        ),
+    )
+
+    def get_file_url(
+        self,
+        base_url: str | None,
+        upload_id: str,
+        path: str,
+        query_params: str | None = None,
+    ) -> str:
+        base = (self.file_url or f'{(base_url or "").rstrip("/")}/file').rstrip('/')
+        url = f'{base}/{upload_id}/{path.lstrip("/")}'
+        if query_params:
+            url = f'{url}?{query_params}'
+        return url
+
+    def get_zip_url(
+        self,
+        base_url: str | None,
+        upload_id: str,
+        path: str | None = None,
+        query_params: str | None = None,
+    ) -> str:
+        base = (self.zip_url or f'{(base_url or "").rstrip("/")}/zip').rstrip('/')
+        if path:
+            url = f'{base}/{upload_id}/{path.lstrip("/")}'
+        else:
+            url = f'{base}/{upload_id}'
+        if query_params:
+            url = f'{url}?{query_params}'
+        return url
+
+    def get_archive_url(
+        self,
+        base_url: str | None,
+        upload_id: str,
+        entry_id: str,
+        format: Literal['json', 'msgpack'] = 'msgpack',
+    ) -> str:
+        base = (self.archive_url or f'{(base_url or "").rstrip("/")}/archive').rstrip(
+            '/'
+        )
+        return f'{base}/{upload_id}/{entry_id}?format={format}'
+
+    ANONYMOUS_USER_ID: ClassVar[str] = 'anonymous'
+    _IDENTITY_QUERY_KEYS: ClassVar[frozenset[str]] = frozenset({'user_id'})
+
+    def with_signed_identity(self, url: str, user_id: str | None) -> str:
+        """Bind mint-time identity into the URL. Client-supplied user_id is dropped."""
+        parts = urlsplit(url)
+        query = [
+            (key, value)
+            for key, value in parse_qsl(parts.query, keep_blank_values=True)
+            if key not in self._IDENTITY_QUERY_KEYS
+        ]
+        identity = user_id if user_id else self.ANONYMOUS_USER_ID
+        query.append(('user_id', identity))
+        return urlunsplit(parts._replace(query=urlencode(query)))
+
+    def presign_url(
+        self, url: str, extra: dict, expires: int, *, user_id: str | None
+    ) -> str:
+        """SigV4-query-sign a storage-gateway redirect URL for GET requests.
+
+        Always attaches ``user_id`` (or ``anonymous``) before signing so the
+        gateway can attribute downloads without calling back into NOMAD.
+        """
+        import os
+
+        from botocore.auth import S3SigV4QueryAuth
+        from botocore.awsrequest import AWSRequest
+        from botocore.credentials import Credentials
+
+        url = self.with_signed_identity(url, user_id)
+
+        key = extra.get('key') or os.environ.get('AWS_ACCESS_KEY_ID')
+        secret = extra.get('secret') or os.environ.get('AWS_SECRET_ACCESS_KEY')
+        if not key or not secret:
+            raise ValueError(
+                'Gateway redirects require S3 credentials (either in fs.public_fs.extra '
+                'key/secret or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY environment variables).'
+            )
+
+        client_kwargs = extra.get('client_kwargs')
+        if isinstance(client_kwargs, dict) and client_kwargs.get('region_name'):
+            region_name = client_kwargs['region_name']
+        else:
+            region_name = extra.get('region_name') or 'us-east-1'
+
+        credentials = Credentials(key, secret)
+        signer = S3SigV4QueryAuth(
+            credentials,
+            's3',
+            region_name,
+            expires=expires,
+        )
+        request = AWSRequest(method='GET', url=url)
+        request.context['payload_signing_enabled'] = False
+        signer.add_auth(request)
+        return request.url
+
+
+class StorageRedirects(ConfigBaseModel):
+    """
+    Configuration for redirecting public downloads to external storage endpoints and gateways.
+    """
+
+    enabled: bool = Field(
+        False,
+        description=(
+            'Master switch for download redirects. When enabled, whole published archive '
+            'downloads (such as raw ZIP files) are redirected to S3 presigned URLs instead of '
+            'streaming through the NOMAD backend.'
+        ),
+    )
+    public_endpoint_url: str | None = Field(
+        None,
+        description=(
+            'The public base URL authority used for client downloads and signed URLs (e.g., '
+            '``https://nomad-lab.eu/files``). When set, externally visible download URLs '
+            'are signed against this authority rather than the internal cluster endpoint.'
+        ),
+    )
+    signed_url_expiration: int = Field(
+        24 * 60 * 60,
+        gt=0,
+        description=(
+            'Lifetime in seconds of generated presigned URLs for published archive downloads.'
+        ),
+    )
+    nomad_storage_gateway: NomadStorageGateway = Field(
+        default_factory=NomadStorageGateway,
+        description=(
+            'Configuration for offloading virtual archive member extraction and entry '
+            'streaming to the nomad-storage-gateway microservice (experimental).'
+        ),
+    )
+
+
 class NOMADFileSystem(ConfigBaseModel):
     protocol: Literal['s3'] | None = Field(
         None,
@@ -805,6 +1004,10 @@ If unset, defaults to ``remote_only`` when ``protocol`` is set, otherwise ``loca
         gt=0,
         description='Lifetime in seconds of signed URLs created for published raw ZIP downloads.',
     )
+    redirects: StorageRedirects = Field(
+        default_factory=StorageRedirects,
+        description='Configuration for download redirects and storage gateway integration.',
+    )
     zip_tail_prefetch_kb: int = Field(
         512,
         ge=0,
@@ -887,6 +1090,38 @@ artifact HEADs are repeated. Disk files are shared by all workers on the node.""
         self.ensure_buffer_size()
 
         return remote_fs
+
+    @property
+    def signing_fs(self):
+        """
+        Filesystem used specifically for generating public presigned URLs.
+        If public_endpoint_url is set, uses that endpoint for SigV4 host signing.
+        """
+        if self.protocol != 's3' or not self.redirects.public_endpoint_url:
+            return self.target_fs
+
+        import copy
+
+        signing_extra = copy.deepcopy(self.extra)
+        if 'client_kwargs' in signing_extra and isinstance(
+            signing_extra['client_kwargs'], dict
+        ):
+            signing_extra['client_kwargs']['endpoint_url'] = (
+                self.redirects.public_endpoint_url
+            )
+        else:
+            signing_extra['endpoint_url'] = self.redirects.public_endpoint_url
+
+        try:
+            return filesystem(self.protocol, **signing_extra)
+        except Exception:
+            return self.target_fs
+
+    def get_download_url(self, location: str, expires: int | None = None) -> str:
+        """Generate a presigned download URL for a published artifact location."""
+        if expires is None:
+            expires = self.redirects.signed_url_expiration
+        return self.signing_fs.url(location, expires=expires)
 
 
 class FS(ConfigBaseModel):

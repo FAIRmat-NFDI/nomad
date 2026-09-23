@@ -1403,3 +1403,238 @@ def test_target_fs_makedirs_does_not_block_other_buckets(monkeypatch):
 def test_resolved_write_mode(kwargs, expected):
     public_fs = NOMADFileSystem(**kwargs)
     assert public_fs.resolved_write_mode == expected
+
+
+def test_storage_redirects_config():
+    from nomad.config.models.config import NOMADFileSystem
+
+    fs_dict = {
+        'protocol': 's3',
+        'bucket': 'nomad-public',
+        'redirects': {
+            'enabled': True,
+            'public_endpoint_url': 'https://nomad-lab.eu/files',
+            'signed_url_expiration': 3600,
+            'nomad_storage_gateway': {
+                'enabled': True,
+                'zip': True,
+                'raw_files': True,
+                'archives': True,
+            },
+        },
+    }
+    fs = NOMADFileSystem.model_validate(fs_dict)
+    assert fs.redirects.enabled is True
+    assert fs.redirects.public_endpoint_url == 'https://nomad-lab.eu/files'
+    assert fs.redirects.signed_url_expiration == 3600
+    assert fs.redirects.nomad_storage_gateway.enabled is True
+    assert fs.redirects.nomad_storage_gateway.zip is True
+    assert fs.redirects.nomad_storage_gateway.raw_files is True
+    assert fs.redirects.nomad_storage_gateway.archives is True
+
+
+def test_nomad_storage_gateway_url_generation():
+    from nomad.config.models.config import NomadStorageGateway
+
+    gw = NomadStorageGateway(
+        enabled=True,
+        raw_files=True,
+        archives=True,
+    )
+    base_url = 'https://nomad-lab.eu/files'
+    assert (
+        gw.get_file_url(base_url, 'upload_123', 'folder/file.txt')
+        == 'https://nomad-lab.eu/files/file/upload_123/folder/file.txt'
+    )
+    assert (
+        gw.get_file_url(
+            base_url,
+            'upload_123',
+            'folder/file.txt',
+            query_params='offset=10&length=20',
+        )
+        == 'https://nomad-lab.eu/files/file/upload_123/folder/file.txt?offset=10&length=20'
+    )
+    assert (
+        gw.get_zip_url(base_url, 'upload_123')
+        == 'https://nomad-lab.eu/files/zip/upload_123'
+    )
+    assert (
+        gw.get_zip_url(base_url, 'upload_123', path='folder/subfolder')
+        == 'https://nomad-lab.eu/files/zip/upload_123/folder/subfolder'
+    )
+    assert (
+        gw.get_archive_url(base_url, 'upload_123', 'entry_456')
+        == 'https://nomad-lab.eu/files/archive/upload_123/entry_456?format=msgpack'
+    )
+    assert (
+        gw.get_archive_url(base_url, 'upload_123', 'entry_456', format='msgpack')
+        == 'https://nomad-lab.eu/files/archive/upload_123/entry_456?format=msgpack'
+    )
+    assert (
+        gw.get_archive_url(base_url, 'upload_123', 'entry_456', format='json')
+        == 'https://nomad-lab.eu/files/archive/upload_123/entry_456?format=json'
+    )
+
+
+def test_presign_gateway_url_adds_sigv4_query_params():
+    from nomad.config.models.config import NomadStorageGateway
+
+    gw = NomadStorageGateway()
+    signed = gw.presign_url(
+        'https://nomad-lab.eu/files/zip/upload_123',
+        extra={
+            'key': 'test_access_key',
+            'secret': 'test_secret_key',
+            'client_kwargs': {'region_name': 'us-east-1'},
+        },
+        expires=3600,
+        user_id='alice',
+    )
+    from urllib.parse import parse_qs, urlparse
+
+    parsed = urlparse(signed)
+    qs = parse_qs(parsed.query)
+    assert parsed.path == '/files/zip/upload_123'
+    assert qs['X-Amz-Algorithm'] == ['AWS4-HMAC-SHA256']
+    assert qs.get('X-Amz-Credential')
+    assert qs.get('X-Amz-Date')
+    assert qs['X-Amz-Expires'] == ['3600']
+    assert qs.get('X-Amz-Signature')
+    assert qs['user_id'] == ['alice']
+
+
+def test_presign_gateway_url_different_paths_have_different_signatures():
+    from nomad.config.models.config import NomadStorageGateway
+
+    gw = NomadStorageGateway()
+    extra = {'key': 'test_access_key', 'secret': 'test_secret_key'}
+    signed_a = gw.presign_url(
+        'https://nomad-lab.eu/files/zip/upload_a',
+        extra=extra,
+        expires=24 * 60 * 60,
+        user_id='alice',
+    )
+    signed_b = gw.presign_url(
+        'https://nomad-lab.eu/files/zip/upload_b',
+        extra=extra,
+        expires=24 * 60 * 60,
+        user_id='alice',
+    )
+    from urllib.parse import parse_qs, urlparse
+
+    sig_a = parse_qs(urlparse(signed_a).query)['X-Amz-Signature'][0]
+    sig_b = parse_qs(urlparse(signed_b).query)['X-Amz-Signature'][0]
+    assert sig_a != sig_b
+
+
+def test_presign_gateway_url_missing_credentials_raises(monkeypatch):
+    from nomad.config.models.config import NomadStorageGateway
+
+    monkeypatch.delenv('AWS_ACCESS_KEY_ID', raising=False)
+    monkeypatch.delenv('AWS_SECRET_ACCESS_KEY', raising=False)
+
+    gw = NomadStorageGateway()
+    with pytest.raises(ValueError, match='key/secret'):
+        gw.presign_url(
+            'https://nomad-lab.eu/files/zip/upload_123',
+            extra={'endpoint_url': 'http://localhost:8333'},
+            expires=24 * 60 * 60,
+            user_id='alice',
+        )
+
+
+def test_presign_gateway_url_uses_env_credentials(monkeypatch):
+    from nomad.config.models.config import NomadStorageGateway
+
+    monkeypatch.setenv('AWS_ACCESS_KEY_ID', 'env_key')
+    monkeypatch.setenv('AWS_SECRET_ACCESS_KEY', 'env_secret')
+
+    gw = NomadStorageGateway()
+    signed = gw.presign_url(
+        'https://nomad-lab.eu/files/zip/upload_123',
+        extra={'endpoint_url': 'http://localhost:8333'},
+        expires=24 * 60 * 60,
+        user_id='alice',
+    )
+    assert 'X-Amz-Signature' in signed
+
+
+def test_presign_gateway_url_signs_gateway_path_not_object_key():
+    from nomad.config.models.config import NomadStorageGateway
+
+    gw = NomadStorageGateway()
+    signed = gw.presign_url(
+        'https://nomad-lab.eu/files/file/upload_123/folder/file.txt?offset=10',
+        extra={'key': 'test_access_key', 'secret': 'test_secret_key'},
+        expires=24 * 60 * 60,
+        user_id='alice',
+    )
+    from urllib.parse import parse_qs, urlparse
+
+    parsed = urlparse(signed)
+    assert parsed.path == '/files/file/upload_123/folder/file.txt'
+    assert 'nomad-public' not in parsed.path
+    qs = parse_qs(parsed.query)
+    assert qs['offset'] == ['10']
+    assert qs['user_id'] == ['alice']
+    assert qs.get('X-Amz-Signature')
+
+
+def test_with_signed_identity_adds_anonymous_sentinel():
+    from nomad.config.models.config import NomadStorageGateway
+
+    gw = NomadStorageGateway()
+    assert (
+        gw.with_signed_identity(
+            'https://nomad-lab.eu/files/zip/upload_123',
+            None,
+        )
+        == 'https://nomad-lab.eu/files/zip/upload_123?user_id=anonymous'
+    )
+    assert (
+        gw.with_signed_identity(
+            'https://nomad-lab.eu/files/zip/upload_123',
+            '',
+        )
+        == 'https://nomad-lab.eu/files/zip/upload_123?user_id=anonymous'
+    )
+
+
+def test_with_signed_identity_overwrites_client_user_id():
+    from nomad.config.models.config import NomadStorageGateway
+
+    gw = NomadStorageGateway()
+    assert (
+        gw.with_signed_identity(
+            'https://nomad-lab.eu/files/file/upload_123/out?offset=10&user_id=victim',
+            'alice',
+        )
+        == 'https://nomad-lab.eu/files/file/upload_123/out?offset=10&user_id=alice'
+    )
+
+
+def test_presign_gateway_url_different_user_ids_have_different_signatures():
+    from nomad.config.models.config import NomadStorageGateway
+
+    gw = NomadStorageGateway()
+    extra = {'key': 'test_access_key', 'secret': 'test_secret_key'}
+    signed_a = gw.presign_url(
+        'https://nomad-lab.eu/files/zip/upload_123',
+        extra=extra,
+        expires=24 * 60 * 60,
+        user_id='alice',
+    )
+    signed_b = gw.presign_url(
+        'https://nomad-lab.eu/files/zip/upload_123',
+        extra=extra,
+        expires=24 * 60 * 60,
+        user_id='bob',
+    )
+    from urllib.parse import parse_qs, urlparse
+
+    qs_a = parse_qs(urlparse(signed_a).query)
+    qs_b = parse_qs(urlparse(signed_b).query)
+    assert qs_a['user_id'] == ['alice']
+    assert qs_b['user_id'] == ['bob']
+    assert qs_a['X-Amz-Signature'] != qs_b['X-Amz-Signature']
