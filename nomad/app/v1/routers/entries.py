@@ -25,7 +25,7 @@ import tempfile
 from collections.abc import Iterator
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import anyio
 import orjson
@@ -42,7 +42,7 @@ from fastapi import (
 )
 from fastapi import Query as QueryParameter
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import ORJSONResponse, StreamingResponse
+from fastapi.responses import ORJSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.main import create_model
 from starlette.responses import Response
@@ -56,7 +56,13 @@ from nomad.config import config
 from nomad.config.models.config import Reprocess
 from nomad.datamodel import EditableUserMetadata
 from nomad.datamodel.context import ServerContext
-from nomad.files import StreamedFile, create_zipstream_async
+from nomad.files import (
+    FSUtility,
+    PublicUploadFiles,
+    StreamedFile,
+    UploadFiles,
+    create_zipstream_async,
+)
 from nomad.mongo.groups import MongoUserGroup
 from nomad.processing.data import Upload
 from nomad.search import (
@@ -830,6 +836,61 @@ def _resolve_entry_metadata_from_mongo(
                     'parser_name': entry.parser_name,
                 }
     return None
+
+
+def _get_entry_archive_redirect(
+    entry_id: str, user: User | None, format: Literal['json', 'msgpack']
+) -> RedirectResponse | None:
+    """Return a redirect for an eligible public remote entry archive."""
+    redirects = config.fs.public_fs.redirects
+    gateway = redirects.nomad_storage_gateway
+    # Archive redirects are opt-in and require the gateway archive feature.
+    if not (redirects.enabled and gateway.enabled and gateway.archives):
+        return None
+
+    # Resolve the entry before checking its upload and storage eligibility.
+    query = dict(entry_id=entry_id)
+    entry_metadata = _resolve_entry_metadata_from_mongo(query, user)
+    if entry_metadata is None:
+        search_response = perform_search(
+            owner=Owner.visible,
+            query=query,
+            required=MetadataRequired(include=['entry_id', 'upload_id']),
+            user_id=user.user_id if user is not None else None,
+        )
+        if search_response.pagination.total == 0:
+            return None
+        entry_metadata = search_response.data[0]
+
+    if 'upload_id' not in entry_metadata:
+        return None
+
+    # Only public uploads stored remotely can be served by the gateway.
+    upload_files = UploadFiles.get(entry_metadata['upload_id'])
+    if not isinstance(upload_files, PublicUploadFiles):
+        return None
+    if upload_files.access != 'public':
+        return None
+    if FSUtility.is_local(
+        upload_files.msg_fp('public').os_path, fs=upload_files.storage_fs
+    ):
+        return None
+
+    # Sign the gateway URL with the same credentials used for the remote storage.
+    return RedirectResponse(
+        gateway.presign_url(
+            gateway.get_archive_url(
+                redirects.public_endpoint_url,
+                entry_metadata['upload_id'],
+                entry_id,
+                format=format,
+            ),
+            extra=config.fs.public_fs.extra,
+            expires=redirects.signed_url_expiration,
+            user_id=user.user_id if user is not None else None,
+        ),
+        status_code=307,
+    )
 
 
 def _single_entry_pagination(
@@ -1916,13 +1977,51 @@ def get_entry_raw(
         response = perform_search(
             owner=Owner.visible,
             query=query,
-            required=MetadataRequired(include=['entry_id']),
+            required=MetadataRequired(include=['entry_id', 'upload_id', 'mainfile']),
             user_id=user.user_id if user is not None else None,
         )
         if response.pagination.total == 0:
             raise HTTPException(
                 status.HTTP_404_NOT_FOUND,
                 detail='The entry with the given id does not exist or is not visible to you.',
+            )
+        entry_metadata = response.data[0]
+
+    redirects = config.fs.public_fs.redirects
+    gw = redirects.nomad_storage_gateway
+    # Gateway ZIP extraction is only safe for unfiltered, publicly visible entries.
+    if (
+        redirects.enabled
+        and gw.enabled
+        and gw.raw_files
+        and not (files and files.re_pattern)
+        and 'upload_id' in entry_metadata
+        and 'mainfile' in entry_metadata
+    ):
+        upload_id = entry_metadata['upload_id']
+        upload_files = UploadFiles.get(upload_id)
+        # The parent upload must expose a remote public raw ZIP to the gateway.
+        if (
+            isinstance(upload_files, PublicUploadFiles)
+            and upload_files.access == 'public'
+            and not FSUtility.is_local(
+                upload_files.raw_zip_file_object().os_path, fs=upload_files.storage_fs
+            )
+        ):
+            mainfile_dir = os.path.dirname(entry_metadata['mainfile'])
+            # The gateway streams the entry's containing directory as a ZIP.
+            return RedirectResponse(
+                gw.presign_url(
+                    gw.get_zip_url(
+                        redirects.public_endpoint_url,
+                        upload_id,
+                        path=mainfile_dir,
+                    ),
+                    extra=config.fs.public_fs.extra,
+                    expires=redirects.signed_url_expiration,
+                    user_id=user.user_id if user is not None else None,
+                ),
+                status_code=307,
             )
 
     return _answer_entries_raw_request(
@@ -1958,6 +2057,7 @@ def get_entry_raw_file(
             description="A relative path to a file based on the directory of the entry's mainfile."
         ),
     ],
+    request: Request,
     offset: Annotated[
         int | None,
         QueryParameter(
@@ -2021,6 +2121,36 @@ def get_entry_raw_file(
     entry_path = os.path.dirname(mainfile)
     path = os.path.join(entry_path, path)
 
+    redirects = config.fs.public_fs.redirects
+    gw = redirects.nomad_storage_gateway
+    # Individual entry files can use the gateway only when raw-file redirects are enabled.
+    if (
+        redirects.enabled
+        and gw.enabled
+        and gw.raw_files
+        and isinstance(upload_files, PublicUploadFiles)
+        and upload_files.access == 'public'
+        and not FSUtility.is_local(
+            upload_files.raw_zip_file_object().os_path, fs=upload_files.storage_fs
+        )
+    ):
+        # The upload and raw ZIP checks prevent redirects for private or local data.
+        return RedirectResponse(
+            gw.presign_url(
+                gw.get_file_url(
+                    redirects.public_endpoint_url,
+                    upload_id,
+                    path,
+                    query_params=str(request.query_params),
+                ),
+                extra=config.fs.public_fs.extra,
+                expires=redirects.signed_url_expiration,
+                user_id=user.user_id if user is not None else None,
+            ),
+            status_code=307,
+        )
+
+    # Otherwise keep normal existence, MIME, and streaming handling in NOMAD.
     if not upload_files.raw_exists(path):
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,
@@ -2220,10 +2350,19 @@ def get_entry_archive(
         User,
         Depends(get_current_user([Scope.ENTRIES_READ])),
     ],
+    request: Request,
 ):
     """
     Returns the full archive for the given `entry_id`.
     """
+    accept = request.headers.get('accept', '')
+    archive_format: Literal['json', 'msgpack'] = (
+        'msgpack' if 'application/msgpack' in accept else 'json'
+    )
+    archive_redirect = _get_entry_archive_redirect(entry_id, user, archive_format)
+    if archive_redirect is not None:
+        return archive_redirect
+
     return ORJSONResponse(
         answer_entry_archive_request(dict(entry_id=entry_id), required='*', user=user)
     )
@@ -2250,6 +2389,10 @@ def get_entry_archive_download(
     """
     Returns the full archive for the given `entry_id`.
     """
+    archive_redirect = _get_entry_archive_redirect(entry_id, user, 'json')
+    if archive_redirect is not None:
+        return archive_redirect
+
     response = answer_entry_archive_request(
         dict(entry_id=entry_id), required='*', user=user
     )

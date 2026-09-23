@@ -21,10 +21,12 @@ import os
 import time
 import zipfile
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
 from nomad.config import config
+from nomad.config.models.config import NOMADFileSystem, NomadStorageGateway
 from nomad.files import PublicUploadFiles
 from nomad.processing import ProcessStatus
 from tests.app.v1.routers.common import (
@@ -1133,6 +1135,29 @@ def test_get_upload_raw(
                     assert content.encode() in file_content
 
 
+def _assert_presigned_gateway_redirect(
+    location: str,
+    *,
+    path_prefix: str,
+    user_id: str,
+    expires: int = 24 * 60 * 60,
+    query_params: dict[str, str] | None = None,
+) -> None:
+    parsed = urlparse(location)
+    assert parsed.scheme == 'https'
+    assert parsed.path.startswith(path_prefix)
+    qs = parse_qs(parsed.query)
+    assert qs['X-Amz-Algorithm'] == ['AWS4-HMAC-SHA256']
+    assert qs.get('X-Amz-Credential')
+    assert qs.get('X-Amz-Date')
+    assert qs['X-Amz-Expires'] == [str(expires)]
+    assert qs.get('X-Amz-Signature')
+    assert qs['user_id'] == [user_id]
+    if query_params:
+        for key, value in query_params.items():
+            assert qs[key] == [value]
+
+
 def test_get_upload_raw_redirects_to_signed_remote_url(
     monkeypatch, auth_headers, client, example_data
 ):
@@ -1143,7 +1168,7 @@ def test_get_upload_raw_redirects_to_signed_remote_url(
             assert expires == 24 * 60 * 60
             return f'https://storage.example.test/{path}?signature=test'
 
-    monkeypatch.setattr(config.fs.public_fs, 'redirect_downloads', True)
+    monkeypatch.setattr(config.fs.public_fs.redirects, 'enabled', True)
     monkeypatch.setattr(PublicUploadFiles, 'storage_fs', property(lambda _: RemoteFS()))
     monkeypatch.setattr(PublicUploadFiles, 'access', property(lambda _: 'public'))
 
@@ -1155,6 +1180,424 @@ def test_get_upload_raw_redirects_to_signed_remote_url(
 
     assert response.status_code == 307
     assert response.headers['location'].startswith('https://storage.example.test/')
+
+
+def test_get_upload_raw_redirects_with_public_endpoint_url(
+    monkeypatch, auth_headers, client, example_data
+):
+    class RemoteFS:
+        protocol = 's3'
+
+    class SigningFS:
+        def url(self, path, expires):
+            return f'https://nomad-lab.eu/files/signed/{path}?expires={expires}'
+
+    monkeypatch.setattr(config.fs.public_fs.redirects, 'enabled', True)
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects,
+        'public_endpoint_url',
+        'https://nomad-lab.eu/files',
+    )
+    monkeypatch.setattr(NOMADFileSystem, 'signing_fs', property(lambda _: SigningFS()))
+    monkeypatch.setattr(PublicUploadFiles, 'storage_fs', property(lambda _: RemoteFS()))
+    monkeypatch.setattr(PublicUploadFiles, 'access', property(lambda _: 'public'))
+
+    response = client.get(
+        'uploads/id_published/raw',
+        headers=auth_headers['user1'],
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    assert response.headers['location'].startswith('https://nomad-lab.eu/files/signed/')
+
+
+def test_get_upload_whole_zip_redirects_to_gateway(
+    monkeypatch, auth_headers, client, example_data, user1
+):
+    class RemoteFS:
+        protocol = 's3'
+
+    monkeypatch.setattr(config.fs.public_fs.redirects, 'enabled', True)
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects,
+        'public_endpoint_url',
+        'https://nomad-lab.eu/files',
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'enabled', True
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'zip', True
+    )
+    monkeypatch.setattr(PublicUploadFiles, 'storage_fs', property(lambda _: RemoteFS()))
+    monkeypatch.setattr(PublicUploadFiles, 'access', property(lambda _: 'public'))
+
+    response = client.get(
+        'uploads/id_published/raw',
+        headers=auth_headers['user1'],
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    _assert_presigned_gateway_redirect(
+        response.headers['location'],
+        path_prefix='/files/zip/id_published',
+        user_id=user1.user_id,
+    )
+
+
+def test_get_upload_whole_zip_gateway_does_not_require_raw_files(
+    monkeypatch, auth_headers, client, example_data, user1
+):
+    class RemoteFS:
+        protocol = 's3'
+
+    monkeypatch.setattr(config.fs.public_fs.redirects, 'enabled', True)
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects,
+        'public_endpoint_url',
+        'https://nomad-lab.eu/files',
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'enabled', True
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'zip', True
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'raw_files', False
+    )
+    monkeypatch.setattr(PublicUploadFiles, 'storage_fs', property(lambda _: RemoteFS()))
+    monkeypatch.setattr(PublicUploadFiles, 'access', property(lambda _: 'public'))
+
+    response = client.get(
+        'uploads/id_published/raw',
+        headers=auth_headers['user1'],
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    _assert_presigned_gateway_redirect(
+        response.headers['location'],
+        path_prefix='/files/zip/id_published',
+        user_id=user1.user_id,
+    )
+
+
+def test_get_upload_whole_zip_raw_files_does_not_enable_gateway_zip(
+    monkeypatch, auth_headers, client, example_data
+):
+    class RemoteFS:
+        protocol = 's3'
+
+        def url(self, path, expires):
+            return f'https://storage.example.test/{path}?signature=test'
+
+    monkeypatch.setattr(config.fs.public_fs.redirects, 'enabled', True)
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'enabled', True
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'zip', False
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'raw_files', True
+    )
+    monkeypatch.setattr(PublicUploadFiles, 'storage_fs', property(lambda _: RemoteFS()))
+    monkeypatch.setattr(PublicUploadFiles, 'access', property(lambda _: 'public'))
+
+    response = client.get(
+        'uploads/id_published/raw',
+        headers=auth_headers['user1'],
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    assert response.headers['location'].startswith('https://storage.example.test/')
+    assert '/files/zip/' not in response.headers['location']
+
+
+def test_get_upload_raw_compressed_root_redirects_to_gateway_zip(
+    monkeypatch, auth_headers, client, example_data, user1
+):
+    class RemoteFS:
+        protocol = 's3'
+
+    monkeypatch.setattr(config.fs.public_fs.redirects, 'enabled', True)
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects,
+        'public_endpoint_url',
+        'https://nomad-lab.eu/files',
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'enabled', True
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'zip', True
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'raw_files', False
+    )
+    monkeypatch.setattr(PublicUploadFiles, 'storage_fs', property(lambda _: RemoteFS()))
+    monkeypatch.setattr(PublicUploadFiles, 'access', property(lambda _: 'public'))
+
+    response = client.get(
+        'uploads/id_published/raw/?compress=true',
+        headers=auth_headers['user1'],
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    _assert_presigned_gateway_redirect(
+        response.headers['location'],
+        path_prefix='/files/zip/id_published',
+        user_id=user1.user_id,
+        query_params={'compress': 'true'},
+    )
+
+
+def test_get_upload_raw_compressed_root_redirects_to_s3(
+    monkeypatch, auth_headers, client, example_data
+):
+    class RemoteFS:
+        protocol = 's3'
+
+        def url(self, path, expires):
+            assert expires == 24 * 60 * 60
+            return f'https://storage.example.test/{path}?signature=test'
+
+    monkeypatch.setattr(config.fs.public_fs.redirects, 'enabled', True)
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'enabled', False
+    )
+    monkeypatch.setattr(PublicUploadFiles, 'storage_fs', property(lambda _: RemoteFS()))
+    monkeypatch.setattr(PublicUploadFiles, 'access', property(lambda _: 'public'))
+
+    response = client.get(
+        'uploads/id_published/raw/?compress=true',
+        headers=auth_headers['user1'],
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    assert response.headers['location'].startswith('https://storage.example.test/')
+
+
+def test_get_upload_raw_file_redirects_to_gateway(
+    monkeypatch, auth_headers, client, example_data, user1
+):
+    class RemoteFS:
+        protocol = 's3'
+
+    monkeypatch.setattr(config.fs.public_fs.redirects, 'enabled', True)
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects,
+        'public_endpoint_url',
+        'https://nomad-lab.eu/files',
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'enabled', True
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'raw_files', True
+    )
+    monkeypatch.setattr(PublicUploadFiles, 'storage_fs', property(lambda _: RemoteFS()))
+    monkeypatch.setattr(PublicUploadFiles, 'access', property(lambda _: 'public'))
+
+    response = client.get(
+        'uploads/id_published/raw/1_1.aux?offset=100&length=200',
+        headers=auth_headers['user1'],
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    _assert_presigned_gateway_redirect(
+        response.headers['location'],
+        path_prefix='/files/file/id_published/1_1.aux',
+        user_id=user1.user_id,
+        query_params={'offset': '100', 'length': '200'},
+    )
+
+
+def test_get_upload_raw_file_overwrites_client_user_id(
+    monkeypatch, auth_headers, client, example_data, user1
+):
+    class RemoteFS:
+        protocol = 's3'
+
+    monkeypatch.setattr(config.fs.public_fs.redirects, 'enabled', True)
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects,
+        'public_endpoint_url',
+        'https://nomad-lab.eu/files',
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'enabled', True
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'raw_files', True
+    )
+    monkeypatch.setattr(PublicUploadFiles, 'storage_fs', property(lambda _: RemoteFS()))
+    monkeypatch.setattr(PublicUploadFiles, 'access', property(lambda _: 'public'))
+
+    response = client.get(
+        'uploads/id_published/raw/1_1.aux?user_id=victim&offset=100',
+        headers=auth_headers['user1'],
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    _assert_presigned_gateway_redirect(
+        response.headers['location'],
+        path_prefix='/files/file/id_published/1_1.aux',
+        user_id=user1.user_id,
+        query_params={'offset': '100'},
+    )
+    assert parse_qs(urlparse(response.headers['location']).query)['user_id'] != [
+        'victim'
+    ]
+
+
+def test_get_upload_whole_zip_anonymous_mints_sentinel(
+    monkeypatch, client, example_data
+):
+    class RemoteFS:
+        protocol = 's3'
+
+    monkeypatch.setattr(config.fs.public_fs.redirects, 'enabled', True)
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects,
+        'public_endpoint_url',
+        'https://nomad-lab.eu/files',
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'enabled', True
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'zip', True
+    )
+    monkeypatch.setattr(PublicUploadFiles, 'storage_fs', property(lambda _: RemoteFS()))
+    monkeypatch.setattr(PublicUploadFiles, 'access', property(lambda _: 'public'))
+
+    response = client.get(
+        'uploads/id_published/raw',
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    _assert_presigned_gateway_redirect(
+        response.headers['location'],
+        path_prefix='/files/zip/id_published',
+        user_id=NomadStorageGateway.ANONYMOUS_USER_ID,
+    )
+
+
+def test_get_entry_raw_redirects_to_gateway(
+    monkeypatch, auth_headers, client, example_data, user1
+):
+    class RemoteFS:
+        protocol = 's3'
+
+    monkeypatch.setattr(config.fs.public_fs.redirects, 'enabled', True)
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects,
+        'public_endpoint_url',
+        'https://nomad-lab.eu/files',
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'enabled', True
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'raw_files', True
+    )
+    monkeypatch.setattr(PublicUploadFiles, 'storage_fs', property(lambda _: RemoteFS()))
+    monkeypatch.setattr(PublicUploadFiles, 'access', property(lambda _: 'public'))
+
+    response = client.get(
+        'entries/id_01/raw',
+        headers=auth_headers['user1'],
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    _assert_presigned_gateway_redirect(
+        response.headers['location'],
+        path_prefix='/files/zip/id_published/',
+        user_id=user1.user_id,
+    )
+
+
+def test_get_entry_archive_redirects_to_gateway(
+    monkeypatch, auth_headers, client, example_data, user1
+):
+    class RemoteFS:
+        protocol = 's3'
+
+    monkeypatch.setattr(config.fs.public_fs.redirects, 'enabled', True)
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects,
+        'public_endpoint_url',
+        'https://nomad-lab.eu/files',
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'enabled', True
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'archives', True
+    )
+    monkeypatch.setattr(PublicUploadFiles, 'storage_fs', property(lambda _: RemoteFS()))
+    monkeypatch.setattr(PublicUploadFiles, 'access', property(lambda _: 'public'))
+
+    response = client.get(
+        'entries/id_01/archive',
+        headers={**auth_headers['user1'], 'Accept': 'application/msgpack'},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    _assert_presigned_gateway_redirect(
+        response.headers['location'],
+        path_prefix='/files/archive/id_published/id_01',
+        user_id=user1.user_id,
+        query_params={'format': 'msgpack'},
+    )
+
+
+def test_get_entry_archive_download_redirects_to_gateway(
+    monkeypatch, auth_headers, client, example_data, user1
+):
+    class RemoteFS:
+        protocol = 's3'
+
+    monkeypatch.setattr(config.fs.public_fs.redirects, 'enabled', True)
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects,
+        'public_endpoint_url',
+        'https://nomad-lab.eu/files',
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'enabled', True
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'archives', True
+    )
+    monkeypatch.setattr(PublicUploadFiles, 'storage_fs', property(lambda _: RemoteFS()))
+    monkeypatch.setattr(PublicUploadFiles, 'access', property(lambda _: 'public'))
+
+    response = client.get(
+        'entries/id_01/archive/download',
+        headers=auth_headers['user1'],
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 307
+    _assert_presigned_gateway_redirect(
+        response.headers['location'],
+        path_prefix='/files/archive/id_published/id_01',
+        user_id=user1.user_id,
+        query_params={'format': 'json'},
+    )
 
 
 def test_get_embargoed_upload_raw_does_not_redirect(
@@ -1169,7 +1612,7 @@ def test_get_embargoed_upload_raw_does_not_redirect(
         def url(self, path, expires):
             raise AssertionError('embargoed downloads must not use signed URLs')
 
-    monkeypatch.setattr(config.fs.public_fs, 'redirect_downloads', True)
+    monkeypatch.setattr(config.fs.public_fs.redirects, 'enabled', True)
     monkeypatch.setattr(PublicUploadFiles, 'storage_fs', property(lambda _: RemoteFS()))
     monkeypatch.setattr(PublicUploadFiles, 'access', property(lambda _: 'restricted'))
 
@@ -1181,6 +1624,46 @@ def test_get_embargoed_upload_raw_does_not_redirect(
 
     assert response.status_code == 200
     assert response.content == b'restricted raw ZIP'
+
+
+def test_get_upload_raw_file_gateway_disabled_streams_locally(
+    monkeypatch, auth_headers, client, example_data
+):
+    monkeypatch.setattr(config.fs.public_fs.redirects, 'enabled', True)
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'enabled', False
+    )
+
+    response = client.get(
+        'uploads/id_published/raw/test_content/subdir/test_entry_01/mainfile.json',
+        headers=auth_headers['user1'],
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    assert not response.is_redirect
+
+
+def test_get_entry_archive_gateway_disabled_serves_json(
+    monkeypatch, auth_headers, client, example_data
+):
+    monkeypatch.setattr(config.fs.public_fs.redirects, 'enabled', True)
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'enabled', True
+    )
+    monkeypatch.setattr(
+        config.fs.public_fs.redirects.nomad_storage_gateway, 'archives', False
+    )
+
+    response = client.get(
+        'entries/id_01/archive',
+        headers=auth_headers['user1'],
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 200
+    assert not response.is_redirect
+    assert 'data' in response.json()
 
 
 @pytest.mark.parametrize(

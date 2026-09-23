@@ -1101,16 +1101,38 @@ def get_upload_raw(
     raw_zip_file = upload_files.raw_zip_file_object()
     file_path = raw_zip_file.os_path
     storage_fs = upload_files.storage_fs
+    # Local artifacts are already available to the API process.
     if FSUtility.is_local(file_path, fs=storage_fs):
         return FileResponse(file_path, media_type='application/zip')
 
-    if config.fs.public_fs.redirect_downloads and upload_files.access == 'public':
-        return RedirectResponse(
-            storage_fs.url(
-                raw_zip_file.location,
-                expires=config.fs.public_fs.signed_url_expiration,
+    redirects = config.fs.public_fs.redirects
+    gw = redirects.nomad_storage_gateway
+    # Only public remote artifacts are eligible for client-side redirects.
+    if redirects.enabled and upload_files.access == 'public':
+        # The gateway can resolve the upload ZIP without proxying it through NOMAD.
+        if gw.enabled and gw.zip:
+            return RedirectResponse(
+                gw.presign_url(
+                    gw.get_zip_url(redirects.public_endpoint_url, upload_id),
+                    extra=config.fs.public_fs.extra,
+                    expires=redirects.signed_url_expiration,
+                    user_id=user.user_id if user is not None else None,
+                ),
+                status_code=307,
             )
-        )
+
+        # Otherwise redirect directly to the remote filesystem's signed object URL.
+        if redirects.public_endpoint_url or not hasattr(storage_fs, 'url'):
+            download_url = config.fs.public_fs.get_download_url(
+                raw_zip_file.location,
+                expires=redirects.signed_url_expiration,
+            )
+        else:
+            download_url = storage_fs.url(
+                raw_zip_file.location,
+                expires=redirects.signed_url_expiration,
+            )
+        return RedirectResponse(download_url, status_code=307)
 
     def file_stream():
         with FSUtility.open(file_path, fs=storage_fs) as file_obj:
@@ -1140,6 +1162,7 @@ def get_upload_raw_path(
     path: Annotated[str, Path(description='The path within the upload raw files.')],
     files_params: Annotated[Files, Depends(files_parameters)],
     user: Annotated[User, Depends(get_current_user([Scope.UPLOADS_READ]))],
+    request: Request,
     offset: Annotated[
         int | None,
         FastApiQuery(
@@ -1210,6 +1233,66 @@ def get_upload_raw_path(
     upload = get_upload_with_read_access(upload_id, user, include_others=True)
     # Get upload files
     upload_files = upload.upload_files
+
+    redirects = config.fs.public_fs.redirects
+    gw = redirects.nomad_storage_gateway
+    # An empty root path with compression requested is a whole-upload ZIP request.
+    is_whole_zip = files_params.compress and not path
+    # Filtered files/directories use raw_files; the root ZIP uses the zip setting.
+    gateway_enabled = gw.zip if is_whole_zip else gw.raw_files
+    # Redirect only published remote uploads; local and filtered requests stream below.
+    if (
+        isinstance(upload_files, PublicUploadFiles)
+        and redirects.enabled
+        and upload_files.access == 'public'
+        and not FSUtility.is_local(
+            upload_files.raw_zip_file_object().os_path, fs=upload_files.storage_fs
+        )
+    ):
+        # Prefer the gateway when its matching data-plane feature is enabled.
+        if gw.enabled and gateway_enabled:
+            if files_params.compress:
+                # Compressed requests are ZIP responses, including filtered paths.
+                redirect_url = gw.get_zip_url(
+                    redirects.public_endpoint_url,
+                    upload_id,
+                    path=path,
+                    query_params=str(request.query_params),
+                )
+            else:
+                redirect_url = gw.get_file_url(
+                    redirects.public_endpoint_url,
+                    upload_id,
+                    path=path,
+                    query_params=str(request.query_params),
+                )
+            return RedirectResponse(
+                gw.presign_url(
+                    redirect_url,
+                    extra=config.fs.public_fs.extra,
+                    expires=redirects.signed_url_expiration,
+                    user_id=user.user_id if user is not None else None,
+                ),
+                status_code=307,
+            )
+
+        # A direct filesystem redirect can serve only the existing whole-upload ZIP.
+        if is_whole_zip:
+            raw_zip_file = upload_files.raw_zip_file_object()
+            storage_fs = upload_files.storage_fs
+            if redirects.public_endpoint_url or not hasattr(storage_fs, 'url'):
+                download_url = config.fs.public_fs.get_download_url(
+                    raw_zip_file.location,
+                    expires=redirects.signed_url_expiration,
+                )
+            else:
+                download_url = storage_fs.url(
+                    raw_zip_file.location,
+                    expires=redirects.signed_url_expiration,
+                )
+            return RedirectResponse(download_url, status_code=307)
+
+    # Filtered paths, local storage, and disabled redirects are served by NOMAD.
     raw_path_reader = upload_files.raw_path_reader(path)
     try:
         if not raw_path_reader.exists():
