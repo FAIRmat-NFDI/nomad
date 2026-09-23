@@ -471,6 +471,42 @@ class RFC3161Timestamp(MSection):
         return rfc3161ng.get_timestamp(self.token)
 
 
+class ParsedBlock(MSection):
+    """A half-open UTF-8 byte range consumed by a text parser in one raw file."""
+
+    start = Quantity(
+        type=int,
+        description='Inclusive, zero-based UTF-8 byte offset in the source file.',
+    )
+    end = Quantity(
+        type=int,
+        description='Exclusive UTF-8 byte offset in the source file.',
+    )
+    quantity_name = Quantity(
+        type=str, description='Optional stable parser quantity identifier.'
+    )
+    depth = Quantity(type=int, description='Optional nesting depth of this block.')
+
+
+class SourceFile(MSection):
+    """A raw file used by a parser to generate the entry."""
+
+    file_name = Quantity(
+        type=str,
+        description='Path of the raw file, relative to the upload root.',
+    )
+    parser = Quantity(type=str, description='Optional parser identifier.')
+    is_mainfile = Quantity(type=bool, description='Whether this is the entry mainfile.')
+    parsed_blocks = SubSection(
+        sub_section=ParsedBlock,
+        repeats=True,
+        description=(
+            'Optional parser-consumed byte ranges in this raw file. Populated when '
+            'the parser reports which parts of the file were consumed.'
+        ),
+    )
+
+
 class EntryMetadata(MSection):
     """
     Attributes:
@@ -528,6 +564,17 @@ class EntryMetadata(MSection):
     """
 
     m_def = Section(label='Metadata')
+
+    source_files = SubSection(
+        sub_section=SourceFile,
+        repeats=True,
+        description=(
+            'Raw files used by the parser to generate the entry, including the '
+            'mainfile and the parsed byte ranges used by the raw-file viewer. This '
+            'subsection is not populated by default and must be filled explicitly '
+            'by the parser.'
+        ),
+    )
 
     upload_id = Quantity(
         type=str,
