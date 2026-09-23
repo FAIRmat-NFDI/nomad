@@ -342,14 +342,6 @@ class ExampleUploadEntryPoint(EntryPoint):
         # is wrong here.
         list[UploadResource | str] | UploadResource | str
     ) = Field(None, description='List of data resources for this example upload.')
-    path: str | None = Field(
-        None,
-        deprecated='"path" is deprecated, use "resources" instead.',
-    )
-    url: str | None = Field(
-        None,
-        deprecated='"url" is deprecated, use "resources" instead.',
-    )
     from_examples_directory: bool = Field(
         False,
         description='Whether this example upload should be read from the "examples" directory.',
@@ -490,15 +482,6 @@ class ExampleUploadEntryPoint(EntryPoint):
                 elif isinstance(resource, UploadResource):
                     resource = resource.dict()
                 resource_objects.append(resource)
-
-        # Backwards compatibility for path and url
-        else:
-            path = values.get('path')
-            url = values.get('url')
-            if path:
-                resource_objects.append({'path': path})
-            if url:
-                resource_objects.append({'path': url})
 
         values['resources'] = resource_objects
 

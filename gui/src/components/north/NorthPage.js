@@ -35,7 +35,7 @@ import Markdown from '../Markdown'
 import DefaultIcon from '@material-ui/icons/Assessment'
 import Icon from '@material-ui/core/Icon'
 import NorthTool, { getIconUrl, NorthToolButtons, useNorthTool } from './NorthTool'
-import { ui, northTools as _tools } from '../../config'
+import { northEnabled, northTools as _tools } from '../../config'
 
 export const help = `
 The NOMAD Remote Tools Hub (NORTH) provides access to tools which you can use to
@@ -209,7 +209,7 @@ export default withLoginRequired(NorthPage)
  * Hook for loading the list of available tools from the NORTH API.
 */
 export function useTools() {
-  if (!ui?.north?.enabled) {
+  if (!northEnabled) {
     return {}
   }
   return _tools

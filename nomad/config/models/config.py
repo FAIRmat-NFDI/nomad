@@ -1988,10 +1988,6 @@ class BundleImport(ConfigBaseModel):
 
 
 class Archive(ConfigBaseModel):
-    block_size: int = Field(
-        1 * 2**20,
-        description='Deprecated, not used in the latest storage. In case of using blocked TOC, this is the size of each block.',
-    )
     read_buffer_size: int = Field(
         1 * 2**20,
         description='GPFS needs at least 256K to achieve decent performance.',
@@ -2003,10 +1999,6 @@ class Archive(ConfigBaseModel):
         It is used to copy data from one file to another.
         A small value will result in more syscalls, a large value will result in higher peak memory usage.
         """,
-    )
-    toc_depth: int = Field(
-        10,
-        description='Deprecated, not used in the latest storage. Depths of table of contents in the archive.',
     )
     small_obj_optimization_threshold: int = Field(
         4 * 2**20,
@@ -2297,8 +2289,6 @@ WARNING: Modifying the storage configuration of an existing installation would m
         north = values.north
         ui = values.ui
         if ui:
-            if north:
-                values.ui.north.enabled = north.enabled
             if services:
                 values.ui.app_base = f'{"https" if services.https else "http"}://{services.api_host}:{services.api_port}{services.route_prefix}'
             if services and north:
