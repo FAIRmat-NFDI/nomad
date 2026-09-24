@@ -30,22 +30,7 @@ from nomad.parsing.parsers import code_metadata
 from nomad.search import get_statistics
 
 SERVER_STATS_TTL: Final[timedelta] = timedelta(days=7)
-
-
-def uncached_info_payload() -> dict[str, Any]:
-    """Identity fields that are cheap to read when no snapshot exists yet."""
-    return {
-        'parsers': [],
-        'metainfo_packages': [],
-        'codes': [],
-        'normalizers': [],
-        'plugin_entry_points': [],
-        'plugin_packages': [],
-        'version': config.meta.version,
-        'deployment': config.meta.deployment,
-        'oasis': config.oasis.is_oasis,
-        'git': {},
-    }
+SERVER_STATS_KEYS: Final[tuple[str, ...]] = ('collect_time', 'statistics')
 
 
 def load_server_stats() -> dict[str, Any] | None:
@@ -60,36 +45,22 @@ def load_server_stats() -> dict[str, Any] | None:
         return None
 
     payload = json.loads(cached.value)
-    return payload if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        return None
+    # Snapshots written by older versions also contain deployment info; only the
+    # statistics are taken from the snapshot.
+    return {key: payload[key] for key in SERVER_STATS_KEYS if key in payload}
 
 
-def collect_server_stats() -> dict[str, Any]:
-    """Build the /info snapshot and upsert it into the cache collection."""
-    timestamp_now: datetime = now()
-    payload = _build_payload(timestamp_now)
-    MongoCache.upsert(
-        key=SERVER_STATS_CACHE_KEY,
-        value=json.dumps(payload, default=_json_default).encode(),
-        create_time=timestamp_now,
-        expire_time=timestamp_now + SERVER_STATS_TTL,
-    )
-    return payload
-
-
-def _build_payload(timestamp_now: datetime) -> dict[str, Any]:
+def deployment_info() -> dict[str, Any]:
+    """Information about this deployment that is cheap to compute on demand."""
     parser_names = sorted(
         [re.sub(r'^(parsers?|missing)/', '', key) for key in parsers.parser_dict.keys()]
     )
 
     config.load_plugins()
 
-    public_fs = config.fs.public_fs
-    public_data_size = public_fs.target_fs.du(
-        public_fs.bucket if public_fs.protocol else config.fs.public
-    )
-
     return {
-        'collect_time': timestamp_now,
         'parsers': parser_names,
         'metainfo_packages': [
             'general',
@@ -121,11 +92,35 @@ def _build_payload(timestamp_now: datetime) -> dict[str, Any]:
         ]
         if config.plugins and config.plugins.plugin_packages
         else [],
-        'statistics': get_statistics() | {'public_data_size': public_data_size},
         'version': config.meta.version,
         'deployment': config.meta.deployment,
         'oasis': config.oasis.is_oasis,
         'git': {},
+    }
+
+
+def collect_server_stats() -> dict[str, Any]:
+    """Collect the server statistics and upsert them into the cache collection."""
+    timestamp_now: datetime = now()
+    payload = _build_payload(timestamp_now)
+    MongoCache.upsert(
+        key=SERVER_STATS_CACHE_KEY,
+        value=json.dumps(payload, default=_json_default).encode(),
+        create_time=timestamp_now,
+        expire_time=timestamp_now + SERVER_STATS_TTL,
+    )
+    return payload
+
+
+def _build_payload(timestamp_now: datetime) -> dict[str, Any]:
+    public_fs = config.fs.public_fs
+    public_data_size = public_fs.target_fs.du(
+        public_fs.bucket if public_fs.protocol else config.fs.public
+    )
+
+    return {
+        'collect_time': timestamp_now,
+        'statistics': get_statistics() | {'public_data_size': public_data_size},
     }
 
 
