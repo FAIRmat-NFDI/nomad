@@ -20,6 +20,8 @@ from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
+from rdflib import Graph
+from rdflib.namespace import DCTERMS as DCT
 
 from nomad.app.dcat.main import app
 from nomad.app.dcat.mapping import Mapping
@@ -44,7 +46,7 @@ def create_dataset(**kwargs):
 
 
 @pytest.fixture(scope='module')
-def data(user1, user2, elastic_infra, mongo_module):
+def data(user1, user2, elastic_module, mongo_module):
     example_attrs = dict(
         entry_id='test-id',
         upload_id='upload-id',
@@ -107,14 +109,49 @@ def test_get_dataset(api, example_entry):
 
 
 @pytest.mark.parametrize(
-    'after,modified_since',
-    [(None, None), (None, '2020-01-07'), ('test-id-3', '2020-01-07')],
+    'after,modified_since,expected_entry_ids',
+    [
+        (
+            None,
+            None,
+            {
+                'test-id',
+                'test-id-1',
+                'test-id-10',
+                'test-id-2',
+                'test-id-3',
+                'test-id-4',
+                'test-id-5',
+                'test-id-6',
+                'test-id-7',
+                'test-id-8',
+            },
+        ),
+        (
+            None,
+            '2020-01-07',
+            {'test-id', 'test-id-7', 'test-id-8', 'test-id-9', 'test-id-10'},
+        ),
+        (
+            'test-id-3',
+            '2020-01-07',
+            {'test-id-7', 'test-id-8', 'test-id-9'},
+        ),
+    ],
 )
-def test_get_catalog(api, data, after, modified_since):
+def test_get_catalog(api, data, after, modified_since, expected_entry_ids):
     url = '/catalog/?format=turtle'
-    if after:
+    if after is not None:
         url += '&after=' + after
-    if modified_since:
+    if modified_since is not None:
         url += '&modified_since=' + modified_since
+
     rv = api.get(url)
     assert rv.status_code == 200
+
+    graph = Graph().parse(data=rv.content, format='turtle')
+    entry_ids = {
+        str(graph.value(dataset, DCT.identifier))
+        for dataset in graph.objects(predicate=DCT.dataset)
+    }
+    assert entry_ids == expected_entry_ids
