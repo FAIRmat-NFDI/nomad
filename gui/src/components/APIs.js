@@ -17,7 +17,7 @@
  */
 import { makeStyles } from '@material-ui/core'
 import React from 'react'
-import { apiBase, appBase } from '../config'
+import { apiBase, appBase, docsBase } from '../config'
 import Markdown from './Markdown'
 import AppTokenForm from './AppTokenForm'
 
@@ -41,13 +41,13 @@ export default function About() {
       and functions programatically.
 
       - [NOMAD API dashboard](${apiBase}/v1/extensions/docs)
-      - [How-to-guide for basic usage](${appBase}/docs/howto/manage/program/api.html)
-      - [How-to-guide for Python client library](${appBase}/docs/howto/programmatic/archive_query.html)
+      - [How-to-guide for basic usage](${docsBase}/howto/manage/program/api.html)
+      - [How-to-guide for Python client library](${docsBase}/howto/manage/program/archive_query.html)
 
       ###  App token
 
       Next to the usual access token based on OpenID Connect, we provide an
-      [app token](${appBase}/docs/howto/manage/program/api.html#app-token) with custom expiration date.
+      [app token](${docsBase}/howto/manage/program/auth.html#app-token) with custom expiration date.
       You may request one via the [API](${apiBase}/v1/extensions/docs) or the following form:
     `}</Markdown>
 

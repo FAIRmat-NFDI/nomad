@@ -13,6 +13,16 @@
 - Put state transitions and reusable invariants in the domain layer. Use application services for workflows spanning repositories or external systems, and make race-sensitive transitions atomic in an adapter behind a purpose-specific port method.
 - Add fast unit tests for domain and application behavior with in-memory/fake ports, plus focused integration tests for each infrastructure adapter. Preserve compatibility facades only during migrations; new code must use the layered interfaces.
 
+## Security awareness
+
+- Proactively flag every security issue you notice while reviewing or modifying the code, even when it is unrelated to the current task. Never silently ignore an out-of-scope security concern.
+
+## Sensitive data handling
+
+- Use Pydantic's `SecretStr` (or `SecretBytes` for binary values) instead of plain `str` for passwords, tokens, API keys, private keys, and other secrets in configuration and data models.
+- Keep secrets wrapped for as long as possible. Call `get_secret_value()` only at the integration boundary where the underlying library requires the raw value.
+- Do not include raw secrets in logs, exceptions, serialized responses, or diagnostic output.
+
 ## Datetime handling
 
 - Prefer `nomad.common.now()` for current timestamps (returns UTC and can be mocked in tests) instead of calling `datetime.now(...)` directly.

@@ -32,7 +32,7 @@ import APIs from '../APIs'
 import SearchPage from '../search/SearchPage'
 import { SearchContext } from '../search/SearchContext'
 import NorthPage, {help as NORTHHelp} from '../north/NorthPage'
-import { appBase, encyclopediaBase, apps, northEnabled } from '../../config'
+import { docsBase, encyclopediaBase, apps, northEnabled } from '../../config'
 import EntryQuery from '../entry/EntryQuery'
 import ResolvePID from '../entry/ResolvePID'
 import DatasetPage, { help as datasetHelp } from '../dataset/DatasetPage'
@@ -326,7 +326,7 @@ export const routes = [
       },
       {
         menu: 'Docs',
-        href: `${appBase}/docs/index.html`,
+        href: `${docsBase}/index.html`,
         tooltip: 'The full user and developer documentation'
       },
       {

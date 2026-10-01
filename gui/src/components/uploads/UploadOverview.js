@@ -35,7 +35,7 @@ import SendIcon from '@material-ui/icons/Send'
 import PropTypes from 'prop-types'
 import React, { useCallback, useEffect, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
-import {appBase} from '../../config'
+import { docsBase } from '../../config'
 import { formatTimestamp } from '../../utils'
 import { CodeList } from '../About'
 import { useDataStore } from "../DataStore"
@@ -302,7 +302,7 @@ SupportedCodes.propTypes = {
 }
 
 export function UploadDocumentation({ children }) {
-  return <Link href={`${appBase}/docs/web.html#uploading-and-publishing-data`}>
+  return <Link href={`${docsBase}/howto/manage/gui/upload.html`}>
     {children}
   </Link>
 }
@@ -311,7 +311,7 @@ UploadDocumentation.propTypes = {
 }
 
 export function SchemaDocumentation({ children }) {
-  return <Link href={`${appBase}/docs/schema/basics.html`}>
+  return <Link href={`${docsBase}/reference/glossary.html#schema`}>
     {children}
   </Link>
 }

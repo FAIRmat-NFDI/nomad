@@ -23,7 +23,7 @@ import ReactJson from 'react-json-view'
 import { CopyToClipboard } from 'react-copy-to-clipboard'
 import ClipboardIcon from '@material-ui/icons/Assignment'
 import Markdown from '../Markdown'
-import { apiBase, appBase } from '../../config'
+import { apiBase, docsBase } from '../../config'
 
 export const ApiDataContext = React.createContext()
 
@@ -145,7 +145,7 @@ DialogButton.propTypes = {
 
 export const SourceApiDialogButton = React.memo(function SourceApiDialogButton({description, children, buttonProps, ...props}) {
   const help = `The information on this page was loaded from the NOMAD API. You can also use
-    the API to retrieve this information. Visit also our [API documentation](${appBase}/docs/howto/manage/program/api.html)
+    the API to retrieve this information. Visit also our [API documentation](${docsBase}/howto/manage/program/api.html)
     or [API dashboard](${apiBase}).`
 
   return <DialogButton title="API" tooltip="API" buttonProps={buttonProps} {...props}>
