@@ -32,6 +32,7 @@ from pydantic import (
     Field,
     ValidationError,
     field_validator,
+    model_validator,
 )
 
 from nomad.app.v1.models import Direction, Metadata, MetadataPagination, Pagination
@@ -110,6 +111,54 @@ class MetainfoPagination(Pagination):
         first, last = min(start, total_size), min(end, total_size)
 
         return [] if first == last else result[first:last]
+
+
+class ArchivePagination(BaseModel):
+    """
+    Pagination of the items of a repeating subsection. The order is fixed to the
+    archive order. The properties of a section are never paged.
+    """
+
+    page_size: int = Field(
+        10, ge=1, description='The number of items of a repeating subsection per page.'
+    )
+    page: int | None = Field(
+        None, ge=1, description='The number of the page to return, starting from 1.'
+    )
+    page_containing: int | None = Field(
+        None,
+        ge=0,
+        description="""
+        Select the page that contains the item with the given index. Falls back to
+        the first page if the index does not exist. Cannot be combined with `page`.
+        """,
+    )
+    model_config = ConfigDict(extra='forbid')
+
+    @model_validator(mode='after')
+    def _validate_page(self):
+        if self.page is not None and self.page_containing is not None:
+            raise ValueError('page_containing cannot be combined with page.')
+        return self
+
+    def resolve_window(self, total: int) -> tuple[int, int, dict]:
+        """
+        Compute the [start, end) window of the page for a list of `total` items.
+        Returns the window and the pagination response.
+        """
+        if self.page is not None:
+            page = self.page
+        elif self.page_containing is not None and self.page_containing < total:
+            page = self.page_containing // self.page_size + 1
+        else:
+            page = 1
+
+        start = (page - 1) * self.page_size
+        return (
+            min(start, total),
+            min(start + self.page_size, total),
+            dict(page=page, page_size=self.page_size, total=total),
+        )
 
 
 class DirectiveType(Enum):
@@ -305,6 +354,16 @@ class RequestConfig(BaseModel):
         This index field can be optionally used to slice the list.
         """,
     )
+    include_quantities: bool = Field(
+        True,
+        description="""
+        Only applies to archives. If `False`, quantities are not included when a
+        section is walked implicitly, only its subsections are. Explicitly requested
+        quantities are still returned. Combined with `depth`, this yields the
+        structure of an archive without its values.
+        Like other settings, this propagates to the children unless overridden.
+        """,
+    )
     inherit_from_parent: bool = Field(
         True,
         description="""
@@ -314,6 +373,7 @@ class RequestConfig(BaseModel):
     )
     pagination: None | (
         dict
+        | ArchivePagination
         | DatasetPagination
         | EntryProcDataPagination
         | MetadataPagination
@@ -325,9 +385,12 @@ class RequestConfig(BaseModel):
         None,
         description="""
         The pagination configuration used for MongoDB search.
-        This setting does not propagate to its children.
+        This setting does not propagate to explicitly requested children.
         For Token.ENTRIES, Token.UPLOADS and 'm_datasets', different validation rules apply.
         Please refer to `DatasetPagination`, `UploadProcDataPagination`, `MetadataPagination` for details.
+        For archives, see `ArchivePagination`: it pages the items of repeating
+        subsections, and the page is reported in the `m_response` of the parent
+        section. Implicitly walked repeating subsections inherit the page size only.
         """,
     )
     query: None | (
@@ -436,6 +499,8 @@ class RequestConfig(BaseModel):
         """
         return (
             self.directive == DirectiveType.plain
+            and self.include_quantities is True
+            and self.pagination is None
             and self.include_definition == DefinitionType.none
             and self.always_rewrite_references is False
             and self.index is None

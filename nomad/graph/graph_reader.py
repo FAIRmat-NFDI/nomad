@@ -34,6 +34,7 @@ from cachetools import TTLCache
 from fastapi import HTTPException
 from mongoengine import Q
 from msglc.reader import LazyDict, LazyList, LazyReader
+from pydantic import ValidationError
 
 from nomad import utils
 from nomad.app.v1.models import (
@@ -71,6 +72,7 @@ from nomad.graph.lazy_wrapper import (
 )
 from nomad.graph.model import (
     _WILDCARD_FROZENSET,
+    ArchivePagination,
     DatasetQuery,
     DefinitionType,
     DirectiveType,
@@ -1061,8 +1063,31 @@ def _normalise_index(index: tuple | None, length: int) -> range:
     return range(_bound(start), _bound(end) + 1)
 
 
+def _child_pagination(config: RequestConfig) -> ArchivePagination:
+    """
+    The pagination that the children of a paginated node inherit: the page size.
+    The page only applies to the requested repeating subsection.
+    """
+    assert isinstance(config.pagination, ArchivePagination)
+    return ArchivePagination(page_size=config.pagination.page_size)
+
+
 def _unwrap_subsection(target):
     return target.sub_section.m_resolved() if isinstance(target, SubSection) else target
+
+
+def _explicit_indices(required: dict, name: str, length: int) -> set[int]:
+    """
+    The indices of the list `name` that are explicitly requested as `name[i]` keys.
+    """
+    indices: set[int] = set()
+    for key in required:
+        if key == GeneralReader.__CONFIG__:
+            continue
+        other_name, other_index = _parse_key(key)
+        if other_name == name and other_index is not None:
+            indices.update(_normalise_index(other_index, length))
+    return indices
 
 
 def _get_property_definition(node: GraphNode, name: str):
@@ -1595,7 +1620,13 @@ class GeneralReader:
         *,
         omit_keys=None,
         wildcard: bool = False,
+        omit_indices: set[int] | None = None,
     ):
+        """
+        Resolve the items of a list.
+        Items in `omit_indices` are explicitly requested (`name[i]`) next to the
+        list and are resolved by the caller, like `omit_keys` for sections.
+        """
         # The list contents are intentionally not traced individually; the
         # enclosing archive walk span provides the useful aggregate timing.
         new_config = (
@@ -1603,6 +1634,8 @@ class GeneralReader:
         )
         _node_cursor(node).container(list)
         for i in _normalise_index(config.index, len(node.archive)):
+            if omit_indices is not None and i in omit_indices:
+                continue
             archive_item = await goto_child(node.archive, i)
             child = node.descend(str(i), archive=archive_item)
             if new_config.is_plain() and isinstance(node.definition, Quantity):
@@ -3224,6 +3257,13 @@ class ArchiveReader(ArchiveLikeReader):
     @staticmethod
     def __if_strip(node: GraphNode, config: RequestConfig, *, depth_check: bool = True):
         if (
+            isinstance(node.archive, GenericList | GenericDict)  # type: ignore
+            and len(node.archive) == 0
+        ):
+            # an empty container is cheaper than a reference to it
+            return False
+
+        if (
             config.max_list_size is not None
             and isinstance(node.archive, GenericList)  # type: ignore
             and len(node.archive) > config.max_list_size
@@ -3410,7 +3450,14 @@ class ArchiveReader(ArchiveLikeReader):
                     name, archive=child_archive, definition=child_definition
                 )
                 await self._resolve_figure(child_node, node, value)
-                await self._resolve(child_node, value)
+                # items explicitly requested next to the list (`name[i]`) are
+                # walked on their own, like explicitly requested keys of a section
+                omit_indices = (
+                    _explicit_indices(required, name, len(child_archive))
+                    if is_list and index is None
+                    else None
+                )
+                await self._resolve(child_node, value, omit_indices=omit_indices)
             elif isinstance(value, dict):
                 # this is a nested query, keep walking down the tree
                 if is_list:
@@ -3492,13 +3539,15 @@ class ArchiveReader(ArchiveLikeReader):
         *,
         omit_keys=None,
         wildcard: bool = False,
+        omit_indices: set[int] | None = None,
     ):
         """
         Resolve the given node.
 
         If omit_keys is given, the keys matching any of the omit_keys will not be resolved.
         Those come from explicitly given fields in the required query.
-        They are handled by the caller.
+        They are handled by the caller. Likewise, `omit_indices` are the explicitly
+        requested items of a list.
         """
         if isinstance(node.archive, GenericList):  # type: ignore
             if (
@@ -3515,8 +3564,21 @@ class ArchiveReader(ArchiveLikeReader):
                 )
             if isinstance(node.definition, SubSection):
                 node = node.replace(definition=_unwrap_subsection(node.definition))
+            if (
+                isinstance(node.definition, Section)
+                and config.pagination is not None
+                and config.index is None
+            ):
+                # an indexed request (`name[i]`) paginates the selected items instead
+                config = await self._paginate_list(node, config)
+                if config is None:
+                    return
             return await self._resolve_list(
-                node, config, omit_keys=omit_keys, wildcard=wildcard
+                node,
+                config,
+                omit_keys=omit_keys,
+                wildcard=wildcard,
+                omit_indices=omit_indices,
             )
 
         # no matter if to resolve, it is always necessary to replace the definition with potential custom definition
@@ -3567,6 +3629,13 @@ class ArchiveReader(ArchiveLikeReader):
             _node_cursor(node).set(result_to_write)
             return
 
+        if not config.include_quantities:
+            # without quantities, a section is listed even if it has no subsections
+            _node_cursor(node).container(dict)
+        if config.pagination is not None:
+            # only repeating subsections are paged, those below inherit the page size
+            config = _copy_request_config(config, pagination=_child_pagination(config))
+
         for key in node.archive.keys():
             if key in (Token.DEF, Token.DEFID):
                 continue
@@ -3578,6 +3647,11 @@ class ArchiveReader(ArchiveLikeReader):
 
                 if child_definition is None:
                     self._log(f'Definition {key} is not found.')
+                    continue
+
+                if not config.include_quantities and isinstance(
+                    child_definition, Quantity
+                ):
                     continue
 
                 child_archive = await goto_child(node.archive, key)
@@ -3640,6 +3714,31 @@ class ArchiveReader(ArchiveLikeReader):
                 else:
                     await self._resolve_figure(child_node, node, child_config)
                     await self._resolve(child_node, child_config)
+
+    async def _paginate_list(
+        self, node: GraphNode, config: RequestConfig
+    ) -> RequestConfig | None:
+        """
+        Apply `pagination` to a repeating subsection. The page is reported in the
+        `m_response` of the parent section, as a list cannot carry its own. Returns
+        the config that walks the items of the page, or `None` if the page is empty.
+        """
+        assert isinstance(config.pagination, ArchivePagination)
+        start, end, response = config.pagination.resolve_window(len(node.archive))
+        await _populate_result(
+            node.result_root,
+            node.current_path[:-1]
+            + [Token.RESPONSE, 'subsection_lists', node.current_path[-1], 'pagination'],
+            response,
+        )
+        _node_cursor(node).container(list)
+        if start >= end:
+            return None
+
+        # the end of an index is inclusive
+        return _copy_request_config(
+            config, index=(start, end - 1), pagination=_child_pagination(config)
+        )
 
     async def _check_definition(
         self, node: GraphNode, config: RequestConfig
@@ -3771,10 +3870,17 @@ class ArchiveReader(ArchiveLikeReader):
 
     @classmethod
     def validate_config(cls, key: str, config: RequestConfig):
-        if config.pagination is not None:
-            raise ConfigError(f'Pagination is not supported in {cls.__name__} @ {key}.')
         if config.query is not None:
             raise ConfigError(f'Query is not supported in {cls.__name__} @ {key}.')
+        if config.pagination is not None:
+            try:
+                config.pagination = ArchivePagination.model_validate(
+                    config.pagination
+                    if isinstance(config.pagination, dict)
+                    else config.pagination.model_dump(exclude_unset=True)
+                )
+            except ValidationError as e:
+                raise ConfigError(f'Invalid pagination in {cls.__name__} @ {key}: {e}.')
 
         return config
 

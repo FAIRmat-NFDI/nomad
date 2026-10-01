@@ -87,9 +87,24 @@ class GraphFile(BaseModel):
     parent: GraphDirectory
 
 
+class ArchiveListResponseOptions(BaseModel):
+    pagination: PaginationResponse
+
+
+class ArchiveResponseOptions(BaseModel):
+    subsection_lists: dict[str, ArchiveListResponseOptions] | None = Field(
+        None,
+        description="""
+        The pages of paginated repeating subsections of this section, by name.
+        A list cannot carry an `m_response` of its own.
+        """,
+    )
+
+
 class MSection(BaseModel):
     m_errors: list[Error]
     m_request: RecursionOptions
+    m_response: ArchiveResponseOptions
     m_def: MDef
     m_children: Any = None
 

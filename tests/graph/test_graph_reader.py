@@ -5487,13 +5487,8 @@ def test_archive_reader_direct_containers_preserve_filtered_results():
             }
         }
     ) as reader:
-        assert reader.sync_read(archive) == {
-            'metadata': {
-                'text_search_contents': (
-                    '__INTERNAL__:../uploads/upload/archive/entry#/metadata/text_search_contents'
-                )
-            }
-        }
+        # an empty container is not replaced by a reference
+        assert reader.sync_read(archive) == {'metadata': {'text_search_contents': []}}
 
 
 def test_archive_reader_result_containers_do_not_alias_the_source_archive():
