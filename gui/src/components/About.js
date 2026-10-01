@@ -20,7 +20,7 @@ import { ReactComponent as AboutSvg } from '../images/about.svg'
 import PropTypes from 'prop-types'
 import Markdown from './Markdown'
 import { isNil } from 'lodash'
-import { appBase, debug, encyclopediaBase, parserMetadata, description, toolkitMetadata as tutorials, footerLinks } from '../config'
+import { docsBase, debug, encyclopediaBase, parserMetadata, description, toolkitMetadata as tutorials, footerLinks } from '../config'
 import {
   Button,
   Card,
@@ -454,7 +454,7 @@ export default function About() {
         ${description}
 
         You can learn more about NOMAD on its [homepage](https://nomad-lab.eu/nomad-lab/)
-        or our [documentation](${appBase}/docs/index.html).
+        or our [documentation](${docsBase}/index.html).
         `}</Markdown>
       </Grid>
       <InfoCard xs={6} title="Interactive Search" top>
@@ -505,8 +505,8 @@ export default function About() {
         </p>
         <p>NOMAD supports most community codes and file formats: <CodeList/></p>
         <p>
-        To use NOMAD&apos;s parsers and normalizers outside of NOMAD read <Link href={`${appBase}/docs/howto/plugins/parsers.html#running-a-parser`}>here</Link>.
-        Read <Link href={`${appBase}/docs/pythonlib.html`}>here</Link> on how to install
+        To use NOMAD&apos;s parsers and normalizers outside of NOMAD read <Link href={`${docsBase}/howto/plugins/types/parsers.html#running-a-parser`}>here</Link>.
+        Read <Link href={`${docsBase}/howto/oasis/install.html#how-to-install-the-nomad-python-library`}>here</Link> on how to install
         our software and how to use NOMAD processing in your Python environment.
         </p>
       </InfoCard>
@@ -516,8 +516,8 @@ export default function About() {
       standardized [OPTiMaDe API](https://github.com/Materials-Consortia/OPTiMaDe/tree/master)
       materials science database API, and more.
 
-      We offer a [how-to guide on using the API with plain Python](${appBase}/docs/howto/manage/program/api.html).
-      Another [how-to guide covers the installation and use of NOMAD's API client library](${appBase}/docs/howto/manage/program/archive_query.html).
+      We offer a [how-to guide on using the API with plain Python](${docsBase}/howto/manage/program/api.html).
+      Another [how-to guide covers the installation and use of NOMAD's API client library](${docsBase}/howto/manage/program/archive_query.html).
       The [NOMAD Analytics Toolkit](https://nomad-lab.eu/AIToolkit) allows to use
       this without installation and directly on NOMAD servers.
 
@@ -533,7 +533,7 @@ export default function About() {
         [GitHub project](https://github.com/FAIRmat-NFDI/nomad/issues).
 
         ### Developer Documentation
-        The [in-depth documentation](${appBase}/docs/index.html)
+        The [in-depth documentation](${docsBase}/index.html)
         contains a general introduction to NOMAD and its underlying architecture,
         more information and tutorials, how to prepare uploads, how
         to use the API, developer information, how to operate your own NOMAD (a so called

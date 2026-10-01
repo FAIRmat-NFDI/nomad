@@ -31,7 +31,7 @@ import purple from '@material-ui/core/colors/purple'
 import grey from '@material-ui/core/colors/grey'
 import Markdown from '../Markdown'
 import Histogram from '../Histogram'
-import { appBase } from '../../config'
+import { docsBase } from '../../config'
 import { useHistory, useRouteMatch } from 'react-router-dom'
 import Autocomplete from '@material-ui/lab/Autocomplete'
 import { useApi } from '../api'
@@ -70,7 +70,7 @@ reference (blue) relations.
 If you bookmark this page, you can save the definition represented by the highlighted
 *main* card.
 
-To learn more about the metainfo, visit the [metainfo documentation](${appBase}/docs/metainfo.html).
+To learn more about the metainfo, visit the [metainfo documentation](${docsBase}/reference/glossary.html#metainfo).
 `
 
 const showInnerSectionDefinitions = false

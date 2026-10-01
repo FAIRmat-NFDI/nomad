@@ -14,13 +14,13 @@ customized NOMAD version and with their own compute and storage resources.
 Here are some resources that will get you started with NOMAD:
 
 - [Project home page](https://nomad-lab.eu)
-- [Documentation](https://nomad-lab.eu/prod/v1/docs/)
+- [Documentation](https://docs.nomad-lab.eu/)
 - [NOMAD deployment hosted by FAIRmat](https://nomad-lab.eu/prod/v1/gui/search/entries)
 - [FAIRmat NFDI consortium developing NOMAD](https://www.fairmat-nfdi.eu/fairmat)
 
 ## Contributing
 
-See also the more detailed [contributing guide](https://nomad-lab.eu/docs/howto/develop/contrib.html) in the documentation.
+See also the more detailed [contributing guide](https://docs.nomad-lab.eu/howto/develop/contrib.html) in the documentation.
 
 There are two forks of this repository, one on **GitHub** and one on MPCDF's **GitLab**.
 
@@ -40,9 +40,9 @@ Most sub-modules, e.g. NOMAD's parsers, are hosted in individual projects on Git
 
 For a general project overview visit the official project page [https://nomad-lab.eu](https://nomad-lab.eu). For specific use of the NOMAD software follow these links to our documentation:
 
-- [get started as a developer](https://nomad-lab.eu/prod/v1/docs/howto/develop/setup.html)
-- [install and use NOMAD as Python package (to use our APIs or parsers)](https://nomad-lab.eu/prod/v1/docs/pythonlib.html)
-- [install NOMAD Oasis](https://nomad-lab.eu/prod/v1/docs/howto/oasis/install.html)
+- [get started as a developer](https://docs.nomad-lab.eu/howto/develop/setup.html)
+- [install and use NOMAD as Python package (to use our APIs or parsers)](https://docs.nomad-lab.eu/howto/oasis/install.html#how-to-install-the-nomad-python-library)
+- [install NOMAD Oasis](https://docs.nomad-lab.eu/howto/oasis/install.html)
 
 ## Citing NOMAD
 

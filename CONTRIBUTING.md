@@ -1,6 +1,6 @@
 # Contributing
 
-See also the more detailed [contributing guide](https://nomad-lab.eu/docs/develop/contrib.html) in the documentation.
+See also the more detailed [contributing guide](https://docs.nomad-lab.eu/howto/develop/contrib.html) in the documentation.
 
 We maintain two git repositories that you can contribute to. The default choice for
 external contributors should be the [GitHub project](https://github.com/FAIRmat-NFDI/nomad)

@@ -1,7 +1,7 @@
 import PropTypes from 'prop-types'
 import React, { useEffect, useMemo, useState } from 'react'
 import { Button, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, TextField, Tooltip, LinearProgress } from "@material-ui/core"
-import { oasis } from '../../config'
+import { docsBase, oasis } from '../../config'
 import { Alert, AlertTitle } from '@material-ui/lab'
 import { HelpButton } from '../Help'
 import { EmbargoSelect } from './UploadOverview'
@@ -224,7 +224,7 @@ const TransferUploadDialog = ({ open, setOpen }) => {
                 size="small"
                 heading="Access Token Help"
                 text={`
-The access token is a temporary credential used to securely authorize the publish action to an external OASIS${oasis ? ' or the central NOMAD' : ''}. It is generated using the authenticated user's credentials, ensuring that the upload is performed on behalf of that specific user. Check the [documentation](https://nomad-lab.eu/prod/v1/docs/howto/manage/program/api.html#authentication) to know how to get an access token from the transfer target.
+The access token is a temporary credential used to securely authorize the publish action to an external OASIS${oasis ? ' or the central NOMAD' : ''}. It is generated using the authenticated user's credentials, ensuring that the upload is performed on behalf of that specific user. Check the [documentation](${docsBase}/howto/manage/program/auth.html#keycloak-access-tokens) to know how to get an access token from the transfer target.
 `}
               />
             </Tooltip>
