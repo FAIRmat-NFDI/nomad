@@ -155,6 +155,18 @@ def test_rewrite_mainfile_archive_reference_with_dotted_filename():
     )
 
 
+def test_rewrite_absolute_entry_archive_reference():
+    from nomad.graph.graph_reader import _convert_ref_to_path_string
+
+    target_entry_id = 'BnTgO2-NgsazXORAyJ1tW43V6w1z'
+    assert (
+        _convert_ref_to_path_string(
+            f'/entries/{target_entry_id}/archive#/workflow2', 'parent-upload'
+        )
+        == f'uploads/parent-upload/entries/{target_entry_id}/archive/workflow2'
+    )
+
+
 def increment():
     n = 0
     while True:

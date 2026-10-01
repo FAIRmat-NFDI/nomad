@@ -3600,7 +3600,10 @@ class ArchiveReader(ArchiveLikeReader):
                 and config.always_rewrite_references
             ):
                 try:
-                    if node.archive.startswith(('/', '#')):
+                    if (
+                        node.archive.startswith(('#', '/'))
+                        and parse_path(node.archive, node.upload_id) is None
+                    ):
                         # normalize a local reference
                         target_reference = node.generate_reference(
                             [v for v in node.archive.lstrip('/#').split('/') if v]
