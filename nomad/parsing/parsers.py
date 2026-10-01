@@ -107,7 +107,14 @@ def match_parser(
         assert parser is not None, f'parser by the name `{parser_name}` does not exist'
         parsers_to_check = [parser]
     else:
-        parsers_to_check = parsers
+        # Apply configured matching order with an alphabetical tie-breaker, but
+        # preserve registration order when all parsers use the default for backwards
+        # compatibility.
+        parsers_to_check = (
+            sorted(parsers, key=lambda parser: (parser.matching_order, parser.name))
+            if any(parser.matching_order != 0 for parser in parsers)
+            else parsers
+        )
     for parser in parsers_to_check:
         if strict and isinstance(parser, MissingParser | EmptyParser):
             continue
@@ -238,6 +245,7 @@ for entry_point in enabled_entry_points:
         aliases = list(entry_point.aliases)
         if entry_point.name and entry_point.name not in aliases:
             aliases.append(entry_point.name)
+        instance.matching_order = entry_point.matching_order
         instance.aliases = aliases
         parsers.append(instance)
 

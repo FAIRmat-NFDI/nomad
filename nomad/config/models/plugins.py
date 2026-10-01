@@ -42,6 +42,19 @@ if TYPE_CHECKING:
     from nomad.parsing import Parser as ParserBaseClass
 
 
+def _map_level_to_execution_order(data):
+    """Maps the deprecated `level` field into `execution_order`.
+
+    If both are given, `level` takes precedence: plugin defaults are always
+    stored as `execution_order` after validation, so a `level` in the input can
+    only come from a user override (e.g. in nomad.yaml) that is merged on top.
+    """
+    if isinstance(data, dict) and data.get('level') is not None:
+        data = dict(data)
+        data['execution_order'] = data.pop('level')
+    return data
+
+
 class EntryPoint(BaseModel):
     """Base model for a NOMAD plugin entry points."""
 
@@ -137,14 +150,29 @@ class NormalizerEntryPoint(EntryPoint):
         description='Determines the entry point type.',
         json_schema_extra={'hidden': True},
     )
-    level: int = Field(
+    execution_order: int = Field(
         0,
         description="""
         Integer that determines the execution order of this normalizer within
-        the processing of an individual entry. Normalizers with the lowest level
-        is run first.
+        the processing of an individual entry. Normalizers with the lowest
+        execution order are run first.
         """,
     )
+    level: int | None = Field(
+        None,
+        deprecated='"level" is deprecated, use "execution_order" instead.',
+    )
+
+    @model_validator(mode='before')
+    @classmethod
+    def _level_to_execution_order(cls, data):
+        return _map_level_to_execution_order(data)
+
+    @model_validator(mode='after')
+    def _sync_level(self):
+        # Keep the deprecated attribute readable without marking it as set.
+        self.__dict__['level'] = self.execution_order
+        return self
 
     def load(self) -> 'NormalizerBaseClass':
         """Used to lazy-load a normalizer instance. You should override this
@@ -161,13 +189,27 @@ class ParserEntryPoint(EntryPoint):
         description='Determines the entry point type.',
         json_schema_extra={'hidden': True},
     )
-    level: int = Field(
+    execution_order: int = Field(
         0,
         description="""
         Integer that determines the execution order of this parser within an
-        upload. Parser with lowest level will be executed first. Note that this
-        only controls the order in which matched parsers are executed, but does
-        not affect the order in which parsers are matched to files.
+        upload. Parsers with the lowest execution order will be executed first.
+        Note that this only controls the order in which matched parsers are
+        executed, but does not affect the order in which parsers are matched to
+        files.
+    """,
+    )
+    level: int | None = Field(
+        None,
+        deprecated='"level" is deprecated, use "execution_order" instead.',
+    )
+    matching_order: int = Field(
+        0,
+        description="""
+        Integer that determines the order in which this parser is considered when
+        matching files. Parsers with the lowest matching order are considered first.
+        Parsers with the same matching order are ordered alphabetically by name. If all
+        parsers use the default value, their registration order is retained.
     """,
     )
     aliases: list[str] = Field([], description="""List of alternative parser names.""")
@@ -253,6 +295,17 @@ class ParserEntryPoint(EntryPoint):
         matched like normal files.
     """,
     )
+
+    @model_validator(mode='before')
+    @classmethod
+    def _level_to_execution_order(cls, data):
+        return _map_level_to_execution_order(data)
+
+    @model_validator(mode='after')
+    def _sync_level(self):
+        # Keep the deprecated attribute readable without marking it as set.
+        self.__dict__['level'] = self.execution_order
+        return self
 
     def load(self) -> 'ParserBaseClass':
         """Used to lazy-load a parser instance. You should override this method

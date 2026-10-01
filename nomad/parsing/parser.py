@@ -41,6 +41,7 @@ class Parser(metaclass=ABCMeta):
 
     name = 'parsers/parser'
     level = 0
+    matching_order: int = 0
     creates_children = False
     aliases: list[str] = []
     """
@@ -194,6 +195,8 @@ class MatchingParser(Parser):
         mainfile_name_re: A regexp that is used to match the paths of potential mainfiles
         mainfile_alternative: If True files are mainfile if no mainfile_name_re matching file
             is present in the same directory.
+        matching_order: The order in which the parser is considered when matching files.
+            Lower values are considered first.
         domain: The domain that this parser should be used for. Default is 'dft'.
         supported_compressions: A list of [gz, bz2], if the parser supports compressed files
     """
@@ -212,6 +215,7 @@ class MatchingParser(Parser):
         mainfile_alternative: bool = False,
         mainfile_contents_dict: dict | None = None,
         level: int = 0,
+        matching_order: int = 0,
         domain='dft',
         metadata: dict | None = None,
         supported_compressions: list[str] = [],
@@ -227,6 +231,7 @@ class MatchingParser(Parser):
 
         self.domain = domain
         self.level = level
+        self.matching_order = matching_order
         self._mainfile_binary_header = mainfile_binary_header
         self._mainfile_mime_re = re.compile(mainfile_mime_re)
         self._mainfile_name_re = re.compile(mainfile_name_re)
