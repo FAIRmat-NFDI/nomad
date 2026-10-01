@@ -826,6 +826,58 @@ def test_graph_query_archive_functionality(
     )
 
 
+def test_graph_query_archive_structure(auth_headers, client, example_upload):
+    def structure(depth, **pagination):
+        return {
+            'm_request': {
+                'include_quantities': False,
+                'depth': depth,
+                'pagination': pagination,
+            }
+        }
+
+    response = client.post(
+        'graph/query',
+        json={
+            'entries': {
+                'test_id': {
+                    'archive': {
+                        **structure(2, page_size=20),
+                        'run': structure(1, page_containing=0),
+                        'run[0]': {
+                            **structure(2),
+                            'calculation': structure(
+                                1, page_size=2, page_containing='2'
+                            ),
+                        },
+                    }
+                }
+            }
+        },
+        headers={'Accept': 'application/json'} | auth_headers['user1'],
+    )
+    assert response.status_code == 200
+    archive = response.json()['entries']['test_id']['archive']
+
+    assert {'results', 'run', 'workflow2'} <= set(archive.keys())
+    assert archive['m_response'] == {
+        'subsection_lists': {
+            'run': {'pagination': {'page': 1, 'page_size': 10, 'total': 1}}
+        }
+    }
+    run = archive['run'][0]
+    assert run['m_response']['subsection_lists']['calculation'] == {
+        'pagination': {'page': 2, 'page_size': 2, 'total': 3}
+    }
+    assert run['calculation'][:2] == [None, None]
+    assert isinstance(run['calculation'][2], dict)
+    # structure only: no values of the run are returned
+    for key, value in run.items():
+        if key == 'm_response':
+            continue
+        assert isinstance(value, dict | list) or value.startswith('__INTERNAL__:'), key
+
+
 def test_graph_query_numeric_folder(
     auth_headers, client, mongo_function, elastic_function
 ):
