@@ -124,4 +124,6 @@ for entry_point in enabled_entry_points:
         assert isinstance(instance, Normalizer), (
             f'Error loading entry point "{entry_point.id}": The load method of a normalizer entry point must return a Normalizer instance'
         )
-        normalizers.append(NormalizerInterfaceNew(instance, entry_point.level))
+        normalizers.append(
+            NormalizerInterfaceNew(instance, entry_point.execution_order)
+        )

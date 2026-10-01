@@ -295,6 +295,51 @@ def test_match(
     )
 
 
+def test_match_parser_matching_order(tmp_path, monkeypatch):
+    mainfile = tmp_path / 'mainfile.txt'
+    mainfile.write_text('contents')
+    parsers_to_match = [
+        MatchingParser(name='unordered'),
+        MatchingParser(name='ordered-later', matching_order=-1),
+        MatchingParser(name='ordered-first', matching_order=-2),
+    ]
+    monkeypatch.setattr('nomad.parsing.parsers.parsers', parsers_to_match)
+
+    parser, _ = match_parser(str(mainfile))
+
+    assert parser.name == 'ordered-first'
+
+
+def test_match_parser_sorts_equal_matching_orders_alphabetically(tmp_path, monkeypatch):
+    mainfile = tmp_path / 'mainfile.txt'
+    mainfile.write_text('contents')
+    parsers_to_match = [
+        MatchingParser(name='second-alphabetically', matching_order=-1),
+        MatchingParser(name='first-alphabetically', matching_order=-1),
+    ]
+    monkeypatch.setattr('nomad.parsing.parsers.parsers', parsers_to_match)
+
+    parser, _ = match_parser(str(mainfile))
+
+    assert parser.name == 'first-alphabetically'
+
+
+def test_match_parser_uses_registration_order_without_matching_order(
+    tmp_path, monkeypatch
+):
+    mainfile = tmp_path / 'mainfile.txt'
+    mainfile.write_text('contents')
+    parsers_to_match = [
+        MatchingParser(name='registered-first'),
+        MatchingParser(name='registered-second'),
+    ]
+    monkeypatch.setattr('nomad.parsing.parsers.parsers', parsers_to_match)
+
+    parser, _ = match_parser(str(mainfile))
+
+    assert parser.name == 'registered-first'
+
+
 def parser_in_dir(dir):
     for root, _, files in os.walk(dir):
         for file_name in files:
