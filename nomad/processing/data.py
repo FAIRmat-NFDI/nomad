@@ -102,6 +102,7 @@ from nomad.metainfo.data_type import Datatype, Datetime
 from nomad.mongo.doi import EmbeddedDOI
 from nomad.mongo.fields import UTCDateTimeField
 from nomad.mongo.groups import MongoUserGroup, user_group_exists
+from nomad.mongo.included_entries import IncludedEntries
 from nomad.mongo.package import PackageDefinition
 from nomad.normalizing import normalizers
 from nomad.parsing import Parser
@@ -1811,6 +1812,7 @@ class Upload(Proc):
     embargo_length = IntField(default=0, required=True)
     license = StringField(default='CC BY 4.0', required=True)
     doi = EmbeddedDocumentField(EmbeddedDOI, default=None)
+    included_entries = EmbeddedDocumentField(IncludedEntries, default=None)
 
     from_oasis = BooleanField(default=False)
     oasis_deployment_url = StringField(default=None)
@@ -2114,7 +2116,10 @@ class Upload(Proc):
             raise ProcessFailure(f'Failed to start temporal workflow: {e}')
 
     def _publish_upload_local(self, embargo_length: int | None = None):
-        assert self.processed_entries_count > 0
+        assert (
+            getattr(self.included_entries, 'query', None)
+            or self.processed_entries_count > 0
+        )
         logger = self.get_logger(upload_size=self.upload_files.size)
         logger.info('started to publish')
 

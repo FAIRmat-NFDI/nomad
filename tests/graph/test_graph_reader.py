@@ -596,6 +596,7 @@ def test_remote_reference(json_dict, example_data_with_reference, user1):
                     'embargo_length': 0,
                     'license': 'CC BY 4.0',
                     'n_entries': 6,
+                    'included_entries': None,
                     'upload_files_server_path': 'id_published_with_ref',
                 }
             },
@@ -655,6 +656,7 @@ def test_remote_reference(json_dict, example_data_with_reference, user1):
                     'embargo_length': 0,
                     'license': 'CC BY 4.0',
                     'n_entries': 6,
+                    'included_entries': None,
                     'upload_files_server_path': 'id_published_with_ref',
                 }
             },
@@ -861,6 +863,7 @@ def test_remote_reference(json_dict, example_data_with_reference, user1):
                     'embargo_length': 0,
                     'license': 'CC BY 4.0',
                     'n_entries': 6,
+                    'included_entries': None,
                     'upload_files_server_path': 'id_published_with_ref',
                     Token.ENTRIES: {
                         'id_01': {
@@ -1025,6 +1028,7 @@ def test_remote_reference(json_dict, example_data_with_reference, user1):
                     'embargo_length': 0,
                     'license': 'CC BY 4.0',
                     'n_entries': 6,
+                    'included_entries': None,
                     'upload_files_server_path': 'id_published_with_ref',
                     Token.ENTRIES: {
                         'id_02': {
@@ -1137,6 +1141,7 @@ def test_remote_reference(json_dict, example_data_with_reference, user1):
                                 'embargo_length': 0,
                                 'license': 'CC BY 4.0',
                                 'n_entries': 6,
+                                'included_entries': None,
                                 'upload_files_server_path': 'id_published_with_ref',
                             },
                         }
@@ -1267,6 +1272,7 @@ def test_remote_reference(json_dict, example_data_with_reference, user1):
             'processing_successful': 6,
             'license': 'CC BY 4.0',
             'n_entries': 6,
+            'included_entries': None,
             'upload_files_server_path': 'id_published_with_ref',
         },
     )
@@ -1315,6 +1321,7 @@ def test_remote_reference(json_dict, example_data_with_reference, user1):
             'processing_successful': 6,
             'license': 'CC BY 4.0',
             'n_entries': 6,
+            'included_entries': None,
             'upload_files_server_path': 'id_published_with_ref',
             Token.RAW: {
                 'm_is': 'Directory',
@@ -1407,6 +1414,7 @@ def test_remote_reference(json_dict, example_data_with_reference, user1):
             'embargo_length': 0,
             'license': 'CC BY 4.0',
             'n_entries': 6,
+            'included_entries': None,
             'processing_failed': 0,
             'processing_successful': 6,
             'upload_files_server_path': 'id_published_with_ref',
@@ -1452,6 +1460,7 @@ def test_remote_reference(json_dict, example_data_with_reference, user1):
             'embargo_length': 0,
             'license': 'CC BY 4.0',
             'n_entries': 6,
+            'included_entries': None,
             'processing_failed': 0,
             'processing_successful': 6,
             'upload_files_server_path': 'id_published_with_ref',
@@ -1484,6 +1493,7 @@ def test_remote_reference(json_dict, example_data_with_reference, user1):
                 'embargo_length': 0,
                 'license': 'CC BY 4.0',
                 'n_entries': 6,
+                'included_entries': None,
                 'processing_failed': 0,
                 'processing_successful': 6,
                 'upload_files_server_path': 'id_published_with_ref',
@@ -1538,6 +1548,7 @@ def test_remote_reference(json_dict, example_data_with_reference, user1):
                 'embargo_length': 0,
                 'license': 'CC BY 4.0',
                 'n_entries': 6,
+                'included_entries': None,
                 'processing_failed': 0,
                 'processing_successful': 6,
                 'upload_files_server_path': 'id_published_with_ref',
@@ -1610,6 +1621,7 @@ def test_remote_reference(json_dict, example_data_with_reference, user1):
             'embargo_length': 0,
             'license': 'CC BY 4.0',
             'n_entries': 6,
+            'included_entries': None,
             'processing_failed': 0,
             'processing_successful': 6,
             'upload_files_server_path': 'id_published_with_ref',
@@ -2022,6 +2034,7 @@ def test_remote_reference(json_dict, example_data_with_reference, user1):
                 'processing_successful': 6,
                 'license': 'CC BY 4.0',
                 'n_entries': 6,
+                'included_entries': None,
                 'upload_files_server_path': 'id_published_with_ref',
             },
         },
@@ -2083,6 +2096,7 @@ def test_remote_reference(json_dict, example_data_with_reference, user1):
                 'embargo_length': 0,
                 'license': 'CC BY 4.0',
                 'n_entries': 6,
+                'included_entries': None,
                 'processing_failed': 0,
                 'processing_successful': 6,
                 'upload_files_server_path': 'id_published_with_ref',
@@ -2436,6 +2450,7 @@ def test_remote_reference(json_dict, example_data_with_reference, user1):
                         'processing_failed': 0,
                         'processing_successful': 6,
                         'n_entries': 6,
+                        'included_entries': None,
                         'upload_files_server_path': 'id_published_with_ref',
                     }
                 },
@@ -2525,6 +2540,7 @@ def test_remote_reference(json_dict, example_data_with_reference, user1):
                         'embargo_length': 0,
                         'license': 'CC BY 4.0',
                         'n_entries': 6,
+                        'included_entries': None,
                         'processing_failed': 0,
                         'processing_successful': 6,
                         'upload_files_server_path': 'id_published_with_ref',
@@ -3049,6 +3065,7 @@ def test_general_reader(json_dict, example_data_with_reference, user1):
                     'embargo_length': 0,
                     'license': 'CC BY 4.0',
                     'n_entries': 6,
+                    'included_entries': None,
                     'processing_failed': 0,
                     'processing_successful': 6,
                     'upload_files_server_path': 'id_published_with_ref',
@@ -3123,6 +3140,7 @@ def test_general_reader(json_dict, example_data_with_reference, user1):
                     'embargo_length': 0,
                     'license': 'CC BY 4.0',
                     'n_entries': 6,
+                    'included_entries': None,
                     'processing_failed': 0,
                     'processing_successful': 6,
                     'upload_files_server_path': 'id_published_with_ref',

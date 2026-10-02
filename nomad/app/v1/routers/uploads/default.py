@@ -38,6 +38,19 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 
 from nomad import files, utils
+from nomad.app.v1.models.models import (
+    And,
+    Criteria,
+    ExtraEntriesValidateResponse,
+    IncludedEntriesEditRequest,
+    IncludedEntriesEditResponse,
+    IncludedEntriesValidateRequest,
+    MetadataRequired,
+    Not,
+    Owner,
+    Query,
+    Range,
+)
 from nomad.auth.scopes import Scope
 from nomad.auth.tokens import generate_upload_token
 from nomad.common import (
@@ -45,11 +58,13 @@ from nomad.common import (
     has_glob_wildcards,
     is_safe_basename,
     is_safe_relative_path,
+    now,
 )
 from nomad.config import config
 from nomad.config.models.config import Reprocess
 from nomad.config.models.plugins import ExampleUploadEntryPoint
 from nomad.files import FSUtility, PublicUploadFiles, StagingUploadFiles
+from nomad.mongo.included_entries import IncludedEntries
 from nomad.mongo.search import MongoQueryError, create_mongo_query
 from nomad.processing import (
     Entry,
@@ -83,7 +98,7 @@ from ...utils import (
     create_stream_from_string,
 )
 from ..auth import get_current_user
-from ..entries import EntryArchiveResponse, answer_entry_archive_request
+from ..entries import EntryArchiveResponse, answer_entry_archive_request, perform_search
 from .models import (
     APITag,
     EntryProcDataPagination,
@@ -934,6 +949,130 @@ async def post_upload_edit(
     except Exception as e:
         # The upload is processing or some kind of unexpected error has occurred
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+
+def adjust_included_entries_query(
+    user_query: Query, upload_id: str, timestamp: datetime | None = None
+) -> Query:
+    conditions = [user_query]
+    conditions.append(Not(**{'not': Criteria(name='upload_id', value=upload_id)}))
+
+    if timestamp is not None:
+        conditions.append(
+            Criteria(name='entry_create_time', value=Range(lte=timestamp))
+        )
+
+    query = And(**{'and': conditions})
+    return query
+
+
+@router.post(
+    '/{upload_id}/included-entries',
+    tags=[APITag.METADATA],
+    summary='Updates the included entries query.',
+    response_model=IncludedEntriesEditResponse,
+    responses=create_responses(
+        _upload_not_found, _not_authorized_to_upload, _bad_request
+    ),
+    response_model_exclude_unset=True,
+    response_model_exclude_none=True,
+)
+def post_upload_included_entries(
+    data: IncludedEntriesEditRequest,
+    upload_id: Annotated[str, Path(description='The unique id of the upload.')],
+    user: Annotated[
+        User,
+        Depends(get_current_user([Scope.UPLOADS_WRITE], allow_anonymous=False)),
+    ],
+):
+    user_id = getattr(user, 'user_id', None)
+    upload = _get_upload_with_write_access(upload_id, user)
+
+    if upload.process_running:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            detail='The upload is currently blocked by another process.',
+        )
+
+    # Remove included entries
+    if not data.query:
+        upload.included_entries = None
+        upload.save()
+        return {}
+
+    timestamp = now()
+    query = adjust_included_entries_query(data.query, upload_id, timestamp)
+
+    results = perform_search(
+        owner=Owner.all_,
+        pagination=MetadataPagination(page_size=0),
+        query=query,
+        user_id=user_id,
+    )
+
+    # Query as a union does not have model_dump
+    query_dump = Not(**{'not': data.query}).model_dump(by_alias=True)['not']
+    upload.included_entries = IncludedEntries(query=query_dump, timestamp=timestamp)
+    upload.save()
+
+    return {
+        'query': query_dump,
+        'timestamp': timestamp,
+        'total': results.pagination.total,
+    }
+
+
+@router.post(
+    '/{upload_id}/included-entries/validate',
+    tags=[APITag.METADATA],
+    summary='Validate the included entries query.',
+    response_model=ExtraEntriesValidateResponse,
+    responses=create_responses(
+        _upload_not_found, _not_authorized_to_upload, _bad_request
+    ),
+    response_model_exclude_unset=True,
+    response_model_exclude_none=True,
+)
+def post_upload_included_entries_validate(
+    data: IncludedEntriesValidateRequest,
+    upload_id: Annotated[str, Path(description='The unique id of the upload.')],
+    user: Annotated[
+        User,
+        Depends(get_current_user([Scope.UPLOADS_WRITE], allow_anonymous=False)),
+    ],
+):
+    """Validate query for included entries.
+
+    The entries are restricted by the current timestamp and exclude entries from the
+    current project."""
+    user_id = getattr(user, 'user_id', None)
+    _get_upload_with_write_access(upload_id, user)
+
+    timestamp = now()
+    query = adjust_included_entries_query(data.query, upload_id, timestamp)
+
+    all_results = perform_search(
+        owner=Owner.all_,
+        pagination=data.pagination,
+        query=query,
+        required=MetadataRequired(include=['entry_id', 'upload_id', 'published']),
+        user_id=user_id,
+    )
+    public_results = perform_search(
+        owner=Owner.public,
+        pagination=MetadataPagination(page_size=0),
+        query=query,
+        user_id=user_id,
+    )
+    n_unpublished = all_results.pagination.total - public_results.pagination.total
+
+    return {
+        'query': data.query,
+        'pagination': all_results.pagination,
+        'entries': all_results.data,
+        'timestamp': timestamp,
+        'n_unpublished': n_unpublished,
+    }
 
 
 # Raw file endpoints

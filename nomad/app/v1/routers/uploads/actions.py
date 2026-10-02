@@ -24,6 +24,8 @@ from fastapi import Query as FastApiQuery
 from fastapi.exceptions import RequestValidationError
 from mongoengine.errors import MongoEngineException
 
+from nomad.app.v1.models.models import MetadataPagination, Owner
+from nomad.app.v1.routers.entries import perform_search
 from nomad.datacite import DataCiteException
 from nomad.datacite.service import create_doi_for_upload, publish_doi
 from nomad.mongo.doi import EmbeddedDOI
@@ -47,6 +49,7 @@ from .default import (
     _upload_is_empty,
     _upload_is_unpublished,
     _upload_not_found,
+    adjust_included_entries_query,
     config,
     create_responses,
     get_current_user,
@@ -191,11 +194,32 @@ def post_upload_action_publish(
             status.HTTP_400_BAD_REQUEST,
             detail='Cannot publish an upload that failed processing.',
         )
-    if upload.processed_entries_count == 0:
+
+    if query := getattr(upload.included_entries, 'query', None):
+        timestamp = getattr(upload.included_entries, 'timestamp', None)
+        query = adjust_included_entries_query(query, upload_id, timestamp)
+        pagination = MetadataPagination(page_size=0)
+        kwargs = dict(query=query, pagination=pagination, user_id=user.user_id)
+        all_results = perform_search(**kwargs, owner=Owner.all_)
+        public_results = perform_search(**kwargs, owner=Owner.public)
+
+        n_included_entries = all_results.pagination.total
+        n_unpublished = n_included_entries - public_results.pagination.total
+        if n_unpublished != 0:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=f'The upload has {n_unpublished} unpublished included '
+                'entries. Have those published first.',
+            )
+    else:
+        n_included_entries = 0
+
+    if upload.processed_entries_count + n_included_entries == 0:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             detail='Cannot publish an upload without any resulting entries.',
         )
+
     if embargo_length is not None and not 0 <= embargo_length <= 36:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,

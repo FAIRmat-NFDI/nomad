@@ -44,6 +44,7 @@ from pydantic_core import PydanticCustomError
 from nomad import datamodel, metainfo  # noqa: F401
 from nomad.app.v1.utils import parameter_dependency_from_model
 from nomad.metainfo.elasticsearch_extension import entry_type
+from nomad.models.common import UTCDateTime
 from nomad.utils import strip
 
 from .pagination import Pagination, PaginationResponse
@@ -1395,6 +1396,47 @@ class MetadataEditRequest(WithQuery):
             encountered errors etc."""
         ),
     )
+
+
+class IncludedEntriesRequestBase(BaseModel):
+    query: Query = Body(embed=True, description=query_documentation)
+
+    @field_validator('query')
+    @classmethod
+    def validate_query(cls, query):  # pylint: disable=no-self-argument
+        return _validate_query(query)
+
+    model_config = ConfigDict(use_enum_values=True)
+
+
+class IncludedEntriesValidateRequest(IncludedEntriesRequestBase):
+    pagination: MetadataPagination | None = Body(
+        None, examples=[{'page_size': 5, 'order_by': 'upload_create_time'}]
+    )
+
+
+class IncludedEntriesEditRequest(IncludedEntriesRequestBase):
+    pass
+
+
+class ExtraEntriesValidateResponse(BaseModel):
+    query: Query | None = Field(None, description='Query for included entries.')
+    timestamp: UTCDateTime | None = Field(None, description='Timestamp of the query.')
+    pagination: PaginationResponse | None = Field(
+        None, description='Pagination of queried data.'
+    )
+    entries: list[dict] | None = Field(
+        None, description='Entries matched by the query at the timestamp.'
+    )
+    n_unpublished: int | None = Field(
+        None, description='Number of unpublished entries.'
+    )
+
+
+class IncludedEntriesEditResponse(BaseModel):
+    query: Query | None = Field(None, description='Query for included entries.')
+    timestamp: UTCDateTime | None = Field(None, description='Timestamp of the query.')
+    total: int | None = Field(None, description='Number of included entries.')
 
 
 class Files(BaseModel):
