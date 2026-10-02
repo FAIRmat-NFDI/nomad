@@ -22,7 +22,7 @@ from unittest.mock import Mock
 import pytest
 
 from nomad.app.v1.routers import apps as apps_router
-from nomad.app.v1.routers.apps import parse_jmespath
+from nomad.app.v1.routers.apps import get_query_quantities, parse_jmespath
 from nomad.config import config
 from nomad.config.models.plugins import AppEntryPoint
 from nomad.config.models.ui import App, Column
@@ -414,6 +414,66 @@ def test_parse_jmespath(input_path, expected, no_warn):
     assert result == expected
 
 
+@pytest.mark.parametrize(
+    'query, expected',
+    [
+        pytest.param(None, [], id='none'),
+        pytest.param({}, [], id='empty'),
+        pytest.param(
+            {'results.material.elements': ['H', 'O'], 'upload_id': 'abc'},
+            ['results.material.elements', 'upload_id'],
+            id='flat',
+        ),
+        pytest.param(
+            {'authors.name:any': ['a', 'b'], 'upload_create_time:gt': '2020-01-01'},
+            ['authors.name', 'upload_create_time'],
+            id='operator-suffix',
+        ),
+        pytest.param(
+            {'upload_create_time': {'gt': '2020-01-01', 'lt': '2021-01-01'}},
+            ['upload_create_time'],
+            id='range-dict',
+        ),
+        pytest.param(
+            {
+                'and': [
+                    {
+                        'or': [
+                            {'results.material.elements': ['Cl', 'Na']},
+                            {'results.material.elements': ['H', 'O']},
+                        ]
+                    },
+                    {'not': {'results.material.symmetry.crystal_system': 'cubic'}},
+                ]
+            },
+            [
+                'results.material.elements',
+                'results.material.elements',
+                'results.material.symmetry.crystal_system',
+            ],
+            id='logical-operators',
+        ),
+        pytest.param(
+            {
+                'results.material': {
+                    'elements': ['H'],
+                    'symmetry': {'crystal_system': 'cubic'},
+                }
+            },
+            ['results.material.elements', 'results.material.symmetry.crystal_system'],
+            id='nested-section',
+        ),
+        pytest.param(
+            {'data.name#my_package.MySchema:any': ['a']},
+            ['data.name#my_package.MySchema'],
+            id='schema-qualified',
+        ),
+    ],
+)
+def test_get_query_quantities(query, expected, no_warn):
+    assert get_query_quantities(query) == expected
+
+
 def test_app_caching(client, monkeypatch, no_warn):
     """
     Tests that the app response is cached after the first request.
@@ -505,6 +565,49 @@ def test_search_quantity_initialization(client, monkeypatch, no_warn):
             'Could not load the app search quantity "missing" used in the results table column.',
             422,
             id='invalid-search-quantity',
+        ),
+        pytest.param(
+            {
+                'label': 'Test App',
+                'path': 'test-app',
+                'category': 'test',
+                'description': 'A test application',
+                'filters_locked': {
+                    'or': [
+                        {'results.material.elements': ['H', 'O']},
+                        {
+                            'and': [
+                                {'authors.name:any': ['Alice', 'Bob']},
+                                {
+                                    'not': {
+                                        'results.method.simulation.program_name': 'VASP'
+                                    }
+                                },
+                            ]
+                        },
+                    ]
+                },
+            },
+            None,
+            200,
+            id='filters-locked-logical-operators',
+        ),
+        pytest.param(
+            {
+                'label': 'Test App',
+                'path': 'test-app',
+                'category': 'test',
+                'description': 'A test application',
+                'filters_locked': {
+                    'or': [
+                        {'results.material.elements': ['H', 'O']},
+                        {'missing': 'value'},
+                    ]
+                },
+            },
+            'Could not load the app search quantity "missing" used in filters_locked.',
+            422,
+            id='filters-locked-invalid-search-quantity',
         ),
     ],
 )
