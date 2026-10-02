@@ -76,7 +76,7 @@ infrastructure = [
   "mongoengine",
   "oauthenticator>=16.3.1",
   "optimade[mongo]>=1.2.0,<1.4.0", # `optimade.server.config.CONFIG` removed
-  "pyjwt[crypto]>=2.13.0",
+  "pyjwt[crypto]>=2.15.0",
   "python-logstash",
   "python-multipart>=0.0.27",
   "rdflib==5", # breaking changes in DCT.dataset in later versions

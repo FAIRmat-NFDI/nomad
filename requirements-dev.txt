@@ -125,7 +125,7 @@ numpy==2.2.6 ; python_full_version < '3.11'  # via ase, contourpy, h5grove, h5py
 numpy==2.4.6 ; python_full_version == '3.11.*'  # via ase, contourpy, h5grove, h5py, matid, matplotlib, monty, pandas, pymatgen-core, scipy, spglib, tifffile, xarray, -r requirements.txt, nomad-lab (pyproject.toml)
 numpy==2.5.2 ; python_full_version >= '3.12'  # via ase, contourpy, h5grove, h5py, matid, matplotlib, monty, pandas, pymatgen-core, scipy, spglib, tifffile, xarray, -r requirements.txt, nomad-lab (pyproject.toml)
 oauthenticator==17.4.0    # via -r requirements.txt, nomad-lab (pyproject.toml)
-oauthlib==3.3.1           # via jupyterhub, -r requirements.txt
+oauthlib==4.0.0           # via jupyterhub, -r requirements.txt
 openpyxl==3.1.5           # via -r requirements.txt, nomad-lab (pyproject.toml)
 opentelemetry-api==1.42.1  # via opentelemetry-exporter-otlp-proto-grpc, opentelemetry-exporter-otlp-proto-http, opentelemetry-instrumentation, opentelemetry-instrumentation-asgi, opentelemetry-instrumentation-elasticsearch, opentelemetry-instrumentation-fastapi, opentelemetry-instrumentation-pymongo, opentelemetry-sdk, opentelemetry-semantic-conventions, -r requirements.txt, nomad-lab (pyproject.toml)
 opentelemetry-exporter-otlp==1.42.1  # via -r requirements.txt, nomad-lab (pyproject.toml)
@@ -177,7 +177,7 @@ pydantic-core==2.46.4     # via pydantic, -r requirements.txt
 pydantic-settings==2.15.0  # via h5grove, molid, optimade, -r requirements.txt
 pygments==2.21.0          # via pytest, rich
 pyinstrument==5.1.3       # via -r requirements.txt, nomad-lab (pyproject.toml)
-pyjwt==2.13.0             # via oauthenticator, -r requirements.txt, nomad-lab (pyproject.toml)
+pyjwt==2.15.1             # via oauthenticator, -r requirements.txt, nomad-lab (pyproject.toml)
 pymatgen==2025.10.7 ; python_full_version < '3.11'  # via -r requirements.txt, nomad-lab (pyproject.toml)
 pymatgen==2026.5.4 ; python_full_version >= '3.11'  # via -r requirements.txt, nomad-lab (pyproject.toml)
 pymatgen-core==2026.8.13 ; python_full_version >= '3.11'  # via pymatgen, -r requirements.txt
@@ -234,7 +234,7 @@ tifffile==2026.3.3 ; python_full_version == '3.11.*'  # via h5grove, -r requirem
 tifffile==2026.8.23 ; python_full_version >= '3.12'  # via h5grove, -r requirements.txt
 tomli==2.4.1              # via alembic, coverage, mypy, pip-audit, pytest, -r requirements.txt
 tomli-w==1.2.0            # via pip-audit
-tornado==6.5.8            # via jupyterhub, oauthenticator, -r requirements.txt
+tornado==6.5.10           # via jupyterhub, oauthenticator, -r requirements.txt
 tqdm==4.70.0              # via molid, pymatgen, pymatgen-core, -r requirements.txt
 traitlets==5.16.1         # via jupyter-telemetry, jupyterhub, oauthenticator, -r requirements.txt
 truststore==0.10.4 ; sys_platform != 'emscripten'  # via httpcore2, httpx2, -r requirements.txt
@@ -245,7 +245,7 @@ tzdata==2026.3            # via pandas, pendulum, -r requirements.txt
 uncertainties==3.2.3      # via pymatgen, pymatgen-core, -r requirements.txt
 unidecode==1.4.0          # via -r requirements.txt, nomad-lab (pyproject.toml)
 universal-pathlib==0.3.10  # via msglc, -r requirements.txt
-urllib3==2.7.0            # via botocore, docker, elastic-transport, elasticsearch7, requests, -r requirements.txt
+urllib3==2.8.0            # via botocore, docker, elastic-transport, elasticsearch7, requests, -r requirements.txt
 uvicorn==0.52.4           # via fastapi-cache2, h5grove, -r requirements.txt, nomad-lab (pyproject.toml)
 uvloop==0.22.1 ; platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32'  # via uvicorn, -r requirements.txt
 validators==0.35.0        # via -r requirements.txt, nomad-lab (pyproject.toml)
