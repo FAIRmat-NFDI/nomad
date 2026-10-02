@@ -385,13 +385,20 @@ audit python:
   image: $UV_IMAGE
   variables:
     UV_LINK_MODE: copy
+    # jupyterhub is pinned <5.0.0 for running the deprecated old NORTH API. The new API
+    # runs Jupyterhub in a separate service where the version has been upgraded. These can
+    # be removed once we fully also remove the jupyterhub dependency from this package.
+    IGNORED_VULNS: >-
+      GHSA-m68r-v472-jgq9 PYSEC-2026-2189
+      GHSA-3vff-hjqv-m7h8 PYSEC-2026-2188
+      GHSA-p43p-whwx-q52h PYSEC-2026-3853
   before_script:
     - uv venv
     - uv pip install ".[dev,infrastructure]" -c requirements-dev.txt
   script:
     - EXIT=0
-    - uv audit || EXIT=1
-    - uv run pip-audit --skip-editable || EXIT=$((EXIT+2))
+    - uv audit $(printf -- '--ignore %s ' $IGNORED_VULNS) || EXIT=1
+    - uv run pip-audit --skip-editable $(printf -- '--ignore-vuln %s ' $IGNORED_VULNS) || EXIT=$((EXIT+2))
     - exit $EXIT
   rules:
     - if: $CI_COMMIT_BRANCH == 'develop'
