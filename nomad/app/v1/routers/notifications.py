@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
+from enum import Enum
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -33,6 +34,12 @@ from nomad.auth.scopes import Scope
 from nomad.notifications import notification_service
 
 router = APIRouter()
+
+
+class APITag(str, Enum):
+    DEFAULT = 'notifications'
+
+
 NotificationSourceFilter = Literal['all', 'system', 'user']
 
 
@@ -87,6 +94,7 @@ async def _events(
 
 @router.get(
     '',
+    tags=[APITag.DEFAULT],
     response_class=StreamingResponse,
     summary='Stream notifications.',
     description=(
