@@ -64,7 +64,7 @@ flexcache==0.3            # via pint, -r requirements.txt
 flexparser==0.4           # via pint, -r requirements.txt
 fonttools==4.63.0         # via matplotlib, -r requirements.txt
 frozenlist==1.8.0         # via aiohttp, aiosignal, -r requirements.txt
-fsspec==2026.7.0          # via s3fs, universal-pathlib, -r requirements.txt, nomad-lab (pyproject.toml)
+fsspec==2026.9.0          # via s3fs, universal-pathlib, -r requirements.txt, nomad-lab (pyproject.toml)
 googleapis-common-protos==1.75.1  # via opentelemetry-exporter-otlp-proto-grpc, opentelemetry-exporter-otlp-proto-http, -r requirements.txt
 greenlet==3.5.5 ; platform_machine == 'AMD64' or platform_machine == 'WIN32' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'ppc64le' or platform_machine == 'win32' or platform_machine == 'x86_64'  # via sqlalchemy, -r requirements.txt
 grpcio==1.83.0            # via opentelemetry-exporter-otlp-proto-grpc, -r requirements.txt
@@ -155,7 +155,8 @@ pathvalidate==3.3.1       # via -r requirements.txt, nomad-lab (pyproject.toml)
 pendulum==3.2.0           # via fastapi-cache2, -r requirements.txt
 pillow==12.3.0            # via matplotlib, -r requirements.txt
 pint==0.24.4 ; python_full_version < '3.11'  # via -r requirements.txt, nomad-lab (pyproject.toml)
-pint==0.25.3 ; python_full_version >= '3.11'  # via -r requirements.txt, nomad-lab (pyproject.toml)
+pint==0.25.3 ; python_full_version == '3.11.*'  # via -r requirements.txt, nomad-lab (pyproject.toml)
+pint==0.26.1 ; python_full_version >= '3.12'  # via -r requirements.txt, nomad-lab (pyproject.toml)
 pip==26.2.1               # via pip-api, nomad-lab (pyproject.toml)
 pip-api==0.0.34           # via pip-audit
 pip-audit==2.10.1         # via nomad-lab (pyproject.toml)
@@ -212,7 +213,7 @@ rpds-py==0.30.0 ; python_full_version < '3.11'  # via jsonschema, referencing, -
 rpds-py==2026.6.3 ; python_full_version >= '3.11'  # via jsonschema, referencing, -r requirements.txt
 ruamel-yaml==0.19.1       # via jupyter-telemetry, monty, oauthenticator, pymatgen, -r requirements.txt
 ruff==0.16.4              # via nomad-lab (pyproject.toml)
-s3fs==2026.7.0            # via msglc, -r requirements.txt
+s3fs==2026.9.0            # via msglc, -r requirements.txt
 scipy==1.15.3 ; python_full_version < '3.11'  # via ase, pymatgen, -r requirements.txt, nomad-lab (pyproject.toml)
 scipy==1.17.1 ; python_full_version == '3.11.*'  # via ase, pymatgen-core, -r requirements.txt, nomad-lab (pyproject.toml)
 scipy==1.18.1 ; python_full_version >= '3.12'  # via ase, pymatgen-core, -r requirements.txt, nomad-lab (pyproject.toml)

@@ -485,16 +485,22 @@ def add_template_dos(
                 dos_value[idx_bottom:idx_top] = 1
             dos_total.value = dos_value
 
-        if energy_reference_fermi is not None:
-            energy_reference_fermi *= ureg.electron_volt
-        if energy_reference_highest_occupied is not None:
-            energy_reference_highest_occupied *= ureg.electron_volt
-        if energy_reference_lowest_unoccupied is not None:
-            energy_reference_lowest_unoccupied *= ureg.electron_volt
         scc.energy = runschema.calculation.Energy(
-            fermi=energy_reference_fermi,
-            highest_occupied=energy_reference_highest_occupied,
-            lowest_unoccupied=energy_reference_lowest_unoccupied,
+            fermi=(
+                energy_reference_fermi * ureg.electron_volt
+                if energy_reference_fermi is not None
+                else None
+            ),
+            highest_occupied=(
+                energy_reference_highest_occupied * ureg.electron_volt
+                if energy_reference_highest_occupied is not None
+                else None
+            ),
+            lowest_unoccupied=(
+                energy_reference_lowest_unoccupied * ureg.electron_volt
+                if energy_reference_lowest_unoccupied is not None
+                else None
+            ),
         )
     return template
 
