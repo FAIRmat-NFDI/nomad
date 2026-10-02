@@ -188,9 +188,12 @@ def _apply_if_match(
         details.setdefault('ETag', etag)
         details.setdefault('type', 'file')
         file_obj.details = details
-    req_kw = getattr(file_obj, 'req_kw', None)
-    if isinstance(req_kw, dict):
-        req_kw['IfMatch'] = etag
+    # s3fs >= 2026.9 uses read_kw for reads; older versions use req_kw.
+    for attribute in ('read_kw', 'req_kw'):
+        request_kwargs = getattr(file_obj, attribute, None)
+        if isinstance(request_kwargs, dict):
+            request_kwargs['IfMatch'] = etag
+            break
 
 
 def _is_stale_object_error(error: Exception) -> bool:

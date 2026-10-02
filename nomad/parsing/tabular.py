@@ -662,7 +662,10 @@ def _create_column_to_quantity_mapping(section_def: Section):
                         section = next_section
 
                     if annotation and annotation.unit:
-                        value *= ureg(annotation.unit)
+                        value = ureg.Quantity(
+                            value.to_numpy() if isinstance(value, pd.Series) else value,
+                            annotation.unit,
+                        )
 
                     # NaN values are not supported in the metainfo. Set as None
                     # which means that they are not stored.
