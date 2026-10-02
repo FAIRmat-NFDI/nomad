@@ -19,6 +19,7 @@
 import json
 import logging
 import os
+import re
 import threading
 import warnings
 from enum import Enum
@@ -616,6 +617,45 @@ class Oasis(ConfigBaseModel):
         description='Use `auth.require_authentication` instead.',
         deprecated=True,
     )
+
+
+_DEFAULT_DOCUMENTATION_URL = 'https://docs.nomad-lab.eu'
+
+
+def get_default_documentation_url(nomad_version: str | None) -> str:
+    """
+    Returns the official documentation URL for the given NOMAD version. Clean
+    release versions (e.g. `1.4.3`) link to the docs of that release, any other
+    version (development builds, release candidates, ...) to the stable docs.
+    """
+    if nomad_version and re.fullmatch(r'\d+\.\d+\.\d+', nomad_version):
+        return f'{_DEFAULT_DOCUMENTATION_URL}/{nomad_version}'
+    return _DEFAULT_DOCUMENTATION_URL
+
+
+class Documentation(ConfigBaseModel):
+    """
+    Settings for the documentation associated with this NOMAD deployment.
+    """
+
+    url: str | None = Field(
+        None,
+        description=f"""
+        The URL where the documentation for this deployment is hosted. If not
+        set, it defaults to the official NOMAD documentation for the installed
+        version, i.e. `{_DEFAULT_DOCUMENTATION_URL}/<version>` for release
+        versions like `1.4.3`, and the stable documentation at
+        `{_DEFAULT_DOCUMENTATION_URL}` otherwise.
+    """,
+    )
+
+    @model_validator(mode='after')
+    @classmethod
+    def __validate(cls, values):  # pylint: disable=no-self-argument
+        if not values.url:
+            values.url = get_default_documentation_url(__version__)
+        values.url = values.url.rstrip('/')
+        return values
 
 
 class MetadataCache(ConfigBaseModel):
@@ -2376,6 +2416,10 @@ class Config(ConfigBaseModel):
     meta: Meta = Field(
         default_factory=Meta,
         description='Metadata and presentation details for this NOMAD deployment.',
+    )
+    documentation: Documentation = Field(
+        default_factory=Documentation,
+        description='Where the documentation for this NOMAD deployment is hosted.',
     )
     oasis: Oasis = Field(
         default_factory=Oasis,
