@@ -1182,7 +1182,9 @@ def aggregation_exclude_from_search_test_parameters(total_per_entity: int, total
     ]
 
 
-def assert_response(response, status_code: int | None = None) -> None:
+def assert_response(
+    response, status_code: int | None = None, error_detail: str | None = None
+) -> None:
     """General assertions for status code and error messages"""
     if status_code is None:
         return
@@ -1218,6 +1220,9 @@ def assert_response(response, status_code: int | None = None) -> None:
     if 400 <= status_code < 500:
         response_json = response.json()
         assert 'detail' in response_json
+
+        if error_detail is not None:
+            assert response_json['detail'] == error_detail
 
 
 def assert_base_metadata_response(response, status_code=None):

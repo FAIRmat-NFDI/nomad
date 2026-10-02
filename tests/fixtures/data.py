@@ -20,6 +20,7 @@ import asyncio
 import math
 import os
 import uuid
+from collections.abc import Iterable
 from datetime import datetime, timezone
 
 import pytest
@@ -28,6 +29,7 @@ from fsspec.implementations.local import LocalFileSystem
 
 from nomad import bundles, datamodel, processing, utils
 from nomad.archive import read_archive, to_json, write_archive
+from nomad.common import now
 from nomad.datamodel import EntryArchive, OptimadeEntry, User
 from nomad.datamodel.datamodel import SearchableQuantity
 from nomad.files import FSUtility, UploadFiles
@@ -820,3 +822,52 @@ def example_datasets(mongo_function, user1, user2):
 
     while datasets:
         datasets.pop().a_mongo.delete()
+
+
+@pytest.fixture(scope='function')
+def create_upload(mongo_function, user1, normalized, elastic_function):
+
+    def create(upload: dict, entries: Iterable[dict] | None = None):
+        data = ExampleData(main_author=user1)
+
+        upload_id = upload['upload_id']
+        data.create_upload(**upload)
+        for entry in entries or []:
+            entry.setdefault('entry_id', f'{upload_id}_1')
+            data.create_entry(upload_id=upload_id, **entry)
+        data.save()
+
+        return data
+
+    return create
+
+
+@pytest.fixture(scope='function')
+def create_including_upload(mongo_function, user1, normalized, elastic_function):
+
+    def create(upload_id, embargo_length, has_entry):
+        data = ExampleData(main_author=user1)
+
+        # included upload
+        inc_id = 'id_included'
+        data.create_upload(
+            upload_id=inc_id, published=True, embargo_length=embargo_length
+        )
+        data.create_entry(upload_id=inc_id, entry_id=f'{inc_id}_1')
+
+        # including upload
+        data.create_upload(
+            upload_id=upload_id,
+            included_entries={
+                'query': {'upload_id': {'any': [inc_id]}},
+                'timestamp': now(),
+            },
+        )
+        if has_entry:
+            data.create_entry(upload_id=upload_id, entry_id=f'{upload_id}_1')
+
+        data.save()
+
+        return data
+
+    return create

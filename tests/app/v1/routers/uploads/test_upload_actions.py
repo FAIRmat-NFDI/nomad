@@ -401,6 +401,67 @@ async def test_post_upload_action_publish(
 
 
 @pytest.mark.parametrize(
+    'upload_id, embargo_length, has_entry, expected_status_code, expected_error',
+    [
+        pytest.param(
+            'id_e0_pub0', 0, False, 200, None, id='includes-published-embargo0'
+        ),
+        pytest.param(
+            'id_e0_pub1',
+            1,
+            False,
+            400,
+            'The upload has 1 unpublished included entries. Have those published first.',
+            id='includes-published-embargo12',
+        ),
+        pytest.param(
+            'id_e1_pub0',
+            0,
+            True,
+            200,
+            None,
+            id='with-entry_includes-published-embargo0',
+        ),
+        pytest.param(
+            'id_e1_pub1',
+            1,
+            True,
+            400,
+            'The upload has 1 unpublished included entries. Have those published first.',
+            id='with-entry_includes-published-embargo12',
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_post_upload_action_publish_with_included_entries(
+    auth_headers,
+    client,
+    temporal_worker,
+    create_including_upload,
+    upload_id,
+    embargo_length,
+    has_entry,
+    expected_status_code,
+    expected_error,
+):
+    """Tests the publish action for uploads with included entries."""
+    user_auth = auth_headers['user1']
+    create_including_upload(upload_id, embargo_length, has_entry)
+
+    async with temporal_worker():
+        response = await asyncio.to_thread(
+            lambda: perform_post_upload_action(client, user_auth, upload_id, 'publish')
+        )
+
+    assert_response(response, expected_status_code, expected_error)
+    if expected_status_code == 200:
+        upload = assert_upload(response.json())
+        assert upload['process_running']
+
+        assert_gets_published(client, upload_id, user_auth, current_embargo_length=0)
+
+
+@pytest.mark.parametrize(
     'upload_id, user, preprocess, expected_status_code',
     [
         pytest.param('id_published_w', 'user1', None, 200, id='ok'),

@@ -208,6 +208,13 @@ class DOI(BaseModel):
     id: str = Field(description='The DOI name, e.g. 10.2345/nomad.6789-wxyz')
 
 
+class IncludedEntries(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    query: dict[str, Any] = Field()
+    timestamp: UTCDateTime | None = Field(None)
+
+
 class ProcData(BaseModel):
     process_running: bool = Field(description='If a process is running')
     current_process: str | None = Field(
@@ -299,6 +306,9 @@ class UploadProcData(ProcData):
         description='The license under which this upload is distributed.'
     )
     doi: DOI | None = Field(None, description='The DOI assigned to this upload.')
+    included_entries: IncludedEntries | None = Field(
+        None, description='Entries included from other uploads.'
+    )
     entries: int = Field(
         0, description='The number of identified entries in this upload.'
     )

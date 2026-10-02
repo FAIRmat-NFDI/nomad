@@ -25,6 +25,7 @@ from nomad.datamodel import EntryArchive, EntryMetadata, Results
 from nomad.datamodel.metainfo import runschema
 from nomad.datamodel.metainfo.workflow import Workflow
 from nomad.mongo.doi import EmbeddedDOI
+from nomad.mongo.included_entries import IncludedEntries
 from nomad.normalizing import normalizers
 from nomad.processing.data import mongo_upload_metadata
 
@@ -213,8 +214,14 @@ class ExampleData:
             'published_to': [],
         }
         upload_dict.update(kwargs)
+
         if upload_dict.get('doi') is not None:
             upload_dict['doi'] = EmbeddedDOI(**upload_dict['doi'])
+
+        key = 'included_entries'
+        if upload_dict.get(key) is not None:
+            upload_dict[key] = IncludedEntries(**upload_dict[key])
+
         if published is not None:
             if published and not upload_dict['publish_time']:
                 upload_dict['publish_time'] = self._next_time_stamp()
