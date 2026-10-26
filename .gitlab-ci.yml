@@ -47,7 +47,7 @@ update changelog:
   script:
     - curl -X POST "https://gitlab.mpcdf.mpg.de/api/v4/projects/$CI_PROJECT_ID/repository/changelog?branch=${CI_COMMIT_REF_NAME}&version=${CI_COMMIT_REF_NAME:1}&access_token=$CI_ACCESS_TOKEN&message=Add%20changelog%20for%20version%20$CI_COMMIT_REF_NAME%20%5Bskip-ci%5D"
   rules:
-    - if: $CI_COMMIT_REF_NAME =~ /^v\d+\.\d+\.\d+$/
+    - if: $CI_COMMIT_REF_NAME =~ /^release\/\d+\.\d+\.\d+$/
 
 .build_image:
   image:
