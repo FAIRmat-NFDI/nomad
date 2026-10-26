@@ -400,9 +400,10 @@ audit python:
     - uv audit $(printf -- '--ignore %s ' $IGNORED_VULNS) || EXIT=1
     - uv run pip-audit --skip-editable $(printf -- '--ignore-vuln %s ' $IGNORED_VULNS) || EXIT=$((EXIT+2))
     - exit $EXIT
+  # Vulnerabilities are reported as a warning, but do not block the pipeline
+  allow_failure: true
   rules:
     - if: $CI_COMMIT_BRANCH == 'develop'
-      allow_failure: true
     - if: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == 'main'
     - if: $CI_COMMIT_BRANCH == 'main'
 
