@@ -239,7 +239,10 @@ BUILTIN_NODE_TYPE_DEFAULTS: dict[str, Any] = {
         'request': {
             'results': {
                 'properties': {
-                    'geometry_optimization': {'energies': _resolved_request()}
+                    'geometry_optimization': {
+                        'energies': _resolved_request(),
+                        'convergence_tolerance_energy_difference': '*',
+                    }
                 }
             }
         }

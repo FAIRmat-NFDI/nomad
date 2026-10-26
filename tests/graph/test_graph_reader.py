@@ -4827,6 +4827,73 @@ def test_auto_layout_populates_archive_payload(user1, user2, example_data_with_f
         assert data_request['m_def']['m_request']['m_def_format'] == 'short'
 
 
+@pytest.mark.parametrize('has_tolerance', [False, True])
+@pytest.mark.parametrize('layout_id', ['default', 'simulation'])
+def test_auto_layout_geometry_optimization(monkeypatch, has_tolerance, layout_id):
+    energies = [-1.602176634e-18, -1.6822854657e-18, -1.67427458253e-18]
+    tolerance = 1.602176634e-22
+    geometry_optimization = {'energies': '#/workflow2/results/energies'}
+    quantities = ['results.properties.geometry_optimization.energies']
+    if layout_id == 'simulation':
+        quantities.append('results.method.simulation.program_name')
+    if has_tolerance:
+        geometry_optimization['convergence_tolerance_energy_difference'] = tolerance
+        quantities.append(
+            'results.properties.geometry_optimization.'
+            'convergence_tolerance_energy_difference'
+        )
+    archive = {
+        'metadata': {
+            'entry_id': 'entry-id',
+            'upload_id': 'upload-id',
+            'quantities': quantities,
+        },
+        'results': {'properties': {'geometry_optimization': geometry_optimization}},
+        'workflow2': {
+            'm_def': 'simulationworkflowschema.geometry_optimization.GeometryOptimization',
+            'results': {'energies': energies},
+        },
+    }
+    if layout_id == 'simulation':
+        archive['results']['method'] = {'simulation': {'program_name': 'VASP'}}
+
+    async def retrieve_entry(self, entry_id):
+        assert entry_id == 'entry-id'
+        return {'entry_id': entry_id, 'upload_id': 'upload-id'}
+
+    @contextmanager
+    def load_archive(self, upload_id, entry_id):
+        assert (upload_id, entry_id) == ('upload-id', 'entry-id')
+        yield archive
+
+    monkeypatch.setattr(GeneralReader, 'retrieve_entry', retrieve_entry)
+    monkeypatch.setattr(GeneralReader, 'load_archive', load_archive)
+    with EntryReader(
+        {Token.ARCHIVE: {'m_request': {'directive': 'auto_from_layout'}}}
+    ) as reader:
+        response = reader.sync_read('entry-id')
+
+    assert 'm_errors' not in response
+    assert response['resolved_layout_id'] == layout_id
+    request = response['resolved_archive_request']['results']['properties'][
+        'geometry_optimization'
+    ]
+    assert request['energies'] == {'m_request': {'directive': 'resolved'}}
+    assert request['convergence_tolerance_energy_difference'] == '*'
+    result = response['archive']['results']['properties']['geometry_optimization']
+    assert result['energies'] == (
+        'uploads/upload-id/entries/entry-id/archive/workflow2/results/energies'
+    )
+    resolved_energies = response
+    for segment in result['energies'].split('/'):
+        resolved_energies = resolved_energies[segment]
+    assert resolved_energies == energies
+    if has_tolerance:
+        assert result['convergence_tolerance_energy_difference'] == tolerance
+    else:
+        assert 'convergence_tolerance_energy_difference' not in result
+
+
 def test_auto_layout_rejects_unknown_layout(user1, example_data_with_figure):
     from nomad.graph.graph_reader import ConfigError, EntryReader
 
