@@ -75,6 +75,29 @@ async def test_get_specific_app_returns_app_and_search_quantities(client, no_war
     assert isinstance(body['search_quantities'], dict)
 
 
+def test_duplicate_app_paths_raise_clear_error(monkeypatch):
+    first = AppEntryPoint(
+        id='first_app',
+        app=App(label='First', path='duplicate', category='test'),
+    )
+    second = AppEntryPoint(
+        id='second_app',
+        app=App(label='Second', path='duplicate', category='test'),
+    )
+    monkeypatch.setattr(
+        type(config.plugins.entry_points),
+        'filtered_values',
+        lambda self: [first, second],
+    )
+    monkeypatch.setattr(apps_router, 'app_entry_points_cache', {})
+
+    with pytest.raises(
+        ValueError,
+        match='Duplicate app path "duplicate".*"first_app".*"second_app"',
+    ):
+        apps_router._initialize_search_quantities()
+
+
 @pytest.mark.parametrize(
     'payload',
     [
