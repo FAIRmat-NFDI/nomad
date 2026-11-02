@@ -22,7 +22,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 from bson import ObjectId
-from fastapi import HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi.testclient import TestClient
 
 from nomad.app.v1.models.models import User
 from nomad.app.v1.routers.auth import (
@@ -42,6 +43,49 @@ from nomad.mongo.pat import PAT
 from tests.test_config import load_test_config
 
 DEFAULT_TEST_SCOPES: list[Scope] = [Scope.UPLOADS_READ]
+
+
+@pytest.mark.parametrize('allow_pat', [True, False])
+def test_pat_openapi_security_scheme(allow_pat):
+    app = FastAPI()
+
+    @app.get('/protected')
+    def protected(
+        user=Depends(get_current_user([], allow_personal_access_token=allow_pat)),
+    ):
+        return None
+
+    schema = app.openapi()
+    schemes = schema['components']['securitySchemes']
+    assert schemes['OAuth2PasswordBearer']['type'] == 'oauth2'
+    security = schema['paths']['/protected']['get']['security']
+    assert {'OAuth2PasswordBearer': []} in security
+    if allow_pat:
+        assert schemes['PersonalAccessToken']['type'] == 'http'
+        assert schemes['PersonalAccessToken']['scheme'] == 'bearer'
+        assert {'PersonalAccessToken': []} in security
+    else:
+        assert 'PersonalAccessToken' not in schemes
+        assert {'PersonalAccessToken': []} not in security
+
+
+@pytest.mark.parametrize('token', [None, f'{PAT_PREFIX}test'])
+def test_pat_security_dependency(monkeypatch, token):
+    resolver = AsyncMock(return_value=None)
+    monkeypatch.setattr('nomad.app.v1.routers.auth._resolve_user_with_scopes', resolver)
+    app = FastAPI()
+
+    @app.get('/protected')
+    def protected(user=Depends(get_current_user([], allow_keycloak_token=False))):
+        return None
+
+    with TestClient(app) as client:
+        headers = {'Authorization': f'Bearer {token}'} if token else {}
+        response = client.get('/protected', headers=headers)
+
+    assert response.status_code == 200
+    assert resolver.await_args.kwargs['personal_access_token'] == token
+
 
 # Tests for OIDC authentication endpoints
 

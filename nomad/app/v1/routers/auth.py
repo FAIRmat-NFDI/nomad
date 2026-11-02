@@ -26,7 +26,12 @@ import anyio
 import jwt
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from fastapi import Query as FastApiQuery
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestFormStrict
+from fastapi.security import (
+    HTTPAuthorizationCredentials,
+    HTTPBearer,
+    OAuth2PasswordBearer,
+    OAuth2PasswordRequestFormStrict,
+)
 from pydantic import BaseModel, Field, field_validator
 
 from nomad import datamodel
@@ -73,6 +78,20 @@ class APITag(str, Enum):
 oauth2_scheme = OAuth2PasswordBearer(
     tokenUrl=f'{root_path}/auth/token', auto_error=False
 )
+pat_scheme = HTTPBearer(
+    scheme_name='PersonalAccessToken',
+    description=(
+        'Paste your NOMAD personal access token without the "Bearer " prefix. '
+        'Use only one authorization method at a time.'
+    ),
+    auto_error=False,
+)
+
+
+async def get_pat_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(pat_scheme),
+) -> str | None:
+    return credentials.credentials if credentials else None
 
 
 @traced(span_name='graph.auth.resolve_user')
@@ -278,7 +297,7 @@ def get_current_user(
             Parameter(
                 name='personal_access_token',
                 annotation=str | None,
-                default=Depends(oauth2_scheme),
+                default=Depends(get_pat_token),
                 kind=Parameter.KEYWORD_ONLY,
             )
         )
