@@ -108,6 +108,27 @@ def test_band_structure_electronic_request_includes_band_gap():
     assert 'band_gap' not in electronic_request('brillouin_zone_electronic')
 
 
+@pytest.mark.parametrize('layout_id', ['default', 'simulation'])
+def test_geometry_optimization_requests_energies_and_optional_tolerance(layout_id):
+    quantities = ['results.properties.geometry_optimization.energies']
+    if layout_id == 'simulation':
+        quantities.append('results.method.simulation.program_name')
+    context = {'quantities': quantities}
+    request = derive_request_from_layout(layout_id, context)
+    plan = create_layout_plan(context, requested_layout_id=layout_id)
+
+    expected = {
+        'energies': {'m_request': {'directive': 'resolved'}},
+        'convergence_tolerance_energy_difference': '*',
+    }
+    for archive_request in (request, plan.archive_request):
+        geometry_optimization = archive_request['results']['properties'][
+            'geometry_optimization'
+        ]
+        for field, descriptor in expected.items():
+            assert geometry_optimization[field] == descriptor
+
+
 def test_entry_layout_helpers_only_require_search_when_needed():
     intent = get_layout_query_intent({'entry_id': '*'})
     assert not intent.requires_search_metadata
