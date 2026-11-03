@@ -50,6 +50,7 @@ from nomad.app.v1.routers.entries import perform_search
 from nomad.app.v1.routers.uploads import (
     EntryProcDataPagination,
     RawDirPagination,
+    UploadProcData,
     UploadProcDataPagination,
     UploadProcDataQuery,
     entry_to_pydantic,
@@ -2625,6 +2626,37 @@ class DatasetReader(MongoReader):
 
 
 class EntryReader(MongoReader):
+    def _load_upload_metadata(self, upload_id: str) -> dict[str, Any]:
+        """Read mutable upload metadata and derived access lists from Mongo."""
+        # load_archive already fetched and authorized this upload. Reuse it to
+        # avoid another database lookup while building the layout response.
+        context = self._reader_cache.server_contexts.get(upload_id)
+        upload = context.upload if context is not None else None
+        if upload is None:
+            upload = get_upload_with_read_access(
+                upload_id, self.user, include_others=True
+            )
+        return UploadProcData.model_validate(upload).model_dump(
+            mode='json',
+            include={
+                'upload_name',
+                'published',
+                'publish_time',
+                'with_embargo',
+                'embargo_length',
+                'license',
+                'main_author',
+                'coauthors',
+                'reviewers',
+                'coauthor_groups',
+                'reviewer_groups',
+                'writers',
+                'writer_groups',
+                'viewers',
+                'viewer_groups',
+            },
+        )
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.target_entry_id = None
@@ -2649,7 +2681,14 @@ class EntryReader(MongoReader):
             return _EntryLayoutReadPlan()
 
         archive_metadata = await goto_child(archive, 'metadata')
-        metadata_dict = await async_to_json(archive_metadata)
+        metadata_dict = dict(await async_to_json(archive_metadata))
+        # Archives are processing snapshots. Upload sharing and publication can
+        # change without reprocessing, and derived access lists are not stored.
+        metadata_dict.update(
+            await asyncio.to_thread(
+                self._load_upload_metadata, target_entry['upload_id']
+            )
+        )
         layout_context = build_layout_context(target_entry, metadata_dict)
         plan = create_layout_plan(
             layout_context,
