@@ -1,0 +1,31 @@
+definitions:
+  sections:
+    GroupedBars:
+      base_sections:
+        - nomad.datamodel.data.EntryData
+        - nomad.datamodel.metainfo.plot.PlotSection
+      m_annotations:
+        plotly_express:
+          method: bar
+          x: '#positions'
+          y: '#values'
+          color: '#groups'
+          layout:
+            title:
+              text: Grouped bars
+            showlegend: true
+      quantities:
+        positions:
+          type: np.float64
+          shape: ['*']
+        values:
+          type: np.float64
+          shape: ['*']
+        groups:
+          type: str
+          shape: ['*']
+data:
+  m_def: '#/definitions/section_definitions/0'
+  positions: [0, 1, 2, 3]
+  values: [2, 5, 3, 4]
+  groups: [A, B, A, B]
