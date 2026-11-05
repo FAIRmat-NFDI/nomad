@@ -30,6 +30,7 @@ from nomad.actions.assets.models import (
     ActionAssetRef,
 )
 from nomad.actions.assets.service import (
+    _assert_media_type_allowed,
     clone_action_asset,
     consume_staged_assets,
     extract_action_asset_refs,
@@ -38,6 +39,7 @@ from nomad.actions.assets.service import (
     upload_action_asset,
 )
 from nomad.config import config
+from nomad.config.models.config import ActionAssets
 from nomad.mongo.action import ActionDocument
 
 
@@ -54,6 +56,60 @@ def _asset_ref(uploaded):
 def _assets_path(action_instance_id: str, filename: str | None = None) -> Path:
     path = Path(config.fs.actions) / action_instance_id / 'assets'
     return path / filename if filename else path
+
+
+@pytest.mark.parametrize(
+    'allowed, additional, media_type, accepted',
+    [
+        pytest.param(['text/plain'], [], 'text/plain', True, id='base-exact'),
+        pytest.param(['image/*'], [], 'image/png', True, id='base-wildcard'),
+        pytest.param(['*/*'], [], 'text/csv', True, id='base-all-types'),
+        pytest.param(
+            ['text/plain'], ['text/csv'], 'text/csv', True, id='additional-exact'
+        ),
+        pytest.param(
+            ['text/plain'], ['image/*'], 'image/png', True, id='additional-wildcard'
+        ),
+        pytest.param(
+            ['text/plain'], ['*/*'], 'text/csv', True, id='additional-all-types'
+        ),
+        pytest.param(
+            ['text/plain'], ['text/csv'], 'text/plain', True, id='base-retained'
+        ),
+        pytest.param(
+            ['text/plain'], ['text/plain'], 'text/plain', True, id='duplicate'
+        ),
+        pytest.param([], ['text/csv'], 'text/csv', True, id='empty-base'),
+        pytest.param(
+            ['text/plain'], ['text/csv'], 'image/png', False, id='removed-default'
+        ),
+        pytest.param(
+            ['text/plain'], ['image/*'], 'video/mp4', False, id='unlisted-type'
+        ),
+        pytest.param([], [], 'text/plain', False, id='empty-lists'),
+    ],
+)
+def test_action_asset_media_type_allowlist(
+    allowed, additional, media_type, accepted, monkeypatch
+):
+    monkeypatch.setattr(
+        config.actions,
+        'action_assets',
+        ActionAssets(
+            allowed_media_types=allowed, additional_allowed_media_types=additional
+        ),
+    )
+
+    if accepted:
+        _assert_media_type_allowed(media_type)
+    else:
+        with pytest.raises(HTTPException) as exc:
+            _assert_media_type_allowed(media_type)
+        assert exc.value.status_code == 400
+        assert exc.value.detail == f'Unsupported media type: {media_type}'
+
+    assert config.actions.action_assets.allowed_media_types == allowed
+    assert config.actions.action_assets.additional_allowed_media_types == additional
 
 
 @pytest.mark.asyncio

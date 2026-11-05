@@ -30,6 +30,7 @@ from nomad.auth.scopes import _resolve_scopes
 from nomad.config import CONFIG_ENV, load_config
 from nomad.config.models import config as config_module
 from nomad.config.models.config import (
+    ActionAssets,
     Auth,
     Config,
     NOMADFileSystem,
@@ -101,6 +102,45 @@ def _write_config(path, config_dict):
     with open(path, 'w') as file:
         file.write(yaml.dump(config_dict))
     return str(path)
+
+
+@pytest.mark.parametrize(
+    'asset_config',
+    [
+        pytest.param({}, id='defaults'),
+        pytest.param(
+            {'additional_allowed_media_types': ['text/csv']}, id='additions-only'
+        ),
+        pytest.param({'allowed_media_types': ['application/json']}, id='override-only'),
+        pytest.param(
+            {
+                'allowed_media_types': ['application/json'],
+                'additional_allowed_media_types': ['text/csv'],
+            },
+            id='override-with-additions',
+        ),
+        pytest.param(
+            {
+                'allowed_media_types': [],
+                'additional_allowed_media_types': ['text/csv'],
+            },
+            id='empty-base-with-additions',
+        ),
+    ],
+)
+def test_action_assets_media_type_config(asset_config, tmp_path):
+    config_file = _write_config(
+        tmp_path / 'nomad.yaml', {'actions': {'action_assets': asset_config}}
+    )
+
+    assets = load_config(files=[config_file]).actions.action_assets
+
+    assert assets.allowed_media_types == asset_config.get(
+        'allowed_media_types', ActionAssets().allowed_media_types
+    )
+    assert assets.additional_allowed_media_types == asset_config.get(
+        'additional_allowed_media_types', []
+    )
 
 
 @pytest.mark.parametrize('source', ['env', 'files'])

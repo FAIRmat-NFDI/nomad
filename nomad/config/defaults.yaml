@@ -101,6 +101,7 @@ actions:
       - application/json
       - text/plain
       - application/octet-stream
+    additional_allowed_media_types: []
     per_user_quota_bytes: 10737418240
 fs:
   local_tmp: /tmp

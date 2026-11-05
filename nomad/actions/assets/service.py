@@ -106,7 +106,10 @@ def _assert_media_type_allowed(media_type: str):
         HTTPException: If media type is not permitted.
     """
 
-    allowed = config.actions.action_assets.allowed_media_types
+    asset_config = config.actions.action_assets
+    allowed = set(asset_config.allowed_media_types) | set(
+        asset_config.additional_allowed_media_types
+    )
     if '*/*' in allowed:
         return
     if media_type in allowed:
