@@ -294,7 +294,7 @@ class PlotSection(ArchiveSection):
                         plotly_express_annotation, self, archive, logger
                     )
                     try:
-                        all_traces = go.Figure(fig.data[0])
+                        all_traces = go.Figure(data=fig.data)
                         total_layout = layout
                     except Exception as e:
                         raise PlotlyError(e)
@@ -303,7 +303,7 @@ class PlotSection(ArchiveSection):
                             trace, self, archive, logger
                         )
                         try:
-                            all_traces.add_trace(trace_fig.data[0])
+                            all_traces.add_traces(trace_fig.data)
                         except Exception as e:
                             raise PlotlyError(e)
                     if total_layout:
@@ -389,18 +389,22 @@ class PlotSection(ArchiveSection):
                                                 fig.update_layout(
                                                     **with_default_template
                                                 )
-                                            figure.add_trace(
-                                                fig.data[0], row=row, col=col
+                                            figure.add_traces(
+                                                fig.data,
+                                                rows=[row] * len(fig.data),
+                                                cols=[col] * len(fig.data),
                                             )
                                             for trace in traces:
                                                 trace_fig, layout, _ = express_do_plot(
                                                     trace, self, archive, logger
                                                 )
                                                 try:
-                                                    figure.add_trace(
-                                                        trace_fig.data[0],
-                                                        row=row,
-                                                        col=col,
+                                                    figure.add_traces(
+                                                        trace_fig.data,
+                                                        rows=[row]
+                                                        * len(trace_fig.data),
+                                                        cols=[col]
+                                                        * len(trace_fig.data),
                                                     )
                                                 except Exception as e:
                                                     raise PlotlyError(e)
