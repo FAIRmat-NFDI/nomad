@@ -1278,7 +1278,17 @@ class ActionAssets(ConfigBaseModel):
             'text/plain',
             'application/octet-stream',
         ],
-        description='Allowed media types for action asset uploads.',
+        description=(
+            'Allowed media types for action asset uploads. Setting this list replaces '
+            'the defaults; additional_allowed_media_types extends the configured list.'
+        ),
+    )
+    additional_allowed_media_types: list[str] = Field(
+        default_factory=list,
+        description=(
+            'Additional media types allowed for action asset uploads, extending '
+            'the configured allowed_media_types. Supports exact types, type/*, and */*.'
+        ),
     )
     per_user_quota_bytes: int = Field(
         10 * 1024 * 1024 * 1024,
