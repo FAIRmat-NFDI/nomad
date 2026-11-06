@@ -1,3 +1,13 @@
+## 2.0.1 (2026-11-06)
+
+### Fixed (5 changes)
+
+- [Fixed graph queries for legacy archives using known entry IDs](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/commit/caa3822f3b3471ac8816cc064815ce08b77b4bc3) ([merge request](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/merge_requests/3283))
+- [Fixed issue in writing HDF5 archive files for published projects](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/commit/b38976ae11d286e1e30533aff1184f87f563ac6a) ([merge request](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/merge_requests/3286))
+- [Fixed issue in Green's function missing from simulation entry layouts](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/commit/86efbaf92ad92a8459434944f7a154b8c2c9dfed) ([merge request](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/merge_requests/3278))
+- [Fixed issue with reading list values in the legacy archive browser](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/commit/26cabb5b25c36ef97eb804eb8f5680b52ac5a4aa) ([merge request](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/merge_requests/3292))
+- [Fixed issue with project DOIs leading to the wrong address](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/commit/80fde4c2d61e8311c4583340079cc9205a05fb79) ([merge request](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/merge_requests/3289))
+
 ## 2.0.0 (2026-10-18)
 
 ### Added (8 changes)
