@@ -29,7 +29,6 @@ from fsspec.implementations.local import LocalFileSystem
 
 from nomad import bundles, datamodel, processing, utils
 from nomad.archive import read_archive, to_json, write_archive
-from nomad.common import now
 from nomad.datamodel import EntryArchive, OptimadeEntry, User
 from nomad.datamodel.datamodel import SearchableQuantity
 from nomad.files import FSUtility, UploadFiles
@@ -860,7 +859,8 @@ def create_including_upload(mongo_function, user1, normalized, elastic_function)
             upload_id=upload_id,
             included_entries={
                 'query': {'upload_id': {'any': [inc_id]}},
-                'timestamp': now(),
+                # Use the example data clock, which runs ahead of the wall clock
+                'timestamp': data._next_time_stamp(),
             },
         )
         if has_entry:
