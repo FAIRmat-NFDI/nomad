@@ -304,6 +304,7 @@ def test_entry_layout_read_opens_archive_once(monkeypatch):
 
     monkeypatch.setattr(reader, 'retrieve_entry', retrieve_entry)
     monkeypatch.setattr(reader, 'load_archive', load_archive)
+    monkeypatch.setattr(reader, '_load_upload_metadata', lambda _upload_id: {})
     monkeypatch.setattr(reader, '_read_layout_archive', read_layout_archive)
 
     response = reader.sync_read('entry-id')

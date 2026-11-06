@@ -28,6 +28,7 @@ import pytest_asyncio
 import yaml
 
 from nomad import utils
+from nomad.common import now
 from nomad.datamodel import EntryArchive, ServerContext
 from nomad.datamodel.metainfo.simulation import run
 from nomad.files import PublicUploadFiles, StagingUploadFiles
@@ -4806,9 +4807,9 @@ def test_auto_layout_populates_archive_payload(user1, user2, example_data_with_f
         assert metadata['reviewers'] == [user2.user_id]
         assert metadata.get('coauthor_groups', []) == []
         assert metadata.get('reviewer_groups', []) == []
-        assert metadata.get('writers', []) == []
+        assert set(metadata['writers']) == {user1.user_id, user2.user_id}
         assert metadata.get('writer_groups', []) == []
-        assert metadata.get('viewers', []) == []
+        assert set(metadata['viewers']) == {user1.user_id, user2.user_id}
         assert metadata.get('viewer_groups', []) == []
         assert 'archive' in response
         assert 'm_def' in response['archive'], (
@@ -4825,6 +4826,110 @@ def test_auto_layout_populates_archive_payload(user1, user2, example_data_with_f
         data_request = response['resolved_archive_request']['data']
         assert data_request['m_request']['m_def_format'] == 'short'
         assert data_request['m_def']['m_request']['m_def_format'] == 'short'
+
+
+@pytest.mark.parametrize('published', [False, True])
+@pytest.mark.parametrize('shared', [False, True])
+@pytest.mark.parametrize('cached_upload', [False, True])
+def test_auto_layout_metadata_uses_current_upload(
+    monkeypatch, published, shared, cached_upload
+):
+    from nomad.processing import Upload
+
+    upload = Upload(
+        upload_id='upload-id',
+        main_author='current-owner',
+        coauthors=['current-coauthor'] if shared else [],
+        coauthor_groups=['current-writers'] if shared else [],
+        reviewers=['current-reviewer'] if shared else [],
+        reviewer_groups=['current-reviewers'] if shared else [],
+        publish_time=now() if published else None,
+        embargo_length=6 if published else 0,
+        upload_name='Current upload name',
+    )
+    access_checks = []
+
+    def get_upload(upload_id, user, *, include_others):
+        access_checks.append((upload_id, user, include_others))
+        return upload
+
+    monkeypatch.setattr(
+        'nomad.graph.graph_reader.get_upload_with_read_access', get_upload
+    )
+    archive = {
+        'metadata': {
+            'entry_id': 'entry-id',
+            'upload_id': 'upload-id',
+            'entry_name': 'Archive entry name',
+            'main_author': 'old-owner',
+            'coauthors': ['removed-coauthor'],
+            'reviewers': ['removed-reviewer'],
+            'coauthor_groups': ['removed-group'],
+            'reviewer_groups': ['removed-reviewer-group'],
+            'writer_groups': ['stale-derived-group'],
+            'published': not published,
+            'with_embargo': False,
+            'upload_name': 'Old upload name',
+        }
+    }
+    original_metadata = dict(archive['metadata'])
+
+    async def retrieve_entry(self, entry_id):
+        return {'entry_id': entry_id, 'upload_id': 'upload-id'}
+
+    @contextmanager
+    def load_archive(self, upload_id, entry_id):
+        if cached_upload:
+            self._reader_cache.server_contexts[upload_id] = ServerContext(upload)
+        yield archive
+
+    monkeypatch.setattr(GeneralReader, 'retrieve_entry', retrieve_entry)
+    monkeypatch.setattr(GeneralReader, 'load_archive', load_archive)
+    with EntryReader(
+        {
+            'metadata': {
+                key: '*'
+                for key in (
+                    'entry_name',
+                    'upload_name',
+                    'main_author',
+                    'coauthors',
+                    'reviewers',
+                    'coauthor_groups',
+                    'reviewer_groups',
+                    'writers',
+                    'writer_groups',
+                    'viewers',
+                    'viewer_groups',
+                    'published',
+                    'with_embargo',
+                )
+            },
+            'archive': {'m_request': {'directive': 'auto_from_layout'}},
+        }
+    ) as reader:
+        response = reader.sync_read('entry-id')
+
+    assert 'm_errors' not in response
+    metadata = response['metadata']
+    assert metadata['entry_name'] == 'Archive entry name'
+    assert metadata['upload_name'] == 'Current upload name'
+    assert metadata['main_author'] == 'current-owner'
+    for key in (
+        'coauthors',
+        'reviewers',
+        'coauthor_groups',
+        'reviewer_groups',
+        'writers',
+        'writer_groups',
+        'viewers',
+        'viewer_groups',
+    ):
+        assert set(metadata[key]) == set(getattr(upload, key))
+    assert metadata['published'] is published
+    assert metadata['with_embargo'] is published
+    assert archive['metadata'] == original_metadata
+    assert access_checks == ([] if cached_upload else [('upload-id', None, True)])
 
 
 @pytest.mark.parametrize('has_tolerance', [False, True])
@@ -4868,6 +4973,9 @@ def test_auto_layout_geometry_optimization(monkeypatch, has_tolerance, layout_id
 
     monkeypatch.setattr(GeneralReader, 'retrieve_entry', retrieve_entry)
     monkeypatch.setattr(GeneralReader, 'load_archive', load_archive)
+    monkeypatch.setattr(
+        EntryReader, '_load_upload_metadata', staticmethod(lambda *_: {})
+    )
     with EntryReader(
         {Token.ARCHIVE: {'m_request': {'directive': 'auto_from_layout'}}}
     ) as reader:
@@ -5664,6 +5772,9 @@ def test_entry_reader_queries_legacy_archive(monkeypatch, auto_layout):
 
     monkeypatch.setattr(GeneralReader, 'retrieve_entry', retrieve_entry)
     monkeypatch.setattr(GeneralReader, 'load_archive', load_archive)
+    monkeypatch.setattr(
+        EntryReader, '_load_upload_metadata', staticmethod(lambda *_: {})
+    )
     request = (
         {'m_request': {'directive': 'auto_from_layout'}}
         if auto_layout
