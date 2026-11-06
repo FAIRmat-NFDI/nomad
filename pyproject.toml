@@ -9,7 +9,7 @@ readme = "README.md"
 authors = [
   { name = "NOMAD Authors", email = "support@nomad-lab.eu" },
 ]
-version = '2.0.1'
+dynamic = ["version"]
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 
