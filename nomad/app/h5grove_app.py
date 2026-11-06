@@ -18,7 +18,6 @@
 
 from __future__ import annotations
 
-import re
 import traceback
 import urllib.parse
 from collections.abc import Callable
@@ -134,16 +133,20 @@ async def add_upload_folder_path(request: Request, call_next):
         path = f'{file}{path}'
 
     scope = request.scope
-    old_file = urllib.parse.quote(request.query_params['file'], safe=[])
-    new_file = urllib.parse.quote(upload_path + request.query_params['file'], safe=[])
-    scope['query_string'] = scope['query_string'].replace(
-        old_file.encode('utf-8'), new_file.encode('utf-8')
-    )
-    query_string = scope['query_string'].decode('utf-8')
-    query_string = re.sub(
-        r'path=.+?(?:&|\Z)', f'path={urllib.parse.quote(path)}&', query_string
-    )
-    scope['query_string'] = query_string.encode('utf-8')
+    # Rebuild the query string by parsing it, so that different encodings of the same
+    # value (e.g. '+' vs '%20' for spaces) are handled correctly.
+    params = [
+        (key, value)
+        for key, value in urllib.parse.parse_qsl(
+            scope['query_string'].decode('utf-8'), keep_blank_values=True
+        )
+        if key not in ('file', 'path')
+    ]
+    params.append(('file', upload_path + file))
+    params.append(('path', path))
+    scope['query_string'] = urllib.parse.urlencode(
+        params, quote_via=urllib.parse.quote, safe=''
+    ).encode('utf-8')
 
     response = await call_next(Request(scope))
     return response

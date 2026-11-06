@@ -157,6 +157,34 @@ def test_h5grove_raw_file_not_found(
     assert response.status_code == 404
 
 
+@pytest.mark.parametrize(
+    'filename, encoded',
+    [
+        pytest.param('a b.h5', 'a%20b.h5', id='space-percent-encoded'),
+        pytest.param('a b.h5', 'a+b.h5', id='space-plus-encoded'),
+        pytest.param('a+b.h5', 'a%2Bb.h5', id='literal-plus'),
+        pytest.param('a%b.h5', 'a%25b.h5', id='literal-percent'),
+        pytest.param('a&b=c.h5', 'a%26b%3Dc.h5', id='ampersand-equals'),
+    ],
+)
+def test_h5grove_raw_special_characters(
+    client, auth_headers, h5grove_raw_data, tmp_path, filename, encoded
+):
+    """
+    Raw files whose names contain spaces or other special characters can be read,
+    independent of how the client encodes the query string (e.g. ``+`` or ``%20``).
+    """
+    local_h5 = str(tmp_path / 'special.h5')
+    with h5py.File(local_h5, 'w') as f:
+        f.create_dataset('entry', data='test')
+    append_raw_files('h5_unpublished', local_h5, filename)
+
+    url = f'/h5grove/data?upload_id=h5_unpublished&source=raw&file={encoded}&path=%2Fentry'
+    response = client.get(url, headers=auth_headers['user1'])
+    assert_response(response, 200)
+    assert response.content == b'"test"'
+
+
 def test_h5grove_auth(client, example_data):
     """
     Tests that the h5grove endpoint is correctly protected based on upload publication status.
