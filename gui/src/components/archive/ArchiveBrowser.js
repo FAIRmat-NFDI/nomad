@@ -634,7 +634,7 @@ class SectionAdaptor extends ArchiveAdaptor {
         }
       }
 
-      if (this.entryIsEditable && property.shape.length === 1 && property?.m_annotations?.eln?.[0]) {
+      if (this.entryIsEditable && property.shape.length === 1 && property?.m_annotations?.eln?.[0] && index !== undefined) {
         return this.adaptorFactory(appendDataUrl(this.parsedObjUrl, urlSuffix), value[index], property)
       }
 

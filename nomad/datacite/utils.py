@@ -21,10 +21,25 @@ import secrets
 from nomad.config import config
 
 
-def generate_target_url(doi: str, target_type: str) -> str:
-    """Generates the URL the DOI resolves to."""
+def generate_dataset_target_url(doi: str) -> str:
+    """Generates the URL a dataset DOI resolves to.
 
-    return f'{config.gui_url()}/{target_type}/doi/{doi}'
+    The path below the site root is configured by `datacite.dataset_path`.
+    """
+    segments = [config.datacite.dataset_path.strip('/'), doi]
+
+    return f'{config.services.base_url(True)}/' + '/'.join(
+        segment for segment in segments if segment
+    )
+
+
+def generate_project_target_url(upload_id: str) -> str:
+    """Generates the URL a project DOI resolves to.
+
+    The GUI is mounted at the site root, not below the API base path.
+    """
+
+    return f'{config.services.base_url(True)}/projects/{upload_id}'
 
 
 def generate_unique_doi_name() -> str:

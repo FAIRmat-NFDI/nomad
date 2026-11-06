@@ -5536,6 +5536,84 @@ def test_archive_reader_direct_containers_preserve_filtered_results():
         assert reader.sync_read(archive) == {'metadata': {'text_search_contents': []}}
 
 
+@pytest.mark.parametrize('source', ['stored', 'opened', 'metadata'])
+def test_archive_reader_uses_known_ids_for_legacy_archives(monkeypatch, source):
+    upload_id = 'upload'
+    entry_id = '--va_v2iiKXYDnh2gVa8Bv68SW5A'
+    archive = {
+        'metadata': {'calc_id': entry_id},
+        'run': [
+            {
+                'system': [{'atoms': {'labels': ['H']}}],
+                'calculation': [{'system_ref': '/run/0/system/0'}],
+            }
+        ],
+    }
+    query = {
+        'run[0]': {
+            'calculation[0]': {
+                'm_request': {'directive': 'resolved', 'include': ['system_ref']}
+            }
+        }
+    }
+
+    @contextmanager
+    def load_archive(self, actual_upload_id, actual_entry_id):
+        assert (actual_upload_id, actual_entry_id) == (upload_id, entry_id)
+        yield archive
+
+    monkeypatch.setattr(GeneralReader, 'load_archive', load_archive)
+    with ArchiveReader(query) as reader:
+        if source == 'stored':
+            response = reader.sync_read(upload_id, entry_id)
+        elif source == 'opened':
+            response = reader.sync_read(archive, upload_id=upload_id, entry_id=entry_id)
+        else:
+            archive['metadata'].update(upload_id=upload_id, entry_id=entry_id)
+            response = reader.sync_read(archive)
+
+    assert response['run'][0]['calculation'][0]['system_ref'] == (
+        f'uploads/{upload_id}/entries/{entry_id}/archive/run/0/system/0'
+    )
+    assert response['uploads'][upload_id]['entries'][entry_id]['archive']['run'][0][
+        'system'
+    ][0]['atoms']['labels'] == ['H']
+
+
+@pytest.mark.parametrize('auto_layout', [False, True])
+def test_entry_reader_queries_legacy_archive(monkeypatch, auto_layout):
+    upload_id = 'upload'
+    entry_id = '--va_v2iiKXYDnh2gVa8Bv68SW5A'
+    archive = {'metadata': {'upload_id': upload_id, 'calc_id': entry_id}}
+
+    async def retrieve_entry(self, actual_entry_id):
+        assert actual_entry_id == entry_id
+        return {'upload_id': upload_id, 'entry_id': entry_id}
+
+    @contextmanager
+    def load_archive(self, actual_upload_id, actual_entry_id):
+        assert (actual_upload_id, actual_entry_id) == (upload_id, entry_id)
+        yield archive
+
+    monkeypatch.setattr(GeneralReader, 'retrieve_entry', retrieve_entry)
+    monkeypatch.setattr(GeneralReader, 'load_archive', load_archive)
+    request = (
+        {'m_request': {'directive': 'auto_from_layout'}}
+        if auto_layout
+        else {'metadata': {'upload_id': '*'}}
+    )
+    with EntryReader({'archive': request}) as reader:
+        response = reader.sync_read(entry_id)
+
+    assert 'm_errors' not in response
+    if auto_layout:
+        assert response['resolved_layout_id'] == 'default'
+        assert 'm_def' in response['archive']
+    else:
+        assert response['archive']['metadata']['upload_id'] == upload_id
+    assert 'entry_id' not in archive['metadata']
+
+
 def test_archive_reader_result_containers_do_not_alias_the_source_archive():
     archive = {
         'metadata': {

@@ -20,11 +20,12 @@ import { range } from 'lodash'
 import { TestAdaptor } from './conftest.spec'
 import {screen, renderNoAPI, render} from '../conftest.spec'
 import { expectPagination } from '../visualization/conftest.spec'
-import { PropertyValuesList, Section } from './ArchiveBrowser'
+import { archiveAdaptorFactory, PropertyValuesList, Section } from './ArchiveBrowser'
 import { laneContext } from './Browser'
 import {waitFor, within} from "@testing-library/dom"
 import {Metainfo} from './metainfo'
-import {systemMetainfoUrl} from '../../utils'
+import {createEntryUrl, systemMetainfoUrl} from '../../utils'
+import {apiBase} from '../../config'
 
 test.each([
   [15, 10, 5],
@@ -568,4 +569,37 @@ test.each([
   for (const value of hiddenExpected.values()) {
     expect(screen.queryByText(value)).not.toBeInTheDocument()
   }
+})
+
+test('list quantity with eln annotation but no component can be navigated when editable', async () => {
+  const metainfo = await createMetainfo({
+    packages: [
+      {
+        name: 'testPackage',
+        section_definitions: [
+          {
+            name: 'TestSection',
+            quantities: [
+              {
+                name: 'aggregated_elements',
+                type: { type_kind: 'python', type_data: 'str' },
+                shape: ['*'],
+                m_annotations: {eln: [{label: 'aggregated elements'}]},
+                m_parent_sub_section: 'quantities'
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  })
+  const defsByName = await metainfo.getDefsByName()
+  const def = defsByName.TestSection[0]
+  const adaptor = archiveAdaptorFactory(createEntryUrl(apiBase, 'upload_id', 'entry_id'), {aggregated_elements: ['A', 'B', 'C']}, def)
+  adaptor.entryIsEditable = true
+
+  // The whole list is shown when navigating without an index
+  expect((await adaptor.itemAdaptor('aggregated_elements')).obj).toEqual(['A', 'B', 'C'])
+  // A single element is shown when navigating with an index
+  expect((await adaptor.itemAdaptor('aggregated_elements:1')).obj).toEqual('B')
 })

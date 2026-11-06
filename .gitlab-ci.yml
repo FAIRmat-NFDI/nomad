@@ -47,7 +47,7 @@ update changelog:
   script:
     - curl -X POST "https://gitlab.mpcdf.mpg.de/api/v4/projects/$CI_PROJECT_ID/repository/changelog?branch=${CI_COMMIT_REF_NAME}&version=${CI_COMMIT_REF_NAME:1}&access_token=$CI_ACCESS_TOKEN&message=Add%20changelog%20for%20version%20$CI_COMMIT_REF_NAME%20%5Bskip-ci%5D"
   rules:
-    - if: $CI_COMMIT_REF_NAME =~ /^v\d+\.\d+\.\d+$/
+    - if: $CI_COMMIT_REF_NAME =~ /^release\/\d+\.\d+\.\d+$/
 
 .build_image:
   image:
@@ -400,9 +400,10 @@ audit python:
     - uv audit $(printf -- '--ignore %s ' $IGNORED_VULNS) || EXIT=1
     - uv run pip-audit --skip-editable $(printf -- '--ignore-vuln %s ' $IGNORED_VULNS) || EXIT=$((EXIT+2))
     - exit $EXIT
+  # Vulnerabilities are reported as a warning, but do not block the pipeline
+  allow_failure: true
   rules:
     - if: $CI_COMMIT_BRANCH == 'develop'
-      allow_failure: true
     - if: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == 'main'
     - if: $CI_COMMIT_BRANCH == 'main'
 

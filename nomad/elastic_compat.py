@@ -114,7 +114,9 @@ def _warn_if_es7(version: ElasticVersion) -> None:
         configured_version='7',
         message=(
             'Elasticsearch 7 support is deprecated and will be removed in a '
-            'future NOMAD release. Configure Elasticsearch 9 before then.'
+            'future NOMAD release. Configure Elasticsearch 9 before then. '
+            'Refer to the migration guide at '
+            'https://docs.nomad-lab.eu/howto/oasis/migrate/v2.0.html'
         ),
     )
     _es7_warning_emitted = True

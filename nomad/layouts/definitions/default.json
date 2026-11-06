@@ -58,7 +58,8 @@
             "results.properties.electronic.band_structure_electronic.segment",
             "results.properties.electronic.dos_electronic",
             "results.properties.electronic.dos_electronic_new",
-            "results.properties.electronic.band_gap"
+            "results.properties.electronic.band_gap",
+            "results.properties.electronic.greens_functions_electronic"
           ]
         },
         "children": [
@@ -118,6 +119,20 @@
                     "lg": 6,
                     "xl": 3,
                     "sx": {"height": "450px"}
+                  }
+                ]
+              },
+              {
+                "type": "condition",
+                "query": {
+                  "quantities:any": [
+                    "results.properties.electronic.greens_functions_electronic"
+                  ]
+                },
+                "children": [
+                  {
+                    "type": "greens_functions_electronic",
+                    "title": "Green's functions and self-energy"
                   }
                 ]
               },

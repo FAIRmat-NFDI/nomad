@@ -57,6 +57,7 @@ bundle_import:
 client:
   url: https://nomad-lab.eu/prod/v1/api
 datacite:
+  dataset_path: /datasets/doi
   enabled: false
   mds_host: https://api.test.datacite.org
   password: '*'

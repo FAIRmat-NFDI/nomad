@@ -2676,7 +2676,11 @@ class EntryReader(MongoReader):
 
     @traced(span_name='graph.entry.read_layout_archive')
     async def _read_layout_archive(
-        self, archive: GenericDict, request: _LayoutArchiveRequest
+        self,
+        archive: GenericDict,
+        request: _LayoutArchiveRequest,
+        upload_id: str,
+        entry_id: str,
     ) -> dict[str, Any]:
         with ArchiveReader(
             request.normalized,
@@ -2686,7 +2690,7 @@ class EntryReader(MongoReader):
             global_root=self.global_root,
             reader_cache=self._reader_cache,
         ) as reader:
-            return await reader.read(archive)
+            return await reader.read(archive, upload_id=upload_id, entry_id=entry_id)
 
     # noinspection PyMethodOverriding
     @traced(span_name='graph.entry.read')
@@ -2713,7 +2717,10 @@ class EntryReader(MongoReader):
                             )
                             assert layout_plan.archive_request is not None
                             response[Token.ARCHIVE] = await self._read_layout_archive(
-                                archive, layout_plan.archive_request
+                                archive,
+                                layout_plan.archive_request,
+                                target_entry['upload_id'],
+                                entry_id,
                             )
                     except ValueError as exc:
                         raise ConfigError(str(exc)) from exc
@@ -3306,23 +3313,34 @@ class ArchiveReader(ArchiveLikeReader):
         return False
 
     @traced(span_name='graph.archive.read')
-    async def read(self, *args) -> dict:
+    async def read(
+        self, *args, upload_id: str | None = None, entry_id: str | None = None
+    ) -> dict:
         """
         Read the given archive with the required fields.
         Takes two forms of arguments:
             1. archive: dict | ArchiveDict
             2. upload_id: str, entry_id: str
+
+        For an already opened archive, upload_id and entry_id can be supplied as
+        keyword arguments. Only read missing IDs from archive metadata: older
+        archives may store calc_id instead of entry_id.
         """
 
-        async def _task(_archive):
-            metadata = await goto_child(_archive, 'metadata')
+        async def _task(_archive, upload_id, entry_id):
+            if upload_id is None or entry_id is None:
+                metadata = await goto_child(_archive, 'metadata')
+                if upload_id is None:
+                    upload_id = await goto_child(metadata, 'upload_id')
+                if entry_id is None:
+                    entry_id = await goto_child(metadata, 'entry_id')
 
             with self._prepare_reading() as response:
                 with trace_span('graph.archive.walk'):
                     await self._walk(
                         GraphNode(
-                            upload_id=await goto_child(metadata, 'upload_id'),
-                            entry_id=await goto_child(metadata, 'entry_id'),
+                            upload_id=upload_id,
+                            entry_id=entry_id,
                             current_path=[],
                             result_root=response,
                             ref_result_root=self.global_root,
@@ -3341,10 +3359,10 @@ class ArchiveReader(ArchiveLikeReader):
                 return response
 
         if len(args) == 1:
-            return await _task(args[0])
+            return await _task(args[0], upload_id, entry_id)
 
         with self.load_archive(*args) as archive:
-            return await _task(archive)
+            return await _task(archive, *args)
 
     async def _walk(
         self,

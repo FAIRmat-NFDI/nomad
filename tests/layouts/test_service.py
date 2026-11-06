@@ -87,6 +87,27 @@ def test_builtin_widget_defaults_are_applied_to_derived_requests():
         task_request = task_request['tasks']
 
 
+def test_band_structure_electronic_request_includes_band_gap():
+    def electronic_request(node_type):
+        compiled = compile_layout({'type': node_type}, {})
+        derived_request: dict = {}
+        calculate_request_from_layout(compiled, derived_request)
+        return derived_request['results']['properties']['electronic'][
+            'band_structure_electronic'
+        ]
+
+    resolved = {'m_request': {'directive': 'resolved'}}
+    # The viewer needs the band gap to shift energies to the highest occupied state.
+    band_structure = electronic_request('band_structure_electronic')
+    assert band_structure['band_gap'] == resolved
+    assert band_structure['reciprocal_cell'] == resolved
+    assert band_structure['segment'] == {
+        'm_request': {'directive': 'resolved', 'exclude': ['occupations']}
+    }
+    # The Brillouin zone only needs the k-path and the reciprocal cell.
+    assert 'band_gap' not in electronic_request('brillouin_zone_electronic')
+
+
 def test_entry_layout_helpers_only_require_search_when_needed():
     intent = get_layout_query_intent({'entry_id': '*'})
     assert not intent.requires_search_metadata
@@ -122,6 +143,43 @@ def test_simulation_layout_requests_resolved_displacements_only_when_present(
         }
     else:
         assert dynamical is None
+
+
+@pytest.mark.parametrize('layout_id', ['default', 'simulation'])
+@pytest.mark.parametrize('has_greens_functions', [False, True])
+def test_greens_functions_only_entries_get_resolved_plots_and_dmft(
+    layout_id, has_greens_functions
+):
+    quantities = (
+        ['results.method.simulation.program_name'] if layout_id == 'simulation' else []
+    )
+    if has_greens_functions:
+        quantities.append('results.properties.electronic.greens_functions_electronic')
+    context = {'quantities': quantities}
+    request = derive_request_from_layout(layout_id, context)
+    electronic = request.get('results', {}).get('properties', {}).get('electronic', {})
+    if not has_greens_functions:
+        assert 'greens_functions_electronic' not in electronic
+        return
+    greens = electronic['greens_functions_electronic']
+    for field in (
+        'tau',
+        'matsubara_freq',
+        'frequencies',
+        'greens_function_tau',
+        'greens_function_iw',
+        'self_energy_iw',
+        'greens_function_freq',
+        'self_energy_freq',
+    ):
+        assert greens[field] == {'m_request': {'directive': 'resolved'}}
+    assert 'hybridization_function_freq' not in greens
+    assert request['results']['method']['simulation']['dmft'] == '*'
+    plan = create_layout_plan(context, requested_layout_id=layout_id)
+    compiled = next(
+        layout for layout in plan.matching_layouts if layout['id'] == layout_id
+    )
+    assert "Green's functions and self-energy" in str(compiled)
 
 
 def test_default_layout_keeps_top_level_data_expanded_with_figures():
@@ -218,7 +276,9 @@ def test_entry_layout_read_opens_archive_once(monkeypatch):
         opens += 1
         yield archive
 
-    async def read_layout_archive(_archive, _request):
+    async def read_layout_archive(_archive, _request, upload_id, entry_id):
+        assert _archive is archive
+        assert (upload_id, entry_id) == ('upload-id', 'entry-id')
         return {'metadata': archive['metadata']}
 
     monkeypatch.setattr(reader, 'retrieve_entry', retrieve_entry)

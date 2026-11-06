@@ -24,7 +24,11 @@ from nomad.datamodel.datamodel import Dataset
 
 from .client import DataCiteClient
 from .models import Affiliation, Creator, DoiRequestAttributes, Title, TypesBase
-from .utils import generate_target_url, generate_unique_doi_name
+from .utils import (
+    generate_dataset_target_url,
+    generate_project_target_url,
+    generate_unique_doi_name,
+)
 
 if TYPE_CHECKING:
     from nomad.processing.data import Upload
@@ -113,7 +117,7 @@ def create_doi_for_dataset(dataset: Dataset) -> str | None:
 
     attributes = create_attributes_from_dataset(dataset)
     attributes.doi = generate_unique_doi_name()
-    attributes.url = generate_target_url(attributes.doi, 'dataset')
+    attributes.url = generate_dataset_target_url(attributes.doi)
     create_doi(attributes)
 
     return attributes.doi
@@ -125,7 +129,7 @@ def create_doi_for_upload(upload: 'Upload') -> str | None:
 
     attributes = create_attributes_from_upload(upload)
     attributes.doi = generate_unique_doi_name()
-    attributes.url = generate_target_url(attributes.doi, 'upload')
+    attributes.url = generate_project_target_url(upload.upload_id)
     create_doi(attributes)
 
     return attributes.doi
@@ -139,7 +143,7 @@ def create_attributes_from_args(
     attributes.creators = [convert_user_to_creator(user)]
     attributes.publicationYear = publicationYear
     attributes.doi = generate_unique_doi_name()
-    attributes.url = generate_target_url(attributes.doi, 'dataset')
+    attributes.url = generate_dataset_target_url(attributes.doi)
 
     return attributes
 

@@ -16,6 +16,8 @@
 # limitations under the License.
 #
 
+import datetime
+
 import pytest
 
 from nomad.config import config
@@ -126,3 +128,80 @@ def test_convert_user_to_creator(
     creator = convert_user_to_creator(user)
     assert creator.name == 'John Doe'
     assert creator.affiliation[0].name == expected_affiliation_name
+
+
+@pytest.fixture
+def captured_doi_attributes(monkeypatch):
+    """Captures the attributes sent to DataCite without resolving real users."""
+    from nomad.datacite import service
+    from nomad.datacite.models import Creator
+
+    captured = []
+    monkeypatch.setattr(service, 'create_doi', captured.append)
+    monkeypatch.setattr(
+        service, 'convert_user_id_to_creator', lambda user_id: Creator(name=user_id)
+    )
+    monkeypatch.setattr(config.services, 'https', True)
+    monkeypatch.setattr(config.services, 'api_host', 'nomad.example.org')
+    monkeypatch.setattr(config.services, 'api_port', 443)
+    return captured
+
+
+@pytest.mark.parametrize('api_base_path', ['/backend', '/'])
+def test_create_doi_for_upload_targets_project_page(
+    captured_doi_attributes, monkeypatch, api_base_path
+):
+    from types import SimpleNamespace
+
+    from nomad.datacite import create_doi_for_upload
+
+    monkeypatch.setattr(config.services, 'api_base_path', api_base_path)
+    upload = SimpleNamespace(
+        doi=None,
+        upload_id='upload_id',
+        upload_name='the_title',
+        main_author='main_author',
+        upload_create_time=datetime.datetime(2026, 1, 1),
+    )
+
+    doi = create_doi_for_upload(upload)
+
+    (attributes,) = captured_doi_attributes
+    assert attributes.doi == doi
+    assert attributes.url == 'https://nomad.example.org/projects/upload_id'
+
+
+@pytest.mark.parametrize(
+    'api_base_path, dataset_path, expected_path',
+    [
+        pytest.param('/backend', None, '/datasets/doi', id='default'),
+        pytest.param('/', None, '/datasets/doi', id='root-api'),
+        pytest.param('/backend', 'prod/dataset', '/prod/dataset', id='no-slashes'),
+        pytest.param(
+            '/backend', '/prod/dataset/', '/prod/dataset', id='trailing-slash'
+        ),
+        pytest.param('/backend', '', '', id='empty'),
+        pytest.param('/backend', '/', '', id='slash'),
+    ],
+)
+def test_create_doi_for_dataset_targets_dataset_path(
+    captured_doi_attributes, monkeypatch, api_base_path, dataset_path, expected_path
+):
+    from types import SimpleNamespace
+
+    from nomad.datacite import create_doi_for_dataset
+
+    monkeypatch.setattr(config.services, 'api_base_path', api_base_path)
+    if dataset_path is not None:
+        monkeypatch.setattr(config.datacite, 'dataset_path', dataset_path)
+    dataset = SimpleNamespace(
+        doi=None,
+        dataset_name='the_title',
+        user_id='user_id',
+        dataset_create_time=datetime.datetime(2026, 1, 1),
+    )
+
+    doi = create_doi_for_dataset(dataset)
+
+    (attributes,) = captured_doi_attributes
+    assert attributes.url == f'https://nomad.example.org{expected_path}/{doi}'

@@ -1999,6 +1999,13 @@ class DataCite(ConfigBaseModel):
         '10.83696',  # test prefix
         description='DataCite DOI prefix assigned to this NOMAD deployment.',
     )
+    dataset_path: str = Field(
+        '/datasets/doi',
+        description="""
+        The path below the site root that dataset DOIs resolve to. New dataset
+        DOIs point to `<base-url><dataset_path>/<doi>`.
+    """,
+    )
     user: str = Field(
         '*',
         description='DataCite username.',

@@ -86,6 +86,24 @@ _BAND_STRUCTURE_ELECTRONIC = {
 }
 
 
+# The band structure viewer shifts the energies to the highest occupied state
+# stored in the band gap, so it needs `band_gap` on top of the Brillouin zone data.
+_BAND_STRUCTURE_ELECTRONIC_WITH_BAND_GAP = {
+    'results': {
+        'properties': {
+            'electronic': {
+                'band_structure_electronic': {
+                    **_BAND_STRUCTURE_ELECTRONIC['results']['properties']['electronic'][
+                        'band_structure_electronic'
+                    ],
+                    'band_gap': _resolved_request(),
+                }
+            }
+        }
+    }
+}
+
+
 _BAND_STRUCTURE_VIBRATIONAL = {
     'results': {
         'properties': {
@@ -103,7 +121,7 @@ _BAND_STRUCTURE_VIBRATIONAL = {
 BUILTIN_NODE_TYPE_DEFAULTS: dict[str, Any] = {
     'brillouin_zone_electronic': {'request': _BAND_STRUCTURE_ELECTRONIC},
     'brillouin_zone_vibrational': {'request': _BAND_STRUCTURE_VIBRATIONAL},
-    'band_structure_electronic': {'request': _BAND_STRUCTURE_ELECTRONIC},
+    'band_structure_electronic': {'request': _BAND_STRUCTURE_ELECTRONIC_WITH_BAND_GAP},
     'band_structure_vibrational': {'request': _BAND_STRUCTURE_VIBRATIONAL},
     'material': {'request': {'results': {'material': '*'}}},
     'dos_electronic': {
@@ -177,6 +195,34 @@ BUILTIN_NODE_TYPE_DEFAULTS: dict[str, Any] = {
                 'properties': {
                     'structural': {'radius_of_gyration': _resolved_request()}
                 }
+            }
+        }
+    },
+    'greens_functions_electronic': {
+        'request': {
+            'results': {
+                'properties': {
+                    'electronic': {
+                        'greens_functions_electronic': {
+                            'type': '*',
+                            'label': '*',
+                            **{
+                                name: _resolved_request()
+                                for name in (
+                                    'tau',
+                                    'matsubara_freq',
+                                    'frequencies',
+                                    'greens_function_tau',
+                                    'greens_function_iw',
+                                    'self_energy_iw',
+                                    'greens_function_freq',
+                                    'self_energy_freq',
+                                )
+                            },
+                        }
+                    }
+                },
+                'method': {'simulation': {'dmft': '*'}},
             }
         }
     },

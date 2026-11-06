@@ -29,7 +29,7 @@ from nomad.datacite import (
     create_attributes_from_args,
     create_doi,
     delete_doi,
-    generate_target_url,
+    generate_dataset_target_url,
     generate_unique_doi_name,
     publish_doi,
 )
@@ -68,7 +68,7 @@ class DOI(Document):
         doi.create_time = datetime.datetime.now(datetime.timezone.utc)
         doi.doi = id
         doi.state = 'created'
-        doi.url = generate_target_url(doi.doi, 'dataset')
+        doi.url = generate_dataset_target_url(doi.doi)
 
         return doi
 

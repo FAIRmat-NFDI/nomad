@@ -32,4 +32,8 @@ from .service import (
     publish_doi,
     delete_doi,
 )
-from .utils import generate_target_url, generate_unique_doi_name
+from .utils import (
+    generate_dataset_target_url,
+    generate_project_target_url,
+    generate_unique_doi_name,
+)
