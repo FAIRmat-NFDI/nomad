@@ -26,6 +26,7 @@ from nomad.metainfo import (
     Section,
     SubSection,
 )
+from nomad.metainfo.data_type import m_float64
 from nomad.metainfo.util import MQuantity
 from nomad.units import ureg
 
@@ -158,3 +159,94 @@ def test_full_storage_quantity_with_unit_generic_access():
     value = a_section.m_get(SectionA.VARIABLE_measurement)
     assert isinstance(value, dict)
     assert set(value.keys()) == {'width_measurement', 'height_measurement'}
+
+
+class _UnitRecorder(m_float64):
+    """Stand-in for any datatype: records the kwargs the full-storage path
+    passes to `normalize`, so the test can assert that `unit` is forwarded."""
+
+    captured: dict = {}
+
+    def normalize(self, value, **kwargs):
+        type(self).captured = dict(kwargs)
+        return super().normalize(value, **kwargs)
+
+
+class _NonNegativeInBaseUnits(m_float64):
+    """Stand-in for a plugin-defined bounded datatype (e.g. those in
+    nomad-simulations), the consumer of the `unit` kwarg that the full-storage
+    path forwards to `normalize`. Core ships no bounded types, so the test
+    defines a minimal one: it rejects values that are negative in base units,
+    converting with the forwarded `unit` when present and checking the bare
+    magnitude otherwise."""
+
+    def normalize(self, value, **kwargs):
+        unit = kwargs.get('unit')
+        base_value = (
+            ureg.Quantity(value, unit).to_base_units().m if unit is not None else value
+        )
+        if base_value < 0:
+            raise ValueError(f'{value} {unit} is negative in base units')
+        return super().normalize(value, **kwargs)
+
+
+def test_full_storage_set_forwards_unit_to_normalize():
+    """`Quantity.__set__` on the full-storage path (e.g. `flexible_unit=True`) forwards
+    the assigned unit to `Datatype.normalize` as the `unit` kwarg. The path splits the
+    pint value into magnitude and unit before normalizing, so without the forwarding a
+    datatype cannot validate unit-aware -- an offset-unit magnitude (-10 degC, a valid
+    263 K) would be seen as a bare -10."""
+
+    class S(MSection):
+        x = Quantity(type=_UnitRecorder(), flexible_unit=True)
+
+    section = S()
+    section.x = ureg.Quantity(-10.0, 'degC')
+
+    assert _UnitRecorder.captured.get('unit') == ureg.Unit('degC')
+
+
+@pytest.mark.parametrize(
+    'value, expected',
+    [
+        pytest.param(
+            ureg.Quantity(-10.0, 'degC'),
+            ureg.Quantity(-10.0, 'degC'),
+            id='offset-unit-negative-magnitude-valid',
+        ),
+        pytest.param(
+            ureg.Quantity(-273.15, 'degC'),
+            ureg.Quantity(-273.15, 'degC'),
+            id='offset-unit-at-absolute-zero',
+        ),
+        pytest.param(
+            ureg.Quantity(-300.0, 'degC'),
+            ValueError,
+            id='offset-unit-below-absolute-zero',
+        ),
+        pytest.param(
+            ureg.Quantity(-10.0, 'K'), ValueError, id='absolute-unit-negative'
+        ),
+        pytest.param(
+            ureg.Quantity(0.0, 'K'), ureg.Quantity(0.0, 'K'), id='absolute-unit-zero'
+        ),
+        pytest.param(5.0, 5.0, id='unitless-positive'),
+        pytest.param(-5.0, ValueError, id='unitless-negative'),
+    ],
+)
+def test_full_storage_unit_aware_datatype_validation(value, expected):
+    """The consuming side of the unit forwarding: a datatype that bounds values in
+    base units accepts or rejects them by their physical value, not by the bare
+    magnitude the full-storage path stores."""
+
+    class S(MSection):
+        x = Quantity(type=_NonNegativeInBaseUnits(), flexible_unit=True)
+
+    section = S()
+    if expected is ValueError:
+        with pytest.raises(ValueError):
+            section.x = value
+        return
+
+    section.x = value
+    assert section.x == expected

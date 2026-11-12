@@ -3367,6 +3367,10 @@ class Quantity(Property):
                     "Variadic quantities only accept raw values wrapped in 'MQuantity'."
                 )
 
+            # Forward the assigned unit so the datatype can validate unit-aware: the
+            # magnitude/unit split above would otherwise hide it, e.g. an offset-unit
+            # magnitude (-10 degC) would be checked as a bare -10.
+            kwargs.setdefault('unit', m_quantity.unit)
             m_quantity.value = self.type.normalize(
                 m_quantity.value, section=obj, **kwargs
             )
