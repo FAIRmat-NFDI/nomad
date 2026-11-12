@@ -193,6 +193,66 @@ class Datatype:
             type_name = type_name[2:]
         return type_name
 
+    def json_schema_extra(self) -> dict:
+        """
+        Extra JSON Schema keywords this data type contributes on top of the base
+        type mapping (e.g. numeric `minimum`/`maximum` for a bounded type). Empty by
+        default so the metainfo core stays agnostic of the constraints that
+        plugin-defined types may carry; such types override this. Overrides
+        normally add keywords; on a key clash the returned value takes precedence
+        over the base mapping (see `to_json_schema_type`).
+        """
+        return {}
+
+
+class UnresolvedCustom(Datatype):
+    """
+    Stand-in for a `type_kind='custom'` data type whose Python class cannot be
+    imported on this deployment (e.g. a schema transferred from a deployment that
+    has an extra plugin installed).
+
+    Value handling is delegated to a best-effort base type reconstructed from
+    `type_dtype` (or `Any`), so archives still validate where the plugin is
+    absent. The original serialization is re-emitted verbatim, so a schema that
+    round-trips through this deployment keeps the custom class definition intact
+    and can be reloaded with full validation wherever the plugin is present.
+    """
+
+    __slots__ = ('_serialized', '_base')
+
+    def __init__(self, serialized: dict, base: Datatype) -> None:
+        super().__init__()
+        self._serialized = dict(serialized)
+        self._base = base
+
+    def attach_definition(self, definition: typing.Any) -> Datatype:
+        # the base needs the definition too: its shape checks read it
+        super().attach_definition(definition)
+        self._base.attach_definition(definition)
+        return self
+
+    def normalize_flags(self, flags: dict) -> Datatype:
+        self._base.normalize_flags(flags)
+        return super().normalize_flags(flags)
+
+    def normalize(self, value: typing.Any, **kwargs: typing.Any) -> typing.Any:
+        return self._base.normalize(value, **kwargs)
+
+    def serialize(self, value: typing.Any, **kwargs: typing.Any) -> typing.Any:
+        return self._base.serialize(value, **kwargs)
+
+    def serialize_self(self) -> dict:
+        return dict(self._serialized)
+
+    def standard_type(self) -> str:
+        return self._base.standard_type()
+
+    def convertible_from(self, other: Datatype) -> bool:
+        return self._base.convertible_from(other)
+
+    def json_schema_extra(self) -> dict:
+        return self._base.json_schema_extra()
+
 
 class Primitive(Datatype):
     """
@@ -1180,12 +1240,35 @@ def normalize_type(value):
         # python classes
         if type_kind == 'custom':
             module_name, class_name = type_data.rsplit('.', 1)
-            if (class_type := globals().get(class_name, None)) is None:
-                module = importlib.import_module(module_name)
-                class_type = getattr(module, class_name, None)
+            try:
+                if (class_type := globals().get(class_name, None)) is None:
+                    module = importlib.import_module(module_name)
+                    class_type = getattr(module, class_name, None)
+            except ImportError:
+                # plugin defining the custom type is absent on this deployment
+                class_type = None
 
             if class_type is not None:
                 return class_type().normalize_flags(value)
+
+            # Plugin class not importable here. Degrade to a stand-in so the schema
+            # still loads and round-trips intact (see `UnresolvedCustom`).
+            _logger.warning(
+                'custom data type unavailable; using a degraded stand-in',
+                type_data=type_data,
+                type_dtype=value.get('type_dtype'),
+            )
+            base: Datatype = Any()
+            if (dtype_name := value.get('type_dtype')) is not None:
+                # numpy dtypes serialize as a bare `__name__` (e.g. `float64`);
+                # `normalize_type` resolves these only with an `np.` prefix.
+                for candidate in (dtype_name, f'np.{dtype_name}'):
+                    try:
+                        base = normalize_type(candidate)
+                        break
+                    except ValueError:
+                        continue
+            return UnresolvedCustom(value, base.normalize_flags(value))
 
         if type_kind == 'enum':
             return Enum(
@@ -1354,8 +1437,15 @@ def to_elastic_type(in_type: Datatype, dynamic: bool) -> str:
 
 def to_json_schema_type(in_type: Datatype) -> dict[str, typing.Any]:
     """
-    Convert a metainfo Datatype to a JSON Schema type.
+    Convert a metainfo Datatype to a JSON Schema type, merging any extra schema
+    keywords the type contributes (e.g. numeric bounds); see `json_schema_extra`.
     """
+    schema = _to_json_schema_base(in_type)
+    extra = in_type.json_schema_extra()
+    return {**schema, **extra} if extra else schema
+
+
+def _to_json_schema_base(in_type: Datatype) -> dict[str, typing.Any]:
     std_type = in_type.standard_type()
 
     if std_type == 'any':
