@@ -732,7 +732,7 @@ def _track_changes(section: MSection | None):
     suspended_sections = _suspended_change_tracking_sections.get()
 
     while section is not None:
-        if any(
+        if suspended_sections and any(
             section is suspended_section for suspended_section in suspended_sections
         ):
             return
@@ -775,10 +775,18 @@ def metainfo_setter(method):
     return wrapper
 
 
-# Instance-local cache fields written during hash() / graph reads. These are not
-# metainfo quantities; routing them through alias resolution is wasted work.
-_MSECTION_CACHE_ATTRS = frozenset(
+# Instance-local bookkeeping and cache fields, e.g. written for every ancestor on
+# each change or during hash() / graph reads. These are not metainfo quantities;
+# routing them through alias resolution is wasted work.
+_MSECTION_INTERNAL_ATTRS = frozenset(
     {
+        'm_parent',
+        'm_parent_sub_section',
+        'm_parent_index',
+        'm_mod_count',
+        'm_context',
+        'm_cache',
+        'm_annotations',
         '_cached_hash',
         '_cached_count',
         '_cached_def_id',
@@ -1019,9 +1027,10 @@ class MSection(metaclass=MObjectMeta):
             cast(Definition, content).__init_metainfo__()
 
     def __setattr__(self, name, value):
-        # Hash/graph caches are written in tight loops (recursive hash(), definition_id).
-        # Skip alias/variadic resolution for those known fields only — not every '_' name.
-        if name in _MSECTION_CACHE_ATTRS:
+        # Bookkeeping and hash/graph caches are written in tight loops (change tracking,
+        # recursive hash(), definition_id). Skip alias/variadic resolution for those
+        # known fields only — not every 'm_' or '_' name.
+        if name in _MSECTION_INTERNAL_ATTRS:
             self.__dict__[name] = value
             return
 
@@ -1114,7 +1123,7 @@ class MSection(metaclass=MObjectMeta):
             definition = def_or_name
             if (
                 not is_initializing_proto
-                and definition not in self.m_def.all_properties.values()
+                and self.m_def.all_properties.get(definition.name) is not definition
             ):
                 raise MetainfoError(f'Property {definition} is not defined.')
 
@@ -1425,6 +1434,10 @@ class MSection(metaclass=MObjectMeta):
                 ' are you calling this method on the correct object?'
             )
 
+        return self._is_set(definition)
+
+    def _is_set(self, definition: Property) -> bool:
+        """Like `m_is_set` for an already validated definition."""
         # derived quantity is always set
         if isinstance(definition, Quantity) and definition.derived is not None:
             return True
@@ -2018,8 +2031,9 @@ class MSection(metaclass=MObjectMeta):
                             yield name, serialize_quantity(quantity, path)
                         continue
 
-                    if not self.m_is_set(quantity) and (
-                        not include_defaults or not quantity.m_is_set(Quantity.default)
+                    # quantity is taken from this section's definition, no need to validate it
+                    if not self._is_set(quantity) and (
+                        not include_defaults or not quantity._is_set(Quantity.default)
                     ):
                         continue
 
@@ -2909,12 +2923,13 @@ class Definition(MSection):
             raise AssertionError(f'Definition {self.name} is not valid.')
 
     def m_is_set(self, def_or_name: Property | str, *, hint: str | None = None) -> bool:
-        definition = self._ensure_definition(def_or_name, hint=hint)
+        return self._is_set(self._ensure_definition(def_or_name, hint=hint))
 
+    def _is_set(self, definition: Property) -> bool:
         if definition == Definition.more:
             return len(self.more) > 0
 
-        return super().m_is_set(definition)
+        return super()._is_set(definition)
 
     def qualified_name(self):
         name = self.name if self.name else '*'
@@ -3230,42 +3245,51 @@ class Quantity(Property):
         if obj is None:
             return self
 
-        if self.name in obj.__dict__:
-            value = obj.__dict__[self.name]
-            actual_name = kwargs.get('actual_name', self.name)
+        # This is called for every attribute read on every section, including
+        # definitions. Reading this quantity's own properties via attribute access
+        # would recurse into further `__get__` calls. All of them are plain,
+        # non-derived quantities stored in `__dict__`, so read them directly.
+        own = self.__dict__
+        name = own.get('name')
+        derived = own.get('derived')
+
+        if name in obj.__dict__:
+            value = obj.__dict__[name]
+            actual_name = kwargs.get('actual_name', name)
             # appears to be a quantity using full storage
             # cannot use .use_full_storage as this is not set yet
             if isinstance(value, dict) and actual_name in value:
                 if kwargs.get('full', False):  # full storage requested
                     return value[actual_name]
                 value = value[actual_name].get()
-        elif self.derived is not None:
+        elif derived is not None:
             try:
-                if not self.cached:
-                    return self.derived(obj)
+                if not own.get('cached', False):
+                    return derived(obj)
 
-                cached = obj.__dict__.setdefault(f'_cached_{self.name}', [-1, None])
+                cached = obj.__dict__.setdefault(f'_cached_{name}', [-1, None])
                 if cached[0] != obj.m_mod_count:
                     cached[0] = obj.m_mod_count
-                    cached[1] = self.derived(obj)
+                    cached[1] = derived(obj)
                 return cached[1]
             except Exception as e:
                 raise DeriveError(f'Could not derive value for {self}: {str(e)}')
-        elif isinstance(self.default, dict | list):
-            value = self.default.copy()
+        elif isinstance(default := own.get('default'), dict | list):
+            value = default.copy()
         else:
-            value = self.default
+            value = default
 
         if value is None:
             return value
 
-        if isinstance(self.type, QuantityReference):
+        quantity_type = own.get('type')
+        if isinstance(quantity_type, QuantityReference):
 
             def _unwrap(_v):
                 if isinstance(_v, list):
                     return [_unwrap(x) for x in _v]
 
-                return getattr(_v, self.type.target_quantity_def.name)
+                return getattr(_v, quantity_type.target_quantity_def.name)
 
             value = _unwrap(value)
 
@@ -3277,14 +3301,14 @@ class Quantity(Property):
         # request one specific stored instance (no actual_name kwarg) -- there
         # is no single magnitude here to attach a unit to.
         if (
-            self.unit is not None
-            and isinstance(self.type, Number)
+            (unit := own.get('unit')) is not None
+            and isinstance(quantity_type, Number)
             and not isinstance(value, dict)
         ):
             # Note that we cannot do simple multiplication here as Pint units
             # with offsets do not support multiplication:
             # https://pint.readthedocs.io/en/stable/user/nonmult.html
-            return units.Quantity(value, self.unit)
+            return units.Quantity(value, unit)
 
         return value
 
@@ -3544,10 +3568,12 @@ class SubSection(Property):
         if obj is None:
             return self
 
-        if self.repeats:
-            return obj.__dict__.setdefault(self.name, MSubSectionList(obj, self))
+        # see Quantity.__get__ for why this reads its own properties directly
+        own = self.__dict__
+        if own.get('repeats', False):
+            return obj.__dict__.setdefault(own['name'], MSubSectionList(obj, self))
 
-        return obj.__dict__.get(self.name, None)
+        return obj.__dict__.get(own.get('name'), None)
 
     @metainfo_setter
     def __set__(self, obj, value, **kwargs):

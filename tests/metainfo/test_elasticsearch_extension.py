@@ -24,8 +24,17 @@ import pytest
 from elasticsearch.dsl import Keyword
 
 from nomad.config import config
+from nomad.datamodel.data import EntryData
 from nomad.datamodel.datamodel import SearchableQuantity
-from nomad.metainfo import Datetime, MEnum, MSection, Quantity, SubSection, Unit
+from nomad.metainfo import (
+    Datetime,
+    MEnum,
+    MSection,
+    Package,
+    Quantity,
+    SubSection,
+    Unit,
+)
 from nomad.metainfo.elasticsearch_extension import (
     Elasticsearch,
     _generate_entry_batches,
@@ -34,6 +43,7 @@ from nomad.metainfo.elasticsearch_extension import (
     entry_index,
     entry_type,
     index_entries,
+    schema_separator,
 )
 from nomad.utils.exampledata import ExampleData
 from tests.app.v1.routers.common import perform_quantity_search_test
@@ -828,3 +838,149 @@ def test_generate_entry_batches(
     # Verify total number of entries processed
     total_entries_processed = sum(len(batch) // 2 for batch in batches)
     assert total_entries_processed == len(entries)
+
+
+def dynamic_quantity_key(quantity):
+    return (
+        quantity.qualified_name,
+        quantity.search_field,
+        quantity.repeats,
+        quantity.definition,
+    )
+
+
+@pytest.fixture
+def dynamic_schemas():
+    """Plugin-like EntryData sections for testing the dynamic quantities."""
+    package = Package(name='tests.dynamic_schema')
+
+    class Inner(MSection):
+        value = Quantity(type=str)
+
+    class Base(MSection):
+        base_value = Quantity(type=str)
+        inner = SubSection(section_def=Inner, repeats=True)
+
+    class Root(Base, EntryData):
+        root_value = Quantity(type=int)
+        matrix = Quantity(type=np.float64, shape=[3])
+        reference = Quantity(type=Inner)
+
+    for section in [Inner, Base, Root]:
+        package.section_definitions.append(section.m_def)
+
+    nexus_package = Package(name='pynxtools.dynamic_schema')
+
+    class Level3(MSection):
+        value3 = Quantity(type=str)
+
+    class Level2(MSection):
+        value2 = Quantity(type=str)
+        level3 = SubSection(section_def=Level3)
+
+    class Level1(MSection):
+        value1 = Quantity(type=str)
+        level2 = SubSection(section_def=Level2)
+
+    class Entry(EntryData):
+        value0 = Quantity(type=str)
+        level1 = SubSection(section_def=Level1)
+
+    for section in [Level3, Level2, Level1, Entry]:
+        nexus_package.section_definitions.append(section.m_def)
+
+    entry_type.reload_quantities_dynamic()
+    entry_type._dynamic_root_sections = [Root.m_def, Entry.m_def]
+    yield
+    entry_type.reload_quantities_dynamic()
+
+
+def test_iter_dynamic_quantities(dynamic_schemas):
+    names = {
+        quantity.qualified_name for quantity in entry_type.iter_dynamic_quantities()
+    }
+    root, base = 'tests.dynamic_schema.Root', 'tests.dynamic_schema.Base'
+    nexus = 'pynxtools.dynamic_schema.Entry'
+
+    assert names == {
+        f'data.root_value{schema_separator}{root}',
+        f'data.base_value{schema_separator}{root}',
+        f'data.base_value{schema_separator}{base}',
+        f'data.inner.value{schema_separator}{root}',
+        f'data.value0{schema_separator}{nexus}',
+        f'data.level1.value1{schema_separator}{nexus}',
+        f'data.level1.level2.value2{schema_separator}{nexus}',
+    }
+
+
+@pytest.mark.parametrize(
+    'name, repeats',
+    [
+        pytest.param('data.root_value#tests.dynamic_schema.Root', False, id='root'),
+        pytest.param('data.base_value#tests.dynamic_schema.Base', False, id='base'),
+        pytest.param('data.inner.value#tests.dynamic_schema.Root', True, id='nested'),
+        pytest.param(
+            'data.inner.value#tests.dynamic_schema.Base', True, id='nested-base'
+        ),
+        pytest.param(
+            'data.level1.level2.level3.value3#pynxtools.dynamic_schema.Entry',
+            False,
+            id='nexus-deep',
+        ),
+    ],
+)
+def test_get_dynamic_quantity(dynamic_schemas, name, repeats):
+    quantity = entry_type.get_dynamic_quantity(name)
+    assert quantity is not None
+    assert quantity.dynamic
+    assert quantity.qualified_name == name
+    assert quantity.repeats == repeats
+    assert entry_type.get_dynamic_quantity(name) is quantity
+    assert entry_type.get_quantity(name) is quantity
+
+
+@pytest.mark.parametrize(
+    'name',
+    [
+        pytest.param('data.missing#tests.dynamic_schema.Root', id='missing'),
+        pytest.param('data.inner.missing#tests.dynamic_schema.Root', id='nested'),
+        pytest.param('data.inner#tests.dynamic_schema.Root', id='section'),
+        pytest.param('data.matrix#tests.dynamic_schema.Root', id='non-scalar'),
+        pytest.param('data.reference#tests.dynamic_schema.Root', id='reference'),
+        pytest.param('data.root_value#tests.dynamic_schema.Missing', id='schema'),
+        pytest.param('data.value#tests.dynamic_schema.Inner', id='not-entry-data'),
+        pytest.param('data.root_value#nomad.datamodel.data.EntryData', id='entry-data'),
+        pytest.param('data.root_value#tests.dynamic_schema.Root#int', id='dtype'),
+        pytest.param('results.root_value#tests.dynamic_schema.Root', id='prefix'),
+        pytest.param('data.root_value', id='no-schema'),
+    ],
+)
+def test_get_dynamic_quantity_invalid(dynamic_schemas, name):
+    assert entry_type.get_dynamic_quantity(name) is None
+
+
+def test_get_dynamic_quantity_reload(dynamic_schemas):
+    name = 'data.root_value#tests.dynamic_schema.Root'
+    quantity = entry_type.get_dynamic_quantity(name)
+    assert quantity is not None
+
+    entry_type.reload_quantities_dynamic()
+    entry_type._dynamic_root_sections = []
+    assert entry_type.get_dynamic_quantity(name) is None
+
+
+def test_dynamic_quantities_plugin(plugin_schema):
+    """All suggested dynamic quantities resolve by name, and lazily also deeper
+    than the cycle limit used for the suggestions."""
+    quantities = list(entry_type.iter_dynamic_quantities())
+    assert quantities
+    for quantity in quantities:
+        resolved = entry_type.get_dynamic_quantity(quantity.qualified_name)
+        assert resolved is not None
+        assert dynamic_quantity_key(resolved) == dynamic_quantity_key(quantity)
+
+    schema = 'nomadschemaexample.schema.MySchema'
+    names = {quantity.qualified_name for quantity in quantities}
+    deep = f'data.child_recursive.child.child.child.name_b{schema_separator}{schema}'
+    assert deep not in names
+    assert entry_type.get_dynamic_quantity(deep) is not None

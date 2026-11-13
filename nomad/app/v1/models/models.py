@@ -479,7 +479,7 @@ class QueryParameters:
             name_op, value = '__'.join(fragments[:-1]), fragments[-1]
             quantity_name = name_op.split('__', maxsplit=1)[0]
 
-            if quantity_name not in entry_type.quantities:
+            if entry_type.get_quantity(quantity_name) is None:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_CONTENT,
                     detail=[
@@ -501,7 +501,7 @@ class QueryParameters:
             else:
                 quantity_name = key
 
-            quantity = entry_type.quantities.get(quantity_name)
+            quantity = entry_type.get_quantity(quantity_name)
 
             if quantity is None:
                 continue

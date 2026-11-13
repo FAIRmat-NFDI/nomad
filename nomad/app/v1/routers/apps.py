@@ -17,6 +17,7 @@
 #
 
 import fnmatch
+import itertools
 import re
 from enum import Enum
 from threading import Lock
@@ -61,6 +62,13 @@ _bad_app_not_found = (
     {
         'model': HTTPExceptionModel,
         'description': 'Could not find an app with the path "{app_path}".',
+    },
+)
+_bad_search_quantity_not_found = (
+    status.HTTP_404_NOT_FOUND,
+    {
+        'model': HTTPExceptionModel,
+        'description': 'Could not find the search quantity "{name}".',
     },
 )
 _bad_search_quantity_parse = (
@@ -340,10 +348,17 @@ def normalize_name(input: str) -> str:
 
 
 def get_search_quantity(
-    search_quantity, name: str, is_section: bool = False, repeats: bool = False
+    search_quantity,
+    name: str,
+    is_section: bool = False,
+    repeats: bool = False,
+    definition_dicts: dict | None = None,
 ) -> SearchQuantity:
     """
     Constructs a SearchQuantity object from metadata.
+
+    Serialized quantity definitions are reused from `definition_dicts` if given, as
+    dynamic search quantities reuse the same definitions at many different paths.
     """
     if is_section:
         keys = ['description', 'nested', 'repeats']
@@ -363,7 +378,13 @@ def get_search_quantity(
             'dynamic',
             'repeats',
         ]
-        metadict = search_quantity.definition.m_to_dict(with_meta=True)
+        definition = search_quantity.definition
+        if definition_dicts is None:
+            metadict = definition.m_to_dict(with_meta=True)
+        else:
+            if definition not in definition_dicts:
+                definition_dicts[definition] = definition.m_to_dict(with_meta=True)
+            metadict = dict(definition_dicts[definition])
         metadict['aggregatable'] = search_quantity.aggregatable
         metadict['dynamic'] = search_quantity.dynamic
         metadict['repeats'] = search_quantity.repeats
@@ -433,6 +454,19 @@ def match_search_quantities(
     return filtered
 
 
+def get_exact_search_quantity(name: str) -> SearchQuantity | None:
+    """
+    Returns the search quantity with the given exact name. Dynamic quantities that
+    are not included in the suggestions are resolved on demand.
+    """
+    sq = all_search_quantities.get(name)
+    if sq is None:
+        quantity = entry_type.get_dynamic_quantity(name)
+        if quantity is not None:
+            sq = get_search_quantity(quantity, name)
+    return sq
+
+
 def initialize_search_quantities():
     """
     Race-safe initialization for the all search quantities; global and app-specific. This
@@ -459,9 +493,15 @@ def _initialize_search_quantities():
             app_entry_points_cache[entry_point.app.path] = entry_point
     # Base quantities
     all_search_quantities.clear()
-    for key, value in entry_type.quantities.items():
+    definition_dicts: dict = {}
+    for value in itertools.chain(
+        entry_type.quantities.values(), entry_type.iter_dynamic_quantities()
+    ):
         if not value.annotation.suggestion:
-            all_search_quantities[key] = get_search_quantity(value, key)
+            key = value.qualified_name
+            all_search_quantities[key] = get_search_quantity(
+                value, key, definition_dicts=definition_dicts
+            )
 
     # Section quantities
     def _get_sections(m_def, prefix=None, repeats=False):
@@ -527,7 +567,7 @@ def _build_app_response(app: App) -> dict[str, Any]:
         if parsed['dtype']:
             return
 
-        sq = all_search_quantities.get(name)
+        sq = get_exact_search_quantity(name)
         if sq is None:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -691,3 +731,31 @@ def get_entry_point_search_quantities(
     page = data.pagination.page or 1
     size = data.pagination.page_size or 10
     return matched[(page - 1) * size : page * size]
+
+
+@router.get(
+    '/search-quantities/{name}',
+    tags=[APITag.DEFAULT],
+    summary='Get a specific search quantity',
+    response_model=SearchQuantity,
+    response_model_exclude_none=True,
+    responses=create_responses(_bad_search_quantity_not_found),
+)
+def get_search_quantity_by_name(
+    name: str,
+    _user: Annotated[
+        User,
+        Depends(get_current_user([Scope.APPS_READ])),
+    ],
+):
+    """Entry point for getting a search quantity by its exact name. Dynamic
+    quantities are also resolved if they are not part of the suggestions."""
+    initialize_search_quantities()
+
+    sq = get_exact_search_quantity(name)
+    if sq is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f'Could not find the search quantity "{name}".',
+        )
+    return sq

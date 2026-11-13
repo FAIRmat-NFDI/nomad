@@ -16,6 +16,7 @@
 # limitations under the License.
 #
 
+import itertools
 import json
 import os
 import sys
@@ -272,6 +273,9 @@ def _generate_search_quantities():
     from nomad.datamodel import EntryArchive
     from nomad.metainfo.elasticsearch_extension import Elasticsearch, entry_type
 
+    # Dynamic search quantities reuse the same definitions at many different paths.
+    definition_dicts: dict = {}
+
     def to_dict(search_quantity, section=False, repeats=False):
         if section:
             keys = ['name', 'description', 'nested', 'repeats']
@@ -296,7 +300,10 @@ def _generate_search_quantities():
                 'dynamic',
                 'repeats',
             ]
-            metadict = search_quantity.definition.m_to_dict(with_meta=True)
+            definition = search_quantity.definition
+            if definition not in definition_dicts:
+                definition_dicts[definition] = definition.m_to_dict(with_meta=True)
+            metadict = dict(definition_dicts[definition])
             # UI needs to know whether the quantity can be used in
             # aggregations or not.
             metadict['aggregatable'] = search_quantity.aggregatable
@@ -318,7 +325,9 @@ def _generate_search_quantities():
     export = {}
 
     # Add quantities
-    for search_quantity in entry_type.quantities.values():
+    for search_quantity in itertools.chain(
+        entry_type.quantities.values(), entry_type.iter_dynamic_quantities()
+    ):
         isSuggestion = search_quantity.annotation.suggestion
         if not isSuggestion:
             export[search_quantity.qualified_name] = to_dict(search_quantity)

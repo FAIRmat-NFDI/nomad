@@ -630,9 +630,9 @@ def validate_quantity(
     """
     assert quantity_name is not None
 
-    # Primarily, look for the definition in the pre-registered static search
-    # quantities.
-    quantity = entry_type.quantities.get(quantity_name)
+    # Primarily, look for the definition in the static search quantities and the
+    # dynamic quantities of plugin schemas.
+    quantity = entry_type.get_quantity(quantity_name)
 
     if quantity is None:
         path, schema, dtype = parse_quantity_name(quantity_name)
