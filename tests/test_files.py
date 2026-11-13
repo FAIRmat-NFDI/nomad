@@ -1986,6 +1986,37 @@ class TestPublicUploadFiles(UploadFilesContract):
         assert zipfile_calls['n'] == first_parses
         other.close()
 
+    @pytest.mark.parametrize('memory_remote', [False, True])
+    def test_zip_append_invalidates_cached_index(
+        self, test_upload_id, monkeypatch, tmp_path, memory_remote
+    ):
+        if memory_remote:
+            self._setup_memory_public_fs(
+                monkeypatch, read_mode='remote_only', write_mode='remote_only'
+            )
+        monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
+        )
+        monkeypatch.setattr(
+            config.fs.public_fs.metadata_cache, 'revalidate_seconds', 3600
+        )
+        _, _, upload_files = create_public_upload(
+            test_upload_id, entry_specs='p', with_upload=False
+        )
+        assert not upload_files.raw_exists('added.txt')
+        with upload_files._zip_fs('a') as zip_fs:
+            zip_fs.pipe_file('added.txt', b'new content')
+
+        assert upload_files.raw_exists('added.txt')
+        with upload_files.raw_file('added.txt', 'rb') as raw_file:
+            assert raw_file.read() == b'new content'
+        upload_files.close()
+
+        other = PublicUploadFiles(test_upload_id)
+        assert other.raw_exists('added.txt')
+        other.close()
+
     def test_remote_storage_parses_zip_from_one_tail_fetch(
         self, test_upload_id, monkeypatch
     ):
@@ -2379,9 +2410,14 @@ class TestPublicUploadFiles(UploadFilesContract):
         other.close()
         assert version_calls['n'] > first_calls
 
+    @pytest.mark.parametrize('memory_remote', [False, True])
     def test_archive_toc_prefers_newer_suffix_over_cached_fallback(
-        self, test_upload_id, monkeypatch, tmp_path
+        self, test_upload_id, monkeypatch, tmp_path, memory_remote
     ):
+        if memory_remote:
+            self._setup_memory_public_fs(
+                monkeypatch, read_mode='remote_only', write_mode='remote_only'
+            )
         monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
         monkeypatch.setattr(
             config.fs.public_fs.metadata_cache, 'directory', str(tmp_path)
@@ -2392,17 +2428,18 @@ class TestPublicUploadFiles(UploadFilesContract):
         )
         entry_id = entries[0].entry_id
         access = upload_files.access
-        newer = os.path.join(upload_files.os_path, f'archive-{access}-v1.2.msg.msg')
-        older = os.path.join(upload_files.os_path, f'archive-{access}-v1.msg.msg')
-        newer_bytes = pathlib.Path(newer).read_bytes()
-        os.rename(newer, older)
+        storage_fs = upload_files.storage_fs
+        newer_location = upload_files.msg_fp(access).location
+        older_location = newer_location.replace('-v1.2.msg.msg', '-v1.msg.msg')
+        newer_bytes = storage_fs.read_bytes(newer_location)
+        storage_fs.mv(newer_location, older_location)
         upload_files.close()
 
         cached = PublicUploadFiles(test_upload_id)
         with cached.read_archive(entry_id) as archive:
             expected = to_json(archive[entry_id])
         cached.close()
-        pathlib.Path(newer).write_bytes(newer_bytes)
+        storage_fs.pipe_file(newer_location, newer_bytes)
 
         opened: list[str] = []
         original_open = FSUtility.open
@@ -2421,9 +2458,14 @@ class TestPublicUploadFiles(UploadFilesContract):
         assert any(path.endswith(f'archive-{access}-v1.2.msg.msg') for path in opened)
         assert not any(path.endswith(f'archive-{access}-v1.msg.msg') for path in opened)
 
+    @pytest.mark.parametrize('memory_remote', [False, True])
     def test_legacy_archive_toc_is_not_reparsed(
-        self, test_upload_id, monkeypatch, tmp_path
+        self, test_upload_id, monkeypatch, tmp_path, memory_remote
     ):
+        if memory_remote:
+            self._setup_memory_public_fs(
+                monkeypatch, read_mode='remote_only', write_mode='remote_only'
+            )
         from nomad.archive.utils import check_archive_version as original_check
         from nomad.archive.utils import v2_magic
 
@@ -2436,7 +2478,7 @@ class TestPublicUploadFiles(UploadFilesContract):
         )
         entry_id = entries[0].entry_id
         msg_file = upload_files.msg_fp(upload_files.access, fallback=True)
-        pathlib.Path(msg_file.os_path).write_bytes(v2_magic + b'\x00' * 64)
+        upload_files.storage_fs.pipe_file(msg_file.location, v2_magic + b'\x00' * 64)
         upload_files.close()
         clear_index_caches()
 

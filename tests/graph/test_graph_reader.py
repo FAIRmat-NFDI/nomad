@@ -5142,6 +5142,10 @@ def test_file_system_reader_reuses_zip_index_across_queries(
     monkeypatch, tmp_path, user1, example_data
 ):
     from nomad.config import config
+    from nomad.files import clear_index_caches
+
+    # The module-scoped upload may already have been queried by another test.
+    clear_index_caches()
 
     monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'enabled', True)
     monkeypatch.setattr(config.fs.public_fs.metadata_cache, 'directory', str(tmp_path))

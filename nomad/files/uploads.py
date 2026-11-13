@@ -1587,12 +1587,23 @@ class PublicUploadFiles(UploadFiles):
 
     @contextmanager
     def _zip_fs(self, mode: Literal['a', 'w', 'r'] = 'r'):
+        zip_obj = self.raw_zip_file_object()
         if mode != 'r':
             self.close()
-        with FSUtility.open_archive(
-            self.raw_zip_file_object().os_path, mode, fs=self.storage_fs
-        ) as zip_fs:
-            yield zip_fs
+        try:
+            with FSUtility.open_archive(
+                zip_obj.os_path, mode, fs=self.storage_fs
+            ) as zip_fs:
+                yield zip_fs
+        finally:
+            if mode != 'r':
+                # Writes can replace the object before the cache's revalidation
+                # TTL expires. Drop both shared and instance indexes, including
+                # an index populated while the archive was open for writing.
+                cached = _zip_cache.peek(zip_obj.location)
+                if cached is not None:
+                    _zip_cache.discard(cached)
+                self._zip = None
 
     def _zip_read_hints(self) -> tuple[int | None, str | None]:
         identity = None if self._zip is None else self._zip.identity
