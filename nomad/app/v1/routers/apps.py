@@ -454,9 +454,17 @@ def _initialize_search_quantities():
     test that the initialization works as expected.
     """
     # Entry points
+    app_entry_points_cache.clear()
     for entry_point in config.plugins.entry_points.filtered_values():
         if isinstance(entry_point, AppEntryPoint):
-            app_entry_points_cache[entry_point.app.path] = entry_point
+            app_path = entry_point.app.path
+            existing = app_entry_points_cache.get(app_path)
+            if existing is not None:
+                raise ValueError(
+                    f'Duplicate app path "{app_path}" is configured by entry points '
+                    f'"{existing.id}" and "{entry_point.id}".'
+                )
+            app_entry_points_cache[app_path] = entry_point
     # Base quantities
     all_search_quantities.clear()
     for key, value in entry_type.quantities.items():
