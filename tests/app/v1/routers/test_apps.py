@@ -18,6 +18,7 @@
 
 import uuid
 from unittest.mock import Mock
+from urllib.parse import quote
 
 import pytest
 
@@ -143,6 +144,57 @@ def test_search_quantities_suggestions_and_exact_match(client, no_warn):
     assert resp2.status_code == 200
     quantities = [item['quantity'] for item in resp2.json()]
     assert example in quantities
+
+
+deep_dynamic_quantity = (
+    'data.child_recursive.child.child.child.name_b#nomadschemaexample.schema.MySchema'
+)
+
+
+@pytest.mark.parametrize(
+    'name, dynamic',
+    [
+        pytest.param('entry_id', False, id='static'),
+        pytest.param('results.material', False, id='section'),
+        pytest.param(deep_dynamic_quantity, True, id='dynamic'),
+    ],
+)
+def test_get_search_quantity(client, no_warn, plugin_schema, name, dynamic):
+    resp = client.get(f'{BASE}/search-quantities/{quote(name, safe="")}')
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body['quantity'] == name
+    assert body.get('dynamic', False) == dynamic
+
+
+@pytest.mark.parametrize(
+    'name',
+    [
+        pytest.param('missing', id='missing'),
+        pytest.param(
+            'data.missing#nomadschemaexample.schema.MySchema', id='missing-dynamic'
+        ),
+        pytest.param('data.name#nomadschemaexample.schema.MySchema#str', id='dtype'),
+    ],
+)
+def test_get_search_quantity_not_found(client, no_warn, plugin_schema, name):
+    resp = client.get(f'{BASE}/search-quantities/{quote(name, safe="")}')
+    assert resp.status_code == 404
+    assert f'Could not find the search quantity "{name}"' in resp.json()['detail']
+
+
+def test_app_search_quantity_validation_dynamic(client, no_warn, plugin_schema):
+    """Dynamic quantities used in apps are resolved even if they are not included in
+    the search quantity suggestions."""
+    app = {
+        'label': 'Test App',
+        'path': 'test-app',
+        'category': 'test',
+        'columns': [{'search_quantity': deep_dynamic_quantity}],
+    }
+    resp = client.post(f'{BASE}/validate', json=app)
+    assert resp.status_code == 200
+    assert deep_dynamic_quantity in resp.json()['search_quantities']
 
 
 def test_search_quantities_filter_by_dtype(client, no_warn):

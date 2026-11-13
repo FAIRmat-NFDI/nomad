@@ -121,6 +121,7 @@ import re
 import time
 from collections import defaultdict
 from collections.abc import Callable, Iterator
+from functools import cached_property
 from typing import TYPE_CHECKING, Any, Optional, cast
 
 from elasticsearch.dsl import Q
@@ -197,7 +198,8 @@ class DocumentType:
             by documents of this type.
         quantities: All elasticsearch quantities that in documents of this type. A dictionary
             with full qualified name as key and :class:`Elasticsearch` annotations as
-            values.
+            values. Dynamic quantities of plugin schemas are not included, use
+            :meth:`get_quantity` to also resolve these.
         metrics: All metrics in this document type. A dictionary with metric names as
             keys and tuples of elasticsearch metric aggregation and respective
             :class:`Elasticsearch` metainfo annotation as values.
@@ -216,6 +218,11 @@ class DocumentType:
         self.quantities: dict[str, SearchQuantity] = {}
         self.suggestions: dict[str, Elasticsearch] = {}
         self.metrics: dict[str, tuple[str, SearchQuantity]] = {}
+        # Dynamic quantities from plugin schemas are resolved lazily
+        self._dynamic_root_sections: list[Section] | None = None
+        self._dynamic_schema_sections: dict[str, Section] | None = None
+        self._dynamic_quantities: dict[str, SearchQuantity] = {}
+        self._dynamic_annotations: dict[Quantity, Elasticsearch | None] = {}
 
     def _reset(self):
         self.indexed_properties.clear()
@@ -334,14 +341,9 @@ class DocumentType:
                 sub sections with elasticsearch annotation are traversed.
         """
 
-        mapping = self._create_mapping_recursive(
+        return self._create_mapping_recursive(
             section_def, prefix, auto_include_subsections
         )
-
-        # Register all dynamic quantities
-        self.reload_quantities_dynamic()
-
-        return mapping
 
     def _create_mapping_recursive(
         self,
@@ -447,39 +449,113 @@ class DocumentType:
         return self.mapping
 
     def reload_quantities_dynamic(self) -> None:
-        """Reloads the dynamically mapped quantities from the plugin schemas."""
-        from nomad.datamodel.data import EntryData
+        """Resets the dynamic quantities so that they are resolved again from the
+        plugin schemas. Has to be called when schema packages are added or removed
+        after the dynamic quantities have been accessed, e.g. in tests.
+        """
+        self._dynamic_root_sections = None
+        self._dynamic_schema_sections = None
+        self._dynamic_quantities.clear()
+        self._dynamic_annotations.clear()
 
-        # Remove existing dynamic quantities
-        for name, quantity in list(self.quantities.items()):
-            if quantity.dynamic:
-                del self.quantities[name]
+    def _get_dynamic_root_sections(self) -> list[Section]:
+        """Returns the EntryData sections of the enabled schema plugins."""
+        if self._dynamic_root_sections is None:
+            from nomad.datamodel.data import EntryData
 
-        # Gather the list of enabled schema plugins. Raise error if duplicate
-        # package name is encountered.
-        package_names: set[str] = set()
-        packages_from_plugins = {}
-        for entry_point in config.plugins.entry_points.filtered_values():
-            if isinstance(entry_point, SchemaPackageEntryPoint):
-                instance = entry_point.load()
-                assert isinstance(instance, SchemaPackage), (
-                    f'Error loading entry point "{entry_point.id}": The load method of a schema package entry point must return a SchemaPackage instance'
-                )
-                packages_from_plugins[entry_point.id] = instance
-        for name, package in SchemaPackage.registry.items():
-            # If package has no name, it is empty and can be skipped.
-            if not name:
-                continue
-            package_name = name.split('.')[0]
-            if package_name in package_names:
-                packages_from_plugins[name] = package
+            packages_from_plugins = {}
+            for entry_point in config.plugins.entry_points.filtered_values():
+                if isinstance(entry_point, SchemaPackageEntryPoint):
+                    instance = entry_point.load()
+                    assert isinstance(instance, SchemaPackage), (
+                        f'Error loading entry point "{entry_point.id}": The load method of a schema package entry point must return a SchemaPackage instance'
+                    )
+                    packages_from_plugins[entry_point.id] = instance
+
+            self._dynamic_root_sections = [
+                section
+                for package in packages_from_plugins.values()
+                for section in package.section_definitions
+                if isinstance(section, Section)
+                and issubclass(section.section_cls, EntryData)
+            ]
+        return self._dynamic_root_sections
+
+    def _get_dynamic_annotation(
+        self, quantity_def: Quantity
+    ) -> Optional['Elasticsearch']:
+        # The same definitions appear at many different paths, the annotation
+        # only depends on the definition.
+        if quantity_def not in self._dynamic_annotations:
+            self._dynamic_annotations[quantity_def] = (
+                create_dynamic_quantity_annotation(quantity_def)
+            )
+        return self._dynamic_annotations[quantity_def]
+
+    def get_quantity(self, name: str) -> Optional['SearchQuantity']:
+        """Returns the static or dynamic search quantity with the given name."""
+        quantity = self.quantities.get(name)
+        if quantity is None:
+            quantity = self.get_dynamic_quantity(name)
+        return quantity
+
+    def get_dynamic_quantity(self, name: str) -> Optional['SearchQuantity']:
+        """Resolves the dynamic search quantity with the given name, e.g.
+        `data.<path>#<schema>`. The schema is either an EntryData section of the
+        enabled schema plugins or one of its base classes. In contrast to
+        :meth:`iter_dynamic_quantities`, any path within the schema can be resolved.
+        """
+        quantity = self._dynamic_quantities.get(name)
+        if quantity is not None:
+            return quantity
+
+        path, schema, dtype = parse_quantity_name(name)
+        if not schema or dtype or not path.startswith('data.'):
+            return None
+
+        if self._dynamic_schema_sections is None:
+            self._dynamic_schema_sections = {
+                m_def.qualified_name(): m_def
+                for section in self._get_dynamic_root_sections()
+                for m_def in find_base_classes(section.section_cls)
+            }
+        section = self._dynamic_schema_sections.get(schema)
+        if section is None:
+            return None
+
+        *sub_section_names, quantity_name = path[len('data.') :].split('.')
+        repeats = False
+        for sub_section_name in sub_section_names:
+            sub_section_def = section.all_sub_sections.get(sub_section_name)
+            if sub_section_def is None:
+                return None
+            repeats = sub_section_def.repeats
+            section = sub_section_def.sub_section
+
+        quantity_def = section.all_quantities.get(quantity_name)
+        if quantity_def is None:
+            return None
+        annotation = self._get_dynamic_annotation(quantity_def)
+        if not annotation:
+            return None
+
+        quantity = SearchQuantity(annotation, qualified_name=name, repeats=repeats)
+        # Only resolved names are cached as the names come from user input.
+        self._dynamic_quantities[name] = quantity
+        return quantity
+
+    def iter_dynamic_quantities(self) -> Iterator['SearchQuantity']:
+        """Yields the dynamic search quantities of the enabled schema plugins, e.g.
+        for suggesting them. To keep the list manageable, deep pynxtools paths
+        and base class names below the first level are not included. These can still
+        be resolved by name with :meth:`get_dynamic_quantity`.
+        """
 
         # Use to get all quantities from the given definition, TODO: Circular
         # definitions are here avoided by simply keeping track of which
         # definitions have been used already in the current "branch". When
         # creating the dynamic quantities, this is the only way to prevent
-        # infinite recursion, but it should be made possible in the GUI + search
-        # API to query arbitrarily deep into the data structure.
+        # infinite recursion.
         def get_all_quantities(
             m_def, prefix=None, branch=None, repeats=False, level=0, max_level=None
         ):
@@ -507,83 +583,44 @@ class DocumentType:
                     max_level - 1 if max_level is not None else None,
                 )
 
-        quantities_dynamic = {}
-        for package in packages_from_plugins.values():
-            for section in package.section_definitions:
-                if isinstance(section, Section) and issubclass(
-                    section.section_cls, EntryData
-                ):
-                    schema_name = section.qualified_name()
-                    if schema_name.startswith('pynxtools'):
-                        # Allow App searches for specific AppDefs:
-                        selected_path = [
-                            # TODO: remove 'Root' once the new pynxtools schema is used
-                            'Root',
-                            'Entry',
-                            'Mpes',
-                            'Mpes_arpes',
-                            'Xps',
-                            'Spm',
-                            'Apm',
-                            'Em',
-                            'Optical_spectroscopy',
-                            'Ellipsometry',
-                            'Raman',
-                        ]
-                        if section.name in selected_path:
-                            max_level = 3
-                        else:
-                            max_level = 0
-                        selected_path = ['']
-                    else:
-                        selected_path = ['']
-                        max_level = -1
-                    for subsection in selected_path:
-                        path_prefix = subsection
-                        if subsection == '':
-                            selected_section = section
-                        else:
-                            selected_section = section.all_sub_sections[
-                                subsection
-                            ].sub_section
-                            path_prefix = path_prefix + '.'
+        for section in self._get_dynamic_root_sections():
+            schema_name = section.qualified_name()
 
-                        for quantity_def, path, repeats, level in get_all_quantities(
-                            selected_section, max_level=max_level
-                        ):
-                            annotation = create_dynamic_quantity_annotation(
-                                quantity_def
-                            )
-                            if not annotation:
-                                continue
-                            # TODO: The quantities at the first level of the hierarchy get
-                            # registered under both the topmost class name and the class
-                            # that actually contains the quantity definition. This is a
-                            # workaround to allow base class searches at the top level.
-                            # NOTE: This implementation ignores classes that might exist
-                            # between the topmost classs and the class that contains the
-                            # definition, e.g. if the hierarchy is A->B->C, and C contains
-                            # the definition, it won't be available under the class B.
-                            class_names = (
-                                [schema_name]
-                                if level > 0
-                                else list(
-                                    {
-                                        schema_name,
-                                        quantity_def.m_parent.qualified_name(),
-                                    }
-                                )
-                            )
-                            for class_name in class_names:
-                                full_name = f'data.{path_prefix}{path}{schema_separator}{class_name}'
-                                search_quantity = SearchQuantity(
-                                    annotation,
-                                    qualified_name=full_name,
-                                    repeats=repeats,
-                                )
-                                quantities_dynamic[full_name] = search_quantity
+            # The maximum depth is restricted to 3 for pynxtools
+            max_level = None
+            if schema_name.startswith('pynxtools'):
+                max_level = 3
 
-        self.quantities.update(quantities_dynamic)
+            for quantity_def, path, repeats, level in get_all_quantities(
+                section, max_level=max_level
+            ):
+                annotation = self._get_dynamic_annotation(quantity_def)
+                if not annotation:
+                    continue
+                # TODO: The quantities at the first level of the hierarchy get
+                # registered under both the topmost class name and the class
+                # that actually contains the quantity definition. This is a
+                # workaround to allow base class searches at the top level.
+                # NOTE: This implementation ignores classes that might exist
+                # between the topmost classs and the class that contains the
+                # definition, e.g. if the hierarchy is A->B->C, and C contains
+                # the definition, it won't be available under the class B.
+                class_names = (
+                    [schema_name]
+                    if level > 0
+                    else list(
+                        {
+                            schema_name,
+                            quantity_def.m_parent.qualified_name(),
+                        }
+                    )
+                )
+                for class_name in class_names:
+                    yield SearchQuantity(
+                        annotation,
+                        qualified_name=f'data.{path}{schema_separator}{class_name}',
+                        repeats=repeats,
+                    )
 
     def _register(self, annotation, prefix, repeats):
         search_quantity = SearchQuantity(
@@ -1071,7 +1108,6 @@ class SearchQuantity:
         if annotation.dynamic:
             self.qualified_name = qualified_name
             self.search_field = self.get_dynamic_path()
-            self.dynamic_filter = self.get_dynamic_filter()
 
     def get_dynamic_path(self):
         """Returns the dynamic field name for this quantity."""
@@ -1085,6 +1121,12 @@ class SearchQuantity:
                 loc=['aggregation', 'quantity'],
             )
         return f'search_quantities.{field_name}'
+
+    @cached_property
+    def dynamic_filter(self):
+        # Plugin schemas can produce a very large number of dynamic quantities,
+        # build the filter lazily as it is only needed for queries.
+        return self.get_dynamic_filter()
 
     def get_dynamic_filter(self):
         """Returns a filter for this quantity."""

@@ -71,7 +71,6 @@ async def lifespan(app: FastAPI):
     from nomad import infrastructure
     from nomad.actions.workflows.utils import setup_server_stats
     from nomad.cli.dev import generate_gui_artifacts_js, get_gui_config
-    from nomad.metainfo.elasticsearch_extension import entry_type
     from nomad.parsing.parsers import import_all_parsers
 
     import_all_parsers()
@@ -84,8 +83,6 @@ async def lifespan(app: FastAPI):
         disconnect()
     except Exception:
         pass
-
-    entry_type.reload_quantities_dynamic()
 
     GuiFiles.bootstrap(generate_gui_artifacts_js(), get_gui_config())
 
