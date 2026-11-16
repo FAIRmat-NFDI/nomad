@@ -98,8 +98,7 @@ class CachedUpload:
 
     @cached_property
     def processing_successful(self):
-        # processed_entries_count includes both successful and failed entries
-        return self.upload.processed_entries_count - self.processing_failed
+        return self.upload.successful_entries_count
 
     @cached_property
     def processing_failed(self):
