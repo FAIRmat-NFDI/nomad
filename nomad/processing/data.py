@@ -3453,6 +3453,13 @@ class Upload(Proc):
         ).count()
 
     @property
+    def successful_entries_count(self) -> int:
+        """The number of entries with successful processing."""
+        return Entry.objects(  # type: ignore
+            upload_id=self.upload_id, process_status=ProcessStatus.SUCCESS
+        ).count()
+
+    @property
     def total_entries_count(self) -> int:
         """The total number of entries for this upload (regardless of process status)."""
         return Entry.objects(upload_id=self.upload_id).count()  # type: ignore
