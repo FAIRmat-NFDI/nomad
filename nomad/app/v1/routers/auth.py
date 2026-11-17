@@ -211,7 +211,6 @@ async def _resolve_user_with_scopes(
         # Check user whitelist (via `authorized_users`)
         if (
             config.auth.authorized_users is not None
-            and user.email not in config.auth.authorized_users
             and user.username not in config.auth.authorized_users
         ):
             if config.auth.reject_unauthorized_users:

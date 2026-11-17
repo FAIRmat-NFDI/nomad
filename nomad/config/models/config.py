@@ -42,7 +42,6 @@ from pydantic import (
 )
 
 from nomad.auth.scopes import _resolve_scopes
-from nomad.common import is_email
 from nomad.config.models.pagination import PaginationBaseModel
 
 from .common import ConfigBaseModel, Options, OptionsGlob
@@ -414,14 +413,7 @@ class Auth(ConfigBaseModel):
         if v is None:
             return None
 
-        users = list(dict.fromkeys(user.lower().strip() for user in v))
-
-        if any(is_email(user) for user in users):
-            logger.warning(
-                'whitelisting users with email is deprecated, please use username instead.'
-            )
-
-        return users
+        return list(dict.fromkeys(user.lower().strip() for user in v))
 
     unauthenticated_user_scopes: OptionsGlob = Field(
         OptionsGlob(include=['*:read']),
