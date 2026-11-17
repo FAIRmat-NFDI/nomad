@@ -16,6 +16,7 @@
 # limitations under the License.
 #
 
+import asyncio
 import io
 import json
 import os
@@ -24,411 +25,32 @@ from contextlib import nullcontext
 from types import SimpleNamespace
 
 import pytest
-from fastapi import HTTPException
+from msglc import FileInfo, combine
 
-from nomad import utils
+from nomad import search, utils
 from nomad.archive.utils import read_archive, to_json, write_archive
-from nomad.bundles import (
-    BundleExporter,
-    BundleImporter,
-    _get_package_for_section,
-    _get_schema_packages_for_upload,
-    _get_section_defs_for_upload,
-)
+from nomad.bundles import BundleExporter, BundleImporter
 from nomad.config import config
 from nomad.datamodel import EntryArchive
 from nomad.datamodel.context import ServerContext
 from nomad.datamodel.data import EntryData
-from nomad.datamodel.datamodel import EntryMetadata
-from nomad.files import StreamedFile, StreamedFileSource
-from nomad.metainfo import MSection, Package, Quantity, Section
+from nomad.datamodel.metainfo.tabulartree import TabularTreeNodeInfo
+from nomad.files import StreamedFile, StreamedFileSource, ZipFileSource
+from nomad.metainfo import MSection, Package, Section
 from nomad.metainfo.util import MDefNotFound
 from nomad.mongo.package import PackageDefinition
 from nomad.processing import Entry, Upload
 from nomad.schemas import _mongo_definition_cache, _mongo_package_cache, get_schema
 
-# Test for helper functions
-
-
-def test_get_section_defs_for_upload(non_empty_processed_with_temporal):
-    indexed_definition_ids = set()
-    entry_ids = [
-        entry.entry_id for entry in non_empty_processed_with_temporal.successful_entries
-    ]
-
-    with non_empty_processed_with_temporal.entries_metadata(
-        entry_ids=entry_ids
-    ) as entries_metadata:
-        for entry_metadata in entries_metadata:
-            for section_def in entry_metadata.section_defs:
-                indexed_definition_ids.add(section_def.definition_id)
-
-    definitions = _get_section_defs_for_upload(
-        non_empty_processed_with_temporal.upload_id
-    )
-
-    definition_ids = [definition.definition_id for definition in definitions]
-    assert len(definition_ids) == len(set(definition_ids))
-    assert set(definition_ids) == indexed_definition_ids
-
-    qualified_names = {definition.qualified_name() for definition in definitions}
-    assert EntryArchive.m_def.qualified_name() in qualified_names
-    assert EntryMetadata.m_def.qualified_name() in qualified_names
-    assert 'nomad.datamodel.results.Results' in qualified_names
-    assert 'runschema.run.Run' in qualified_names
-
-
-def test_get_section_defs_for_upload_with_custom_schema(mongo_module, monkeypatch):
-    package = Package(name='tests.custom_bundle_schema')
-    package.upload_id = 'test-upload'
-    package.entry_id = 'test-schema-entry'
-
-    class CustomSchema(MSection):
-        value = Quantity(type=str)
-
-    package.section_definitions.append(CustomSchema.m_def)
-    PackageDefinition.create_new(package)
-
-    monkeypatch.setattr(
-        'nomad.bundles.Upload.get',
-        lambda upload_id: SimpleNamespace(main_author=None),
-    )
-    monkeypatch.setattr(
-        'nomad.bundles.search.search_iterator',
-        lambda **kwargs: [
-            {
-                'section_defs': [
-                    {
-                        'definition_qualified_name': package.qualified_name()
-                        + f'.{CustomSchema.m_def.name}',
-                        'definition_id': CustomSchema.m_def.definition_id,
-                    }
-                ]
-            }
-        ],
-    )
-
-    definitions = _get_section_defs_for_upload('test-upload')
-
-    assert len(definitions) == 1
-    assert definitions[0].definition_id == CustomSchema.m_def.definition_id
-    assert definitions[0].qualified_name() == (
-        f'entry_id:{package.entry_id}.{CustomSchema.m_def.name}'
-    )
-
-
-def test_get_section_defs_for_upload_resolves_indexed_builtin_snapshot(monkeypatch):
-    """Resolve a historical built-in by snapshot or migrate it to the current ID."""
-    monkeypatch.setattr(
-        'nomad.bundles.Upload.get',
-        lambda upload_id: SimpleNamespace(main_author=None),
-    )
-    monkeypatch.setattr(
-        'nomad.bundles.search.search_iterator',
-        lambda **kwargs: [
-            {
-                'section_defs': [
-                    {
-                        'definition_qualified_name': 'nomad.datamodel.datamodel.EntryArchive',
-                        'definition_id': 'indexed-definition-id',
-                    },
-                ]
-            }
-        ],
-    )
-
-    get_schema_calls = []
-
-    def get_schema_or_raise(qualified_name, definition_id):
-        get_schema_calls.append((qualified_name, definition_id))
-        if qualified_name is not None:
-            raise MDefNotFound('The loaded Python definition has a different ID.')
-        return EntryArchive.m_def
-
-    monkeypatch.setattr('nomad.bundles.get_schema', get_schema_or_raise)
-
-    assert _get_section_defs_for_upload('test-upload') == [EntryArchive.m_def]
-    assert get_schema_calls == [
-        (EntryArchive.m_def.qualified_name(), 'indexed-definition-id'),
-        (None, 'indexed-definition-id'),
-    ]
-
-    get_schema_calls.clear()
-
-    def get_schema_without_snapshot(qualified_name, definition_id=None):
-        get_schema_calls.append((qualified_name, definition_id))
-        if (
-            qualified_name == EntryArchive.m_def.qualified_name()
-            and definition_id is None
-        ):
-            return EntryArchive.m_def
-        if qualified_name is None:
-            raise HTTPException(status_code=404, detail='Package not found.')
-        raise MDefNotFound('The loaded Python definition has a different ID.')
-
-    monkeypatch.setattr('nomad.bundles.get_schema', get_schema_without_snapshot)
-    definition_id_aliases = {}
-
-    assert _get_section_defs_for_upload('test-upload', definition_id_aliases) == [
-        EntryArchive.m_def
-    ]
-    assert definition_id_aliases == {
-        'indexed-definition-id': EntryArchive.m_def.definition_id
-    }
-    assert get_schema_calls == [
-        (EntryArchive.m_def.qualified_name(), 'indexed-definition-id'),
-        (None, 'indexed-definition-id'),
-        (EntryArchive.m_def.qualified_name(), None),
-    ]
-
-    current_reference = 'entry_id:synthetic-entry.EntryArchive'
-    assert BundleExporter._replace_definition_references(
-        {
-            'm_def': EntryArchive.m_def.qualified_name(),
-            'm_def_id': 'indexed-definition-id',
-            'section_defs': [
-                {
-                    'definition_qualified_name': EntryArchive.m_def.qualified_name(),
-                    'definition_id': 'indexed-definition-id',
-                }
-            ],
-        },
-        {
-            'indexed-definition-id': (
-                current_reference,
-                EntryArchive.m_def.definition_id,
-            )
-        },
-    ) == {
-        'm_def': current_reference,
-        'm_def_id': EntryArchive.m_def.definition_id,
-        'section_defs': [
-            {
-                'definition_qualified_name': EntryArchive.m_def.qualified_name(),
-                'definition_id': EntryArchive.m_def.definition_id,
-            }
-        ],
-    }
-
-
-def test_get_section_defs_for_upload_does_not_fallback_for_custom_schema(monkeypatch):
-    """Do not use built-in schema fallbacks for an upload-local schema."""
-    qualified_name = 'entry_id:test-schema-entry.CustomSchema'
-    definition_id = 'indexed-definition-id'
-    monkeypatch.setattr(
-        'nomad.bundles.Upload.get',
-        lambda upload_id: SimpleNamespace(main_author=None),
-    )
-    monkeypatch.setattr(
-        'nomad.bundles.search.search_iterator',
-        lambda **kwargs: [
-            {
-                'section_defs': [
-                    {
-                        'definition_qualified_name': qualified_name,
-                        'definition_id': definition_id,
-                    }
-                ]
-            }
-        ],
-    )
-
-    def get_schema_or_raise(name, snapshot_id=None):
-        if (name, snapshot_id) != (qualified_name, definition_id):
-            pytest.fail('built-in schema fallback called for a custom schema')
-        raise MDefNotFound('The custom schema name and ID do not match.')
-
-    monkeypatch.setattr('nomad.bundles.get_schema', get_schema_or_raise)
-
-    with pytest.raises(MDefNotFound):
-        _get_section_defs_for_upload('test-upload')
-
-
-def test_bundle_export_reuses_custom_schema_entry(monkeypatch):
-    """Reuse an upload's schema entry and rewrite data references to that entry."""
-
-    class BoundedReadBytesIO(io.BytesIO):
-        def read(self, size=-1):
-            assert size >= 0, 'archive source must not be read into memory at once'
-            return super().read(size)
-
-    # Create a test upload with custom schema
-    package = Package(name='tests.custom_bundle_export_schema')
-    package.upload_id = 'test-upload'
-    package.entry_id = 'test-schema-entry'
-
-    class CustomSchema(MSection):
-        value = Quantity(type=str)
-
-    package.section_definitions.append(CustomSchema.m_def)
-    source_reference = (
-        '../uploads/test-upload/archive/test-schema-entry'
-        '#definitions/section_definitions/0'
-    )
-    archive_suffix = config.fs.archive_version_suffix
-    archive_suffix = (
-        archive_suffix[0] if isinstance(archive_suffix, list) else archive_suffix
-    )
-    data_archive_path = f'archive/test-data-entry-{archive_suffix}.msg'
-    schema_archive_path = f'archive/test-schema-entry-{archive_suffix}.msg'
-    archive_file = BoundedReadBytesIO()
-    write_archive(
-        archive_file,
-        {
-            'test-data-entry': {
-                'data': {
-                    'm_def': source_reference,
-                    'm_def_id': CustomSchema.m_def.definition_id,
-                    'value': 'test value',
-                }
-            }
-        },
-    )
-    archive_file.seek(0)
-    schema_archive_file = io.BytesIO()
-    write_archive(
-        schema_archive_file,
-        {
-            'test-schema-entry': {
-                'definitions': package.m_to_dict(with_def_id=True),
-            }
-        },
-    )
-    schema_archive_file.seek(0)
-
-    class UploadFilesStub:
-        def files_to_bundle(self, _settings):
-            yield StreamedFileSource(
-                StreamedFile(
-                    path=schema_archive_path,
-                    src=schema_archive_file,
-                    size=schema_archive_file.getbuffer().nbytes,
-                )
-            )
-            yield StreamedFileSource(
-                StreamedFile(
-                    path=data_archive_path,
-                    src=archive_file,
-                    size=archive_file.getbuffer().nbytes,
-                )
-            )
-
-    class UploadStub:
-        upload_id = 'test-upload'
-        process_running = False
-        current_process = None
-        upload_files = UploadFilesStub()
-
-        successful_entries = [
-            SimpleNamespace(
-                entry_id='test-schema-entry',
-                to_mongo=lambda: SimpleNamespace(
-                    to_dict=lambda: {
-                        '_id': 'test-schema-entry',
-                        'upload_id': 'test-upload',
-                        'mainfile': 'custom.schema.archive.json',
-                    }
-                ),
-            )
-        ]
-
-        def to_mongo(self):
-            return SimpleNamespace(to_dict=lambda: {'_id': self.upload_id})
-
-    monkeypatch.setattr(
-        'nomad.bundles._get_schema_packages_for_upload',
-        lambda upload_id, definition_id_aliases=None: [package],
-    )
-    exporter = BundleExporter(
-        upload=UploadStub(),
-        export_as_stream=True,
-        export_path=None,
-        zipped=True,
-        overwrite=False,
-        export_settings=config.bundle_export.default_settings.customize(
-            dict(
-                include_raw_files=False,
-                include_archive_files=True,
-                include_schemas=True,
-            )
-        ),
-    )
-
-    with zipfile.ZipFile(io.BytesIO(b''.join(exporter.export_bundle()))) as zf:
-        assert not any(name.startswith('raw/schema_package_') for name in zf.namelist())
-        assert schema_archive_path in zf.namelist()
-        with read_archive(io.BytesIO(zf.read(data_archive_path))) as archive:
-            exported_data = to_json(archive['test-data-entry'])['data']
-
-    assert exported_data['m_def'] == (
-        f'entry_id:test-schema-entry.{CustomSchema.m_def.name}'
-    )
-    assert exported_data['m_def_id'] == CustomSchema.m_def.definition_id
-    assert source_reference not in exported_data.values()
-
-
-def test_get_package_for_section():
-    package = Package(name='tests.package_for_section')
-
-    class PackageForSectionSchema(MSection):
-        value = Quantity(type=str)
-
-    package.section_definitions.append(PackageForSectionSchema.m_def)
-
-    assert _get_package_for_section(PackageForSectionSchema.m_def) is package
-    assert _get_package_for_section(EntryArchive.m_def) is EntryArchive.m_def.m_parent
-
-
-def test_get_schema_packages_for_upload(monkeypatch):
-    package_a = Package(name='tests.schema_package_a')
-    package_a.upload_id = 'upload-a'
-    package_a.entry_id = 'entry-a'
-    package_b = Package(name='tests.schema_package_b')
-    package_b.upload_id = 'upload-b'
-    package_b.entry_id = 'entry-b'
-    builtin_package = Package(name='tests.builtin_schema_package')
-
-    class BuiltinSchema(MSection):
-        value = Quantity(type=str)
-
-    class PackageASchema(BuiltinSchema):
-        value = Quantity(type=str)
-
-    class PackageBSchema(MSection):
-        value = Quantity(type=str)
-
-    package_a.section_definitions.append(PackageASchema.m_def)
-    package_b.section_definitions.append(PackageBSchema.m_def)
-    builtin_package.section_definitions.append(BuiltinSchema.m_def)
-
-    monkeypatch.setattr(
-        'nomad.bundles._get_section_defs_for_upload',
-        lambda upload_id, definition_id_aliases=None: [
-            PackageBSchema.m_def,
-            PackageASchema.m_def,
-            PackageASchema.m_def,
-        ],
-    )
-
-    assert _get_schema_packages_for_upload('test-upload') == [
-        builtin_package,
-        package_a,
-        package_b,
-    ]
-
-
-# Test bundle export
-
 
 def test_archive_preserving_bundle_export_as_stream(non_empty_processed_with_temporal):
     """Test for `include_archive_files=True`"""
-    # Create (export) the bundle
     exporter = BundleExporter(
         upload=non_empty_processed_with_temporal,
         export_as_stream=True,
         export_path=None,
         zipped=True,
-        overwrite=False,  # not applicable for streaming
+        overwrite=False,
         export_settings=config.bundle_export.default_settings,
     )
     assert exporter.export_settings.include_archive_files is True
@@ -461,122 +83,743 @@ def test_archive_preserving_bundle_export_as_stream(non_empty_processed_with_tem
         assert len(bundle_info['entries']) == len(
             non_empty_processed_with_temporal.successful_entries
         )
-
         assert not any(
             name.startswith('raw/schema_package_') and name.endswith('.archive.json')
             for name in names
         )
 
 
-def test_bundle_export_includes_schema_raw_files(
-    non_empty_processed_with_temporal, monkeypatch
-):
-    # Select a real upload-scoped schema referenced by the processed fixture
-    definition = next(
-        definition
-        for definition in _get_section_defs_for_upload(
-            non_empty_processed_with_temporal.upload_id
-        )
-        if definition.qualified_name()
-        == 'simulationworkflowschema.geometry_optimization.GeometryOptimization'
-    )
-    package = _get_package_for_section(definition)
-    assert isinstance(package, Package)
+# Tests for the bundle "export" phase
 
-    # Keep this test focused on one schema package and its one rewritten reference
-    monkeypatch.setattr(
-        'nomad.bundles._get_schema_packages_for_upload',
-        lambda upload_id, definition_id_aliases=None: [package],
+
+@pytest.mark.parametrize('zipped', [True, False])
+def test_stale_schema_export_does_not_write_output(monkeypatch, tmp_path, zipped):
+    export_path = tmp_path / 'new-directory' / 'bundle'
+    exporter = BundleExporter(
+        upload=SimpleNamespace(process_running=False, successful_entries=[]),
+        export_as_stream=False,
+        export_path=str(export_path),
+        zipped=zipped,
+        overwrite=False,
+        export_settings=config.bundle_export.default_settings.customize(
+            dict(include_schemas=True)
+        ),
     )
+    monkeypatch.setattr(
+        exporter,
+        '_get_used_schemas',
+        lambda: (
+            set(),
+            {(TabularTreeNodeInfo.m_def.qualified_name(), 'stale-definition-id')},
+        ),
+    )
+
+    with pytest.raises(MDefNotFound, match='stale-definition-id does not match'):
+        exporter.export_bundle()
+
+    assert not export_path.parent.exists()
+
+
+@pytest.mark.parametrize(
+    ('use_in_upload', 'use_installed'),
+    [
+        pytest.param(False, True, id='installed-only'),
+        pytest.param(True, False, id='in-upload-only'),
+        pytest.param(True, True, id='both'),
+    ],
+)
+def test_get_used_schemas(monkeypatch, use_in_upload, use_installed):
+    # Create the dummy test uplaod
+    upload = SimpleNamespace(
+        upload_id='test-upload',
+        main_author='test-user',
+        successful_entries=[SimpleNamespace(entry_id='schema-entry')],
+    )
+    section_defs = []
+    if use_in_upload:
+        section_defs.append(
+            {
+                'definition_qualified_name': 'entry_id:schema-entry.MySection',
+                'definition_id': 'local-definition-id',
+            }
+        )
+    if use_installed:
+        section_defs.append(
+            {
+                'definition_qualified_name': TabularTreeNodeInfo.m_def.qualified_name(),
+                'definition_id': TabularTreeNodeInfo.m_def.definition_id,
+            }
+        )
+
+    def search_entries(**kwargs):
+        assert kwargs['query'] == {'upload_id': upload.upload_id, 'processed': True}
+        assert kwargs['user_id'] == upload.main_author
+        return [
+            {'section_defs': section_defs[:1]},
+            {'section_defs': section_defs[1:]},
+        ]
+
+    monkeypatch.setattr('nomad.bundles.search.search_iterator', search_entries)
 
     exporter = BundleExporter(
-        upload=non_empty_processed_with_temporal,
+        upload=upload,
         export_as_stream=True,
         export_path=None,
         zipped=True,
         overwrite=False,
-        export_settings=config.bundle_export.default_settings.customize(
-            dict(
-                include_raw_files=False,
-                include_archive_files=True,
-                include_schemas=True,
+        export_settings=config.bundle_export.default_settings,
+    )
+
+    assert exporter._get_used_schemas() == (
+        {'schema-entry'} if use_in_upload else set(),
+        {
+            (
+                TabularTreeNodeInfo.m_def.qualified_name(),
+                TabularTreeNodeInfo.m_def.definition_id,
             )
+        }
+        if use_installed
+        else set(),
+    )
+
+
+def test_get_used_schemas_classifies_cross_upload_as_external(monkeypatch):
+    upload = SimpleNamespace(
+        upload_id='target-upload',
+        main_author='test-user',
+        successful_entries=[SimpleNamespace(entry_id='target-entry')],
+    )
+    qualified_name = 'entry_id:source-schema-entry.ExternalSection'
+    definition_id = 'external-definition-id'
+    monkeypatch.setattr(
+        'nomad.bundles.search.search_iterator',
+        lambda **kwargs: [
+            {
+                'section_defs': [
+                    {
+                        'definition_qualified_name': qualified_name,
+                        'definition_id': definition_id,
+                    }
+                ]
+            }
+        ],
+    )
+    exporter = BundleExporter(
+        upload=upload,
+        export_as_stream=True,
+        export_path=None,
+        zipped=True,
+        overwrite=False,
+        export_settings=config.bundle_export.default_settings,
+    )
+
+    assert exporter._get_used_schemas() == (
+        set(),
+        {(qualified_name, definition_id)},
+    )
+
+
+@pytest.mark.parametrize(
+    ('use_in_upload', 'use_installed'),
+    [
+        pytest.param(True, False, id='in-upload-only'),
+        pytest.param(False, True, id='installed-only'),
+        pytest.param(True, True, id='both'),
+    ],
+)
+def test_gather_and_export_schemas(monkeypatch, use_in_upload, use_installed):
+    upload = SimpleNamespace(upload_id='test-upload', successful_entries=[])
+    exporter = BundleExporter(
+        upload=upload,
+        export_as_stream=True,
+        export_path=None,
+        zipped=True,
+        overwrite=False,
+        export_settings=config.bundle_export.default_settings,
+    )
+    local_ids = {'existing-schema-entry'} if use_in_upload else set()
+    installed = (
+        {
+            (
+                TabularTreeNodeInfo.m_def.qualified_name(),
+                TabularTreeNodeInfo.m_def.definition_id,
+            )
+        }
+        if use_installed
+        else set()
+    )
+    monkeypatch.setattr(exporter, '_get_used_schemas', lambda: (local_ids, installed))
+
+    files, entries, schema_entry_ids, schema_references = (
+        exporter._gather_and_export_schemas()
+    )
+    assert local_ids <= schema_entry_ids
+
+    if not use_installed:
+        assert files == []
+        assert entries == []
+        assert schema_entry_ids == local_ids
+        assert schema_references == {}
+        return
+
+    assert len(files) == 2
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.upload_id == upload.upload_id
+    assert entry.parser_name == 'parsers/archive'
+    assert entry.entry_id in schema_entry_ids
+    assert schema_entry_ids == local_ids | {entry.entry_id}
+    assert schema_references[TabularTreeNodeInfo.m_def.definition_id] == (
+        f'entry_id:{entry.entry_id}.TabularTreeNodeInfo'
+    )
+
+    upload.successful_entries = [entry]
+    reused_files, reused_entries, reused_ids, reused_references = (
+        exporter._gather_and_export_schemas()
+    )
+    assert reused_files == []
+    assert reused_entries == []
+    assert reused_ids == schema_entry_ids
+    assert reused_references == schema_references
+
+    raw_file = next(files[0].to_streamed_files())
+    archive_file = next(files[1].to_streamed_files())
+    assert raw_file.path == f'raw/{entry.mainfile}'
+    assert entry.entry_id == utils.generate_entry_id(upload.upload_id, entry.mainfile)
+    assert archive_file.path.startswith(f'archive/{entry.entry_id}-')
+    assert archive_file.path.endswith('.msg')
+
+    package = TabularTreeNodeInfo.m_def.m_parent
+    expected_package = package.m_to_dict(
+        with_out_meta=True, with_def_id=True, stable_references=True
+    )
+    assert len(expected_package['section_definitions']) > 1
+    assert json.load(raw_file.src) == {'definitions': expected_package}
+    with read_archive(archive_file.src) as archive:
+        exported = to_json(archive[entry.entry_id])
+    assert exported['definitions'] == expected_package
+    assert exported['metadata']['entry_id'] == entry.entry_id
+
+
+def test_gather_and_export_cross_upload_schema(monkeypatch, mongo_function):
+    package = Package(name='tests.cross_upload_bundle_schema')
+    package.upload_id = 'source-upload'
+    package.entry_id = 'source-schema-entry'
+
+    class ExternalSection(MSection):
+        pass
+
+    package.section_definitions.append(ExternalSection.m_def)
+    PackageDefinition.create_new(package)
+    qualified_name = f'entry_id:{package.entry_id}.{ExternalSection.m_def.name}'
+
+    exporter = BundleExporter(
+        upload=SimpleNamespace(upload_id='target-upload', successful_entries=[]),
+        export_as_stream=True,
+        export_path=None,
+        zipped=True,
+        overwrite=False,
+        export_settings=config.bundle_export.default_settings,
+    )
+    monkeypatch.setattr(
+        exporter,
+        '_get_used_schemas',
+        lambda: (
+            set(),
+            {(qualified_name, ExternalSection.m_def.definition_id)},
         ),
     )
 
-    with zipfile.ZipFile(io.BytesIO(b''.join(exporter.export_bundle()))) as zf:
-        # The generated raw schema mainfile determines the synthetic entry ID
-        schema_raw_path = next(
-            name
-            for name in zf.namelist()
-            if name.startswith('raw/schema_package_') and name.endswith('.archive.json')
+    files, entries, schema_entry_ids, references = exporter._gather_and_export_schemas()
+
+    assert len(files) == 2
+    assert len(entries) == 1
+    synthetic_entry = entries[0]
+    assert synthetic_entry.upload_id == 'target-upload'
+    assert synthetic_entry.entry_id in schema_entry_ids
+    assert references[ExternalSection.m_def.definition_id] == (
+        f'entry_id:{synthetic_entry.entry_id}.ExternalSection'
+    )
+    assert BundleExporter._replace_schema_references(
+        {
+            'm_def': qualified_name,
+            'm_def_id': ExternalSection.m_def.definition_id,
+        },
+        references,
+    ) == {
+        'm_def': f'entry_id:{synthetic_entry.entry_id}.ExternalSection',
+        'm_def_id': ExternalSection.m_def.definition_id,
+    }
+
+    raw_file = next(files[0].to_streamed_files())
+    assert json.load(raw_file.src)['definitions']['name'] == package.name
+
+
+@pytest.mark.parametrize(
+    'archive_path', ['archive/data-v1.msg', 'archive-public.msg.msg']
+)
+def test_rewrite_installed_schema_references(monkeypatch, archive_path):
+    exporter = BundleExporter(
+        upload=SimpleNamespace(upload_id='test-upload', successful_entries=[]),
+        export_as_stream=True,
+        export_path=None,
+        zipped=True,
+        overwrite=False,
+        export_settings=config.bundle_export.default_settings,
+    )
+    monkeypatch.setattr(
+        exporter,
+        '_get_used_schemas',
+        lambda: (
+            {'local-schema'},
+            {
+                (
+                    TabularTreeNodeInfo.m_def.qualified_name(),
+                    TabularTreeNodeInfo.m_def.definition_id,
+                )
+            },
+        ),
+    )
+    _, entries, _, references = exporter._gather_and_export_schemas()
+    original = io.BytesIO()
+    write_archive(
+        original,
+        {
+            'data-entry': {
+                'data': [
+                    {
+                        'm_def': TabularTreeNodeInfo.m_def.qualified_name(),
+                        'm_def_id': TabularTreeNodeInfo.m_def.definition_id,
+                        'value': 'example',
+                    },
+                    {
+                        'm_def': 'entry_id:local-schema.MySection',
+                        'm_def_id': 'local-id',
+                    },
+                ]
+            }
+        },
+    )
+    original_bytes = original.getvalue()
+    original.seek(0)
+    source = StreamedFileSource(
+        StreamedFile(path=archive_path, src=original, size=len(original_bytes))
+    )
+    raw = StreamedFileSource(
+        StreamedFile(path='raw/input.json', src=io.BytesIO(b'raw data'), size=8)
+    )
+
+    rewritten = list(
+        exporter._rewrite_external_schema_references([raw, source], references)
+    )
+    assert len(rewritten) == 2
+    raw_file = next(rewritten[0].to_streamed_files())
+    assert raw_file.path == 'raw/input.json'
+    assert raw_file.src.read() == b'raw data'
+    streamed_file = next(rewritten[1].to_streamed_files())
+    assert streamed_file.path == archive_path
+    rewritten_bytes = streamed_file.src.getvalue()
+    with read_archive(streamed_file.src) as archive:
+        sections = to_json(archive['data-entry'])['data']
+    assert sections[0]['m_def'] == (
+        f'entry_id:{entries[0].entry_id}.TabularTreeNodeInfo'
+    )
+    assert sections[0]['m_def_id'] == TabularTreeNodeInfo.m_def.definition_id
+    assert sections[0]['value'] == 'example'
+    assert sections[1] == {
+        'm_def': 'entry_id:local-schema.MySection',
+        'm_def_id': 'local-id',
+    }
+    assert original_bytes != rewritten_bytes
+
+
+def test_packed_raw_appends_without_reading_existing_members(monkeypatch, tmp_path):
+    original = io.BytesIO()
+    content = b'original raw content' * 100
+    with zipfile.ZipFile(original, 'w', compression=zipfile.ZIP_DEFLATED) as raw_zip:
+        raw_zip.writestr('folder/', b'')
+        raw_zip.writestr('folder/input.txt', content)
+    original_bytes = original.getvalue()
+    with zipfile.ZipFile(io.BytesIO(original_bytes)) as raw_zip:
+        member_data_end = raw_zip.start_dir
+    original.seek(0)
+    schema = b'{"definitions": {}}'
+    original_open = zipfile.ZipFile.open
+
+    def write_only_open(self, name, mode='r', *args, **kwargs):
+        assert mode == 'w', 'Existing ZIP members must not be decompressed'
+        return original_open(self, name, mode, *args, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(zipfile.ZipFile, 'open', write_only_open)
+        patch.setattr(config.fs, 'tmp', str(tmp_path))
+        packed = BundleExporter._packed_raw_with_schemas(
+            StreamedFile(
+                path='raw-public.plain.zip', src=original, size=len(original_bytes)
+            ),
+            [
+                StreamedFile(
+                    path='raw/schema_package_test.archive.json',
+                    src=io.BytesIO(schema),
+                    size=len(schema),
+                )
+            ],
         )
-        assert json.loads(zf.read(schema_raw_path)) == {
-            'definitions': package.m_to_dict(
-                with_out_meta=True,
-                with_def_id=True,
-                stable_references=True,
+
+    with packed.src as output:
+        # Local headers and compressed member bytes are preserved verbatim.
+        assert output.read(member_data_end) == original_bytes[:member_data_end]
+        output.seek(0)
+        with zipfile.ZipFile(output) as raw_zip:
+            assert raw_zip.read('folder/input.txt') == content
+            assert raw_zip.read('schema_package_test.archive.json') == schema
+            assert raw_zip.getinfo('folder/').is_dir()
+            assert raw_zip.getinfo('folder/input.txt').compress_type == (
+                zipfile.ZIP_DEFLATED
             )
+    assert original.closed
+
+
+@pytest.mark.parametrize('existing_member', [True, False])
+def test_packed_raw_rejects_duplicate_schema_mainfiles(existing_member):
+    schema_path = 'schema_package_test.archive.json'
+    original = io.BytesIO()
+    with zipfile.ZipFile(original, 'w') as raw_zip:
+        if existing_member:
+            raw_zip.writestr(schema_path, '{}')
+    size = original.tell()
+    original.seek(0)
+    schema_files = [
+        StreamedFile(path=f'raw/{schema_path}', src=io.BytesIO(b'{}'), size=2)
+        for _ in range(1 if existing_member else 2)
+    ]
+    with pytest.raises(ValueError, match='Schema mainfile already exists'):
+        BundleExporter._packed_raw_with_schemas(
+            StreamedFile(path='raw-public.plain.zip', src=original, size=size),
+            schema_files,
+        )
+
+
+@pytest.mark.parametrize(
+    ('include_raw', 'include_archive'),
+    [
+        pytest.param(True, True, id='both'),
+        pytest.param(False, True, id='archive-only'),
+        pytest.param(True, False, id='raw-only'),
+    ],
+)
+def test_published_bundle_packs_synthetic_schema(
+    monkeypatch, tmp_path, include_raw, include_archive
+):
+    original_raw = io.BytesIO()
+    with zipfile.ZipFile(original_raw, 'w') as raw_zip:
+        raw_zip.writestr('input.archive.json', '{}')
+    original_raw.seek(0)
+    original_archive = io.BytesIO()
+    combine(
+        original_archive,
+        [
+            FileInfo(
+                None,
+                'data-entry',
+                obj={
+                    'data': {
+                        'value': 42,
+                        'm_def': TabularTreeNodeInfo.m_def.qualified_name(),
+                        'm_def_id': TabularTreeNodeInfo.m_def.definition_id,
+                    },
+                    'metadata': {
+                        'section_defs': [
+                            {
+                                'definition_qualified_name': (
+                                    TabularTreeNodeInfo.m_def.qualified_name()
+                                ),
+                                'definition_id': TabularTreeNodeInfo.m_def.definition_id,
+                                'used_directly': True,
+                            }
+                        ]
+                    },
+                },
+            )
+        ],
+        backend='rust',
+    )
+    original_archive.seek(0)
+    suffix = config.fs.archive_version_suffix
+    suffix = suffix[0] if isinstance(suffix, list) else suffix
+    archive_path = f'archive-public-{suffix}.msg.msg'
+
+    class PublishedFiles:
+        access = 'public'
+
+        def files_to_bundle(self, settings):
+            if settings.include_raw_files:
+                yield StreamedFileSource(
+                    StreamedFile(
+                        path='raw-public.plain.zip',
+                        src=original_raw,
+                        size=original_raw.getbuffer().nbytes,
+                    )
+                )
+            if settings.include_archive_files:
+                yield StreamedFileSource(
+                    StreamedFile(
+                        path=archive_path,
+                        src=original_archive,
+                        size=original_archive.getbuffer().nbytes,
+                    )
+                )
+
+        def raw_zip_file_object(self):
+            return SimpleNamespace(os_path='raw-public.plain.zip')
+
+        def msg_fp(self, access):
+            assert access == 'public'
+            return SimpleNamespace(os_path=archive_path)
+
+    class PublishedUpload:
+        upload_id = 'test-upload'
+        main_author = 'test-user'
+        published = True
+        process_running = False
+        upload_files = PublishedFiles()
+        successful_entries = [
+            SimpleNamespace(
+                entry_id='data-entry',
+                to_mongo=lambda: SimpleNamespace(to_dict=lambda: {}),
+            )
+        ]
+
+        def to_mongo(self):
+            return SimpleNamespace(to_dict=lambda: {'_id': self.upload_id})
+
+    settings = config.bundle_export.default_settings.customize(
+        dict(
+            include_raw_files=include_raw,
+            include_archive_files=include_archive,
+            include_schemas=True,
+        )
+    )
+    exporter = BundleExporter(PublishedUpload(), True, None, True, False, settings)
+    monkeypatch.setattr(
+        exporter,
+        '_rewrite_external_schema_references',
+        lambda *args: pytest.fail(
+            'Published archives must be rewritten during packing'
+        ),
+    )
+    monkeypatch.setattr(
+        exporter,
+        '_get_used_schemas',
+        lambda: (
+            set(),
+            {
+                (
+                    TabularTreeNodeInfo.m_def.qualified_name(),
+                    TabularTreeNodeInfo.m_def.definition_id,
+                )
+            },
+        ),
+    )
+
+    bundle_bytes = b''.join(exporter.export_bundle())
+    with zipfile.ZipFile(io.BytesIO(bundle_bytes)) as bundle:
+        assert set(bundle.namelist()) == {
+            'bundle_info.json',
+            'raw-public.plain.zip',
+            archive_path,
         }
-        schema_entry_id = utils.generate_entry_id(
-            non_empty_processed_with_temporal.upload_id,
-            schema_raw_path.removeprefix('raw/'),
+        info = json.loads(bundle.read('bundle_info.json'))
+        assert len(info['schema_entries']) == 1
+        schema_entry_id = info['schema_entries'][0]
+        assert any(entry.get('_id') == schema_entry_id for entry in info['entries'])
+        with zipfile.ZipFile(
+            io.BytesIO(bundle.read('raw-public.plain.zip'))
+        ) as raw_zip:
+            names = set(raw_zip.namelist())
+            assert any(name.startswith('schema_package_') for name in names)
+            assert ('input.archive.json' in names) is include_raw
+        with read_archive(io.BytesIO(bundle.read(archive_path))) as archive:
+            assert schema_entry_id in archive
+            assert ('data-entry' in archive) is include_archive
+            if include_archive:
+                data = to_json(archive['data-entry'])
+                reference = f'entry_id:{schema_entry_id}.TabularTreeNodeInfo'
+                assert data['data']['m_def'] == reference
+                assert data['data']['value'] == 42
+                assert data['metadata']['section_defs'] == [
+                    {
+                        'definition_qualified_name': reference,
+                        'definition_id': TabularTreeNodeInfo.m_def.definition_id,
+                        'used_directly': True,
+                    }
+                ]
+            schema = to_json(archive[schema_entry_id])
+            assert schema['definitions']['name'] == (
+                TabularTreeNodeInfo.m_def.m_parent.name
+            )
+
+    if include_raw and include_archive:
+        # Exercise the real published-file importer: synthetic entries must be
+        # readable from the packed archive after import, not just from the bundle.
+        bundle_path = tmp_path / 'bundle.zip'
+        bundle_path.write_bytes(bundle_bytes)
+        monkeypatch.setattr(config.fs, 'public', str(tmp_path / 'public'))
+        importer = BundleImporter(None, config.bundle_import.default_settings)
+        importer.bundle = ZipFileSource(str(bundle_path))
+        importer.upload = SimpleNamespace(
+            upload_id='test-upload', published=True, embargo_length=0
         )
+        try:
+            importer._import_files()
+            with importer.upload_files.read_archive(schema_entry_id) as archive:
+                assert to_json(archive[schema_entry_id])['definitions']['name'] == (
+                    TabularTreeNodeInfo.m_def.m_parent.name
+                )
+            with importer.upload_files.raw_file(
+                next(name for name in names if name.startswith('schema_package_')),
+                'rb',
+            ) as raw_file:
+                assert json.load(raw_file)['definitions']['name'] == (
+                    TabularTreeNodeInfo.m_def.m_parent.name
+                )
+        finally:
+            importer.close()
+            importer.upload_files.close()
 
-        # A schema entry needs both manifest metadata and a processed archive file
-        bundle_info = json.loads(zf.read('bundle_info.json'))
-        assert any(entry['_id'] == schema_entry_id for entry in bundle_info['entries'])
-        archive_suffix = config.fs.archive_version_suffix
-        archive_suffix = (
-            archive_suffix[0] if isinstance(archive_suffix, list) else archive_suffix
+
+def test_packed_archive_uses_configured_temp_directory(monkeypatch, tmp_path):
+    original = io.BytesIO()
+    combine(
+        original,
+        [FileInfo(None, f'entry-{i}', obj={'data': {'value': i}}) for i in range(3)],
+        backend='rust',
+    )
+    size = original.tell()
+    original.seek(0)
+    monkeypatch.setattr(config.fs, 'tmp', str(tmp_path))
+    packed = BundleExporter._packed_archive_with_schemas(
+        'archive-public.msg.msg',
+        StreamedFile(path='archive-public.msg.msg', src=original, size=size),
+        [],
+        {},
+    )
+
+    with packed.src as output:
+        temp_path = output.name
+        assert os.path.dirname(temp_path) == str(tmp_path)
+        assert os.fstat(output.fileno()).st_size == packed.size
+        with read_archive(temp_path) as archive:
+            for i in range(3):
+                assert to_json(archive[f'entry-{i}']) == {'data': {'value': i}}
+    assert not os.path.exists(temp_path)
+    assert original.closed
+
+
+@pytest.mark.parametrize('definition_id', [['a'], {'id': 'a'}, 42, None])
+def test_schema_reference_rewriting_preserves_non_string_ids_in_json(definition_id):
+    json_quantity = {
+        'm_def': 'user-value',
+        'm_def_id': definition_id,
+        'definition_qualified_name': 'user-value',
+        'definition_id': definition_id,
+    }
+    archive = {
+        'data': {
+            'm_def': 'installed.Section',
+            'm_def_id': 'schema-id',
+            'json_quantity': json_quantity,
+        },
+        'metadata': {
+            'section_defs': [
+                {
+                    'definition_qualified_name': 'installed.Section',
+                    'definition_id': 'schema-id',
+                }
+            ]
+        },
+    }
+
+    rewritten = BundleExporter._replace_schema_references(
+        archive, {'schema-id': 'entry_id:synthetic.Section'}
+    )
+
+    assert rewritten['data']['json_quantity'] == json_quantity
+    assert rewritten['data']['m_def'] == 'entry_id:synthetic.Section'
+    assert rewritten['metadata']['section_defs'][0] == {
+        'definition_qualified_name': 'entry_id:synthetic.Section',
+        'definition_id': 'schema-id',
+    }
+
+
+def test_section_defs_references_are_rewritten_by_definition_id():
+    original = {
+        'metadata': {
+            'section_defs': [
+                {
+                    'definition_qualified_name': name,
+                    'definition_id': definition_id,
+                    'used_directly': used_directly,
+                }
+                for name, definition_id, used_directly in [
+                    ('nomad.datamodel.data.ArchiveSection', 'copied-id', False),
+                    ('entry_id:external.Schema', 'external-id', True),
+                    ('entry_id:local.Schema', 'local-id', True),
+                    ('unbundled.Schema', 'unbundled-id', False),
+                ]
+            ]
+        }
+    }
+    references = {
+        'copied-id': 'entry_id:synthetic.ArchiveSection',
+        'external-id': 'entry_id:synthetic-external.Schema',
+    }
+
+    rewritten = BundleExporter._replace_schema_references(original, references)
+    for before, after in zip(
+        original['metadata']['section_defs'], rewritten['metadata']['section_defs']
+    ):
+        assert after == {
+            **before,
+            'definition_qualified_name': references.get(
+                before['definition_id'], before['definition_qualified_name']
+            ),
+        }
+    assert original['metadata']['section_defs'][0]['definition_qualified_name'] == (
+        'nomad.datamodel.data.ArchiveSection'
+    )
+
+
+def test_in_upload_schema_reference_is_not_rewritten():
+    exporter = BundleExporter(
+        upload=SimpleNamespace(upload_id='test-upload'),
+        export_as_stream=True,
+        export_path=None,
+        zipped=True,
+        overwrite=False,
+        export_settings=config.bundle_export.default_settings,
+    )
+    original = io.BytesIO()
+    local_data = {
+        'm_def': 'entry_id:local-schema.MySection',
+        'm_def_id': 'local-definition-id',
+        'value': 12,
+    }
+    write_archive(original, {'data-entry': {'data': local_data}})
+    size = original.tell()
+    original.seek(0)
+    source = StreamedFileSource(
+        StreamedFile(path='archive/data-entry-v1.msg', src=original, size=size)
+    )
+
+    rewritten = list(
+        exporter._rewrite_external_schema_references(
+            [source],
+            {TabularTreeNodeInfo.m_def.definition_id: 'entry_id:synthetic.Section'},
         )
-        schema_archive_path = f'archive/{schema_entry_id}-{archive_suffix}.msg'
-        assert schema_archive_path in zf.namelist()
-
-        # Inspect a data archive, rather than the synthetic schema archive itself
-        archive_path = next(
-            name
-            for name in zf.namelist()
-            if name.startswith('archive/') and schema_entry_id not in name
-        )
-        with read_archive(io.BytesIO(zf.read(archive_path))) as archive:
-            archive_data = to_json(archive[list(archive.keys())[0]])
-
-        def collect_m_def_references(value):
-            if isinstance(value, dict):
-                if 'm_def' in value:
-                    yield value['m_def'], value.get('m_def_id')
-                for item in value.values():
-                    yield from collect_m_def_references(item)
-            elif isinstance(value, list):
-                for item in value:
-                    yield from collect_m_def_references(item)
-
-        m_def_references = list(collect_m_def_references(archive_data))
-
-        # The section ID must resolve only to the synthetic entry shipped in this ZIP
-        assert {
-            m_def
-            for m_def, m_def_id in m_def_references
-            if m_def_id == definition.definition_id
-        } == {f'entry_id:{schema_entry_id}.{definition.name}'}
-        assert all(
-            f'../uploads/{non_empty_processed_with_temporal.upload_id}/archive/'
-            not in m_def
-            for m_def, _ in m_def_references
-        )
-
-        # The synthetic archive must provide the schema package named by the reference
-        with read_archive(io.BytesIO(zf.read(schema_archive_path))) as archive:
-            schema_archive_data = to_json(archive[schema_entry_id])
-        assert schema_archive_data['definitions'] == package.m_to_dict(
-            with_out_meta=True,
-            with_def_id=True,
-            stable_references=True,
-        )
-
-
-# Tests for bundle transfer roundtrip
+    )
+    with read_archive(next(rewritten[0].to_streamed_files()).src) as archive:
+        assert to_json(archive['data-entry'])['data'] == local_data
 
 
 def test_import_schema_packages_skips_legacy_package_without_snapshot_ids(
@@ -679,9 +922,10 @@ def test_archive_preserving_bundle_roundtrip(
     assert len(archive_files) > 0
 
 
+@pytest.mark.parametrize('reexport_published', [False, True])
 @pytest.mark.asyncio
 async def test_schema_bundle_export_import_roundtrip(
-    tmp_path, user1, temporal_worker, raw_files_function
+    tmp_path, user1, temporal_worker, raw_files_function, reexport_published
 ):
     """Custom and built-in schemas should resolve from the imported bundle."""
     with open('tests/data/metainfo/schema.archive.json') as f:
@@ -763,7 +1007,8 @@ async def test_schema_bundle_export_import_roundtrip(
 
     custom_definition_id = exported_data_archive['data']['m_def_id']
     assert exported_data_archive['data']['m_def'] == (
-        f'entry_id:{schema_entry.entry_id}.MySection'
+        '../upload/schema_bundle_roundtrip/raw/schema.archive.json'
+        '#/definitions/section_definitions/0'
     )
 
     schema_archive_path = next(
@@ -788,6 +1033,26 @@ async def test_schema_bundle_export_import_roundtrip(
         if m_def_id == Section.m_def.definition_id
     )
     assert builtin_reference.startswith('entry_id:')
+
+    exported_section_defs = exported_data_archive['metadata']['section_defs']
+    builtin_section_def = next(
+        definition
+        for definition in exported_section_defs
+        if definition['definition_id'] == EntryData.m_def.definition_id
+    )
+    builtin_schema_entry_id = next(
+        entry['_id']
+        for entry in bundle_info['entries']
+        if entry['mainfile'].startswith('schema_package_')
+        and json.loads((bundle_path / 'raw' / entry['mainfile']).read_text())[
+            'definitions'
+        ]['name']
+        == EntryData.m_def.m_parent.name
+    )
+    assert builtin_section_def['definition_qualified_name'] == (
+        f'entry_id:{builtin_schema_entry_id}.EntryData'
+    )
+    assert builtin_section_def['used_directly'] is False
 
     package_ids = set()
     for archive_path in (bundle_path / 'archive').glob('*.msg'):
@@ -841,6 +1106,18 @@ async def test_schema_bundle_export_import_roundtrip(
     assert imported_archive_dict['metadata']['upload_id'] == source_upload.upload_id
     assert imported_archive_dict['metadata']['entry_id'] == data_entry.entry_id
     assert imported_archive_dict['data'] == exported_data_archive['data']
+    assert imported_archive_dict['metadata']['section_defs'] == exported_section_defs
+    indexed_entry = search.search(
+        owner='all',
+        user_id=imported_upload.main_author,
+        query={'entry_id': data_entry.entry_id},
+    ).data[0]
+    assert sorted(
+        indexed_entry['section_defs'],
+        key=lambda definition: definition['definition_id'],
+    ) == sorted(
+        exported_section_defs, key=lambda definition: definition['definition_id']
+    )
     assert imported_archive.data.m_def.definition_id == custom_definition_id
     reference_quantity = next(
         quantity
@@ -857,3 +1134,71 @@ async def test_schema_bundle_export_import_roundtrip(
     assert get_schema(builtin_reference, Section.m_def.definition_id).name == (
         Section.m_def.name
     )
+
+    # When plugins are available, an imported upload may be reprocessed. Its
+    # raw installed references must not cause duplicate synthetic entries.
+    async with temporal_worker():
+        if reexport_published:
+            await asyncio.to_thread(imported_upload.publish_upload)
+            await imported_upload.await_workflows()
+        handle = await imported_upload._start_process_upload_workflow(
+            path_filter='data.archive.json'
+        )
+        await handle.result()
+    imported_upload.reload()
+    assert imported_upload.failed_entries_count == 0
+    existing_entries = list(imported_upload.successful_entries)
+    existing_ids = {entry.entry_id for entry in existing_entries}
+    exporter = BundleExporter(
+        imported_upload,
+        export_as_stream=True,
+        export_path=None,
+        zipped=True,
+        overwrite=False,
+        export_settings=config.bundle_export.default_settings.customize(
+            dict(include_schemas=True)
+        ),
+    )
+    files, new_entries, schema_ids, references = exporter._gather_and_export_schemas()
+    assert files == []
+    assert new_entries == []
+    assert builtin_schema_entry_id in schema_ids
+    assert references[EntryData.m_def.definition_id] == (
+        f'entry_id:{builtin_schema_entry_id}.EntryData'
+    )
+    # Close the preview streams; export_bundle creates its own schema streams.
+    for file in files:
+        for streamed_file in file.to_streamed_files():
+            streamed_file.src.close()
+
+    with zipfile.ZipFile(io.BytesIO(b''.join(exporter.export_bundle()))) as bundle:
+        info = json.loads(bundle.read('bundle_info.json'))
+        ids = [entry['_id'] for entry in info['entries']]
+        assert len(ids) == len(set(ids))
+        assert set(ids) == existing_ids | {entry.entry_id for entry in new_entries}
+        assert len(bundle.namelist()) == len(set(bundle.namelist()))
+        if reexport_published:
+            raw_name = next(name for name in bundle.namelist() if name.endswith('.zip'))
+            with zipfile.ZipFile(io.BytesIO(bundle.read(raw_name))) as raw:
+                assert len(raw.namelist()) == len(set(raw.namelist()))
+            archive_name = next(
+                name for name in bundle.namelist() if name.endswith('.msg')
+            )
+            archive_source = io.BytesIO(bundle.read(archive_name))
+        else:
+            archive_name = next(
+                name
+                for name in bundle.namelist()
+                if name.startswith(f'archive/{data_entry.entry_id}-')
+            )
+            archive_source = io.BytesIO(bundle.read(archive_name))
+        with read_archive(archive_source) as archive:
+            metadata = to_json(archive[data_entry.entry_id])['metadata']
+        assert (
+            next(
+                definition['definition_qualified_name']
+                for definition in metadata['section_defs']
+                if definition['definition_id'] == EntryData.m_def.definition_id
+            )
+            == f'entry_id:{builtin_schema_entry_id}.EntryData'
+        )

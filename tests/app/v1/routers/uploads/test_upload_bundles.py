@@ -26,7 +26,7 @@ import pytest
 
 from nomad.bundles import BundleExporter
 from nomad.config import config
-from nomad.metainfo import MSection, Package, Quantity
+from nomad.datamodel.metainfo.tabulartree import TabularTreeNodeInfo
 from nomad.processing import Upload
 from tests.app.v1.routers.common import assert_response, perform_get
 from tests.processing import test_data as test_processing
@@ -154,7 +154,14 @@ async def test_get_upload_bundle(
                 is include_archive_files
             )
             assert bundle_info['export_settings']['include_schemas'] is include_schemas
-            assert len(bundle_info['entries']) == len(upload.successful_entries)
+            bundle_entry_ids = {entry['_id'] for entry in bundle_info['entries']}
+            upload_entry_ids = {entry.entry_id for entry in upload.successful_entries}
+            assert upload_entry_ids <= bundle_entry_ids
+            if include_schemas:
+                assert set(bundle_info['schema_entries']) <= bundle_entry_ids
+            else:
+                assert len(bundle_info['entries']) == len(upload.successful_entries)
+                assert 'schema_entries' not in bundle_info
             assert 'schemas' not in bundle_info
             assert not any(
                 name.startswith('raw/schema_package_')
@@ -173,16 +180,15 @@ async def test_get_upload_bundle_includes_schema_raw_file(
     monkeypatch,
     route,
 ):
-    package = Package(name='tests.upload_bundle_schema')
-
-    class UploadBundleSchema(MSection):
-        value = Quantity(type=str)
-
-    package.section_definitions.append(UploadBundleSchema.m_def)
-
+    definition = TabularTreeNodeInfo.m_def
+    package = definition.m_parent
     monkeypatch.setattr(
-        'nomad.bundles._get_schema_packages_for_upload',
-        lambda upload_id, definition_id_aliases=None: [package],
+        BundleExporter,
+        '_get_used_schemas',
+        lambda self: (
+            set(),
+            {(definition.qualified_name(), definition.definition_id)},
+        ),
     )
 
     upload_id = example_data_writeable['id_published_w']
@@ -190,20 +196,59 @@ async def test_get_upload_bundle_includes_schema_raw_file(
     response = perform_get(client, url, user_auth=auth_headers['user1'])
     assert_response(response, 200)
 
-    with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
-        schema_files = [
+    with zipfile.ZipFile(io.BytesIO(response.content)) as bundle:
+        bundle_info = json.loads(bundle.read('bundle_info.json'))
+        assert len(bundle_info['schema_entries']) == 1
+        raw_bundle_file = next(
             name
-            for name in zip_file.namelist()
-            if name.startswith('raw/schema_package_') and name.endswith('.archive.json')
-        ]
-        assert len(schema_files) == 1
-        assert json.loads(zip_file.read(schema_files[0])) == {
-            'definitions': package.m_to_dict(
-                with_out_meta=True,
-                with_def_id=True,
-                stable_references=True,
-            )
-        }
+            for name in bundle.namelist()
+            if name.startswith('raw-') and name.endswith('.zip')
+        )
+        with zipfile.ZipFile(io.BytesIO(bundle.read(raw_bundle_file))) as raw:
+            schema_files = [
+                name
+                for name in raw.namelist()
+                if name.startswith('schema_package_') and name.endswith('.archive.json')
+            ]
+            assert len(schema_files) == 1
+            assert json.loads(raw.read(schema_files[0])) == {
+                'definitions': package.m_to_dict(
+                    with_out_meta=True,
+                    with_def_id=True,
+                    stable_references=True,
+                )
+            }
+
+
+@pytest.mark.parametrize('route', ['bundle', 'export'])
+@pytest.mark.asyncio
+async def test_get_upload_bundle_stale_schema_returns_bad_request(
+    auth_headers,
+    client,
+    temporal_worker,
+    example_data_writeable,
+    monkeypatch,
+    route,
+):
+    monkeypatch.setattr(
+        BundleExporter,
+        '_get_used_schemas',
+        lambda self: (
+            set(),
+            {(TabularTreeNodeInfo.m_def.qualified_name(), 'stale-definition-id')},
+        ),
+    )
+    upload_id = example_data_writeable['id_published_w']
+    response = perform_get(
+        client,
+        build_url(f'uploads/{upload_id}/{route}', dict(include_schemas=True)),
+        user_auth=auth_headers['user1'],
+    )
+
+    assert_response(response, 400)
+    assert response.headers['content-type'] == 'application/json'
+    assert 'Could not export due to error:' in response.json()['detail']
+    assert 'stale-definition-id does not match' in response.json()['detail']
 
 
 @pytest.mark.parametrize('route', ['bundle', 'import'])

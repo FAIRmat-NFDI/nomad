@@ -30,6 +30,11 @@
 - API responses should be RFC3339 compliant; use the Pydantic field `nomad.models.common.UTCDateTime`.
 - Avoid manual timezone handling in application code when ORM/API field types above can enforce it.
 
+## Temporary files
+
+- Use NOMAD's configured temporary directory (`config.fs.tmp`) for temporary files and directories rather than the system default or hard-coded paths such as `/tmp`.
+- Pass `dir=config.fs.tmp` to `tempfile` APIs, including `SpooledTemporaryFile`, so files that spill from memory to disk also use the configured location.
+
 ## Storage Module
 
 - The existing architecture adopts a two-tier storage approach: the main storage uses a local filesystem; the auxiliary
