@@ -28,7 +28,6 @@ from pydantic import BaseModel, SecretStr, ValidationError
 import nomad.config
 from nomad.auth.scopes import _resolve_scopes
 from nomad.config import CONFIG_ENV, load_config
-from nomad.config.models import config as config_module
 from nomad.config.models.config import (
     ActionAssets,
     Auth,
@@ -1091,21 +1090,6 @@ def test_unauthorized_user_scopes_resolved(scopes, expected):
 def test_authorized_users(conf_yaml, conf_expected, mockopen, monkeypatch):
     config = load_test_config(conf_yaml, None, mockopen, monkeypatch)
     assert_config(config, conf_expected)
-
-
-def test_authorized_users_email_whitelist_logs_deprecation_warning(monkeypatch):
-    messages = []
-
-    monkeypatch.setattr(config_module.logger, 'warning', messages.append)
-
-    auth = Auth.model_validate(
-        {'authorized_users': ['alice@example.com', 'Alice', 'alice@example.com']}
-    )
-
-    assert auth.authorized_users == ['alice@example.com', 'alice']
-    assert messages == [
-        'whitelisting users with email is deprecated, please use username instead.'
-    ]
 
 
 @pytest.mark.parametrize(

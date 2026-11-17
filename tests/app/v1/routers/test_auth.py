@@ -903,7 +903,7 @@ async def test_resolve_user_anonymous_uses_unauthenticated_scopes(
     'authorized_users',
     [
         pytest.param(None, id='no-whitelist-configured'),
-        pytest.param(['alice@example.com'], id='user-in-whitelist'),
+        pytest.param(['alice'], id='username-in-whitelist'),
     ],
 )
 @pytest.mark.asyncio
@@ -958,6 +958,13 @@ async def test_resolve_user_authenticated_authorized_uses_token_scopes(
 
 
 @pytest.mark.parametrize(
+    'authorized_users',
+    [
+        pytest.param(['alice'], id='different-username'),
+        pytest.param(['bob@example.com'], id='email-does-not-authorize-user'),
+    ],
+)
+@pytest.mark.parametrize(
     ('reject_unauthorized_users', 'required_scopes', 'should_raise'),
     [
         pytest.param(
@@ -982,6 +989,7 @@ async def test_resolve_user_authenticated_authorized_uses_token_scopes(
 )
 @pytest.mark.asyncio
 async def test_resolve_user_authenticated_not_in_whitelist(
+    authorized_users,
     reject_unauthorized_users,
     required_scopes,
     should_raise,
@@ -999,7 +1007,7 @@ async def test_resolve_user_authenticated_not_in_whitelist(
             'auth': {
                 'require_authentication': True,
                 'reject_unauthorized_users': reject_unauthorized_users,
-                'authorized_users': ['alice@example.com'],
+                'authorized_users': authorized_users,
                 'unauthorized_user_scopes': {'include': ['uploads:read']},
             }
         },
