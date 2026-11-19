@@ -450,7 +450,8 @@ class RelatedItemContributor(BaseModel):
 
 class RelatedItem(BaseModel):  # used in DoiPropertiesMetadata
     relatedItemType: object
-    releationType: object
+    # TODO: Rename to relationType with a compatibility alias in a separate schema fix.
+    releationType: object  # typos: ignore
     relatedItemIdentifier: object
     relationTypeInformation: object
     creators: list[Creator] | None = None

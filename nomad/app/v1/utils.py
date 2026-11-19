@@ -115,7 +115,7 @@ def create_download_stream_zipped(
 
     Arguments:
         download_items: A DownloadItem, or iterator of DownloadItems, defining what to download.
-        upload_files: The UploadFiles object, if already opened (for optimiztion).
+        upload_files: The UploadFiles object, if already opened (for optimization).
         re_pattern: A regex object for filtering by filenames (only applicable to directories).
         recursive: if subdirectories should be included (recursively).
         create_manifest_file: if set, a manifest file is created in the root folder.

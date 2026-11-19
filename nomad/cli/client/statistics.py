@@ -20,7 +20,7 @@
 A command that generates various statistics.
 """
 
-# TODO This has to be migrated to v1. This was not done immediatly, because we wanted
+# TODO This has to be migrated to v1. This was not done immediately, because we wanted
 # to revise the statistics anyways: https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/issues/611
 
 # import matplotlib.scale as mscale
@@ -252,7 +252,7 @@ A command that generates various statistics.
 # @click.option('--save', type=str, help='Save to given file instead of showing the plot.')
 # @click.option('--power', type=float, help='User power scale instead of log with the given inverse power.')
 # @click.option('--open-access', is_flag=True, help='Only consider Open-Access data.')
-# @click.option('--minimum', type=int, default=1, help='Only consider codes with at least the given ammount of entries.')
+# @click.option('--minimum', type=int, default=1, help='Only consider codes with at least the given amount of entries.')
 # def statistics_plot(errors, title, x_axis, y_axis, cumulate, total, save, power, open_access, minimum):
 #     from .client import create_client
 #     client = create_client()

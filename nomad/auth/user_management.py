@@ -62,7 +62,7 @@ class UserManagement(ABC):
         email: str | None = None,
     ):
         """
-        Retrives all available information about a user from the local keycloak admin
+        Retrieves all available information about a user from the local keycloak admin
         interface or the central NOMAD installation. This can be used to retrieve
         complete user information, because the info solely gathered from tokens is generally
         incomplete.

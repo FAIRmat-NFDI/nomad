@@ -302,7 +302,7 @@ def test_create_exceeds_max_per_user(mongo_function, monkeypatch):
     Verifies that the service raises a ValueError when a user attempts
     to create more tokens than the configured maximum limit.
     """
-    # Restrict the maximum number of ative tokens per user to 2
+    # Restrict the maximum number of active tokens per user to 2
     monkeypatch.setattr(config.auth, 'pat_max_active_per_user', 2)
     user_id = 'u_limit_test'
 
@@ -359,7 +359,7 @@ def test_create_rejects_token_invalid_scope(mongo_function):
 
 def test_rotate_basic_success(mongo_function):
     """
-    Test the sucess path:
+    Test the success path:
     1. Old token is revoked.
     2. New token is created with a NEW secret.
     3. Metadata (name, scopes) is copied.

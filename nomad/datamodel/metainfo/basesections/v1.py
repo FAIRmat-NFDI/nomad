@@ -1631,9 +1631,10 @@ class CASPropertyCitation(ArchiveSection):
         type=str,
         description='CAS property citation document uri.',
     )
+    # TODO: Correct the description keyword in a separate metadata behavior fix.
     sourceNumber = Quantity(
         type=int,
-        decription='CAS property citation source number.',
+        decription='CAS property citation source number.',  # typos: ignore
     )
     source = Quantity(
         type=str,
@@ -1914,7 +1915,7 @@ class ReadableIdentifiers(ArchiveSection):
         """
         If owner is not filled the field will be filled by the first two letters of
         the first name joined with the first two letters of the last name of the author.
-        If the institute is not filled a institute abreviations will be constructed from
+        If the institute is not filled a institute abbreviations will be constructed from
         the author's affiliation.
 
         If no datetime is filled, the datetime will be taken from the `datetime`

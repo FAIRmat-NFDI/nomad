@@ -848,7 +848,7 @@ class BundleImporter:
         upload_dict = self.bundle_info['upload']
         assert (
             self.upload.upload_id == self.bundle_info['upload_id'] == upload_dict['_id']
-        ), 'Inconsisten upload id information'
+        ), 'Inconsistent upload id information'
         published = upload_dict.get('publish_time') is not None
         if published:
             assert self.bundle_info['entries'], (

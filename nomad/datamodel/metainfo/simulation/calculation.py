@@ -492,7 +492,7 @@ class Energy(MSection):
         sub_section=EnergyEntry.m_def,
         description="""
         Contains the value and information regarding the Van der Waals energy. A multiple
-        occurence is expected when more than one van der Waals methods are defined. The
+        occurrence is expected when more than one van der Waals methods are defined. The
         van der Waals kind should be specified in Energy.kind
         """,
     )

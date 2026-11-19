@@ -752,7 +752,7 @@ class PathParser(BaseModel):
                 parser = JsonPathParser().parse(path)
                 results = [match.value for match in parser.find(source)]
                 if kwargs.get('pop'):
-                    # TODO is find and filter somehow can be performed simulatenously
+                    # TODO is find and filter somehow can be performed simultaneously
                     parser.filter(lambda v: True, source)
                 return results[0] if len(results) == 1 else results
 
@@ -2391,7 +2391,8 @@ class MetainfoParser(MappingParser):
                 ArchiveParser().parse(self.filepath, archive)
                 return archive
             except Exception:
-                self.logger.errror('Error loading archive file.')
+                # TODO: Correct the logger method in a separate error-handling fix.
+                self.logger.errror('Error loading archive file.')  # typos: ignore
 
         return None
 

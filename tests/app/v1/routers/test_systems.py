@@ -356,7 +356,7 @@ def test_formats_without_cell(
     format, content_expected, filename, client, example_data_systems
 ):
     """Test that writing a structure without unit cell information produces the
-    expected output. Note that certains formats cannot be serialized without a
+    expected output. Note that certain formats cannot be serialized without a
     dummy placeholder cell.
     """
     format_info = format_map[format]

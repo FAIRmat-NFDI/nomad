@@ -81,12 +81,12 @@ def json_schema_extra(schema: dict[str, Any], model: type[_DictModel]) -> None:
         if value_type == Literal['*']:
             types.append({'enum': ['*'], 'type': 'string'})
         else:
-            # This forces all model names to be unique. Pydandic
+            # This forces all model names to be unique. Pydantic
             # replaces non unique model names with qualified names.
             # We are just using the plain name here. Unfortunately,
             # there is no way to get the "long_model_name" map from pydantic
             # to put the right names here. Therefore, in the presence
-            # of non-unique names, we are using the wrong referenes.
+            # of non-unique names, we are using the wrong references.
             # Things depending on the openapi schema will cause issues.
             # i.e. https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/issues/1958
             module_name = value_type.__module__

@@ -1214,7 +1214,7 @@ def assert_required_results(
             return
 
         if isinstance(current_results, str):
-            # It is a reference string, it should be resolveable within an
+            # It is a reference string, it should be resolvable within an
             # results based archive. We should continue the assert from the resolved
             # results and resolved section in the archive.
             assert current_results == current_archive_serialized
@@ -1260,7 +1260,7 @@ def assert_required_results(
             for key in current_archive_serialized
         }
 
-    # decend into references and subsections
+    # descend into references and subsections
     for key, value in required.items():
         if key.startswith('_'):
             continue

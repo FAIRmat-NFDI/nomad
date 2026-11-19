@@ -1886,7 +1886,7 @@ def get_entry_metadata(
     ],
 ):
     """
-    Retrives the entry metadata for the given id.
+    Retrieves the entry metadata for the given id.
     """
 
     query = {'entry_id': entry_id}
@@ -2763,5 +2763,5 @@ async def post_entries_edit(
     except RequestValidationError:
         raise  # A problem which we have handled explicitly. Fastapi does json conversion.
     except Exception as e:
-        # The upload is processing or some kind of unexpected error has occured
+        # The upload is processing or some kind of unexpected error has occurred
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(e))

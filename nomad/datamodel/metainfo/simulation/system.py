@@ -195,7 +195,7 @@ class Atoms(MSection):
         same species assigned to different atom-centered basis sets or pseudo-potentials,
         or simply atoms in different locations in the structure such as those in the bulk
         and on the surface. In the case where a species is not an atom, and therefore
-        cannot be representated by a chemical symbol, the label can simply be the name of
+        cannot be represented by a chemical symbol, the label can simply be the name of
         the particles.
         """,
     )
@@ -485,7 +485,7 @@ class Prototype(MSection):
 class SpringerMaterial(MSection):
     """
     Contains results of classification of materials with the same formula according to
-    Springer Materials. These include material and compound classsification, formula,
+    Springer Materials. These include material and compound classification, formula,
     id, and references from the Springer Materials database.
     """
 
@@ -547,7 +547,7 @@ class Constraint(MSection):
         description="""
         Short and unique name for this constraint type. Could be fix_a where a can be
         x, y, z denoting a constraint along a cartesian direction, xy, xz, yz denoting a
-        constaint along a cartesian plane, xyz denoting a fixed position, distance
+        constraint along a cartesian plane, xyz denoting a fixed position, distance
         denoting a fixed distance between two atoms, angle denoting a fixed angle between
         three atoms, and dihedral denoting a fixed dihedral angle.
         """,
@@ -590,7 +590,7 @@ class Constraint(MSection):
 class SOAP(MSection):
     m_def = Section(
         description="""
-        SOAP descritors and representations
+        SOAP descriptors and representations
         """
     )
     n_max = Quantity(
@@ -659,8 +659,8 @@ class Descriptors(MSection):
 
 class System(ArchiveSection):
     """
-    Contains parameters describing a system of atomic configuration. These inclue the
-    compound name, atomic positions, lattice vectors, contraints on the atoms, etc.
+    Contains parameters describing a system of atomic configuration. These include the
+    compound name, atomic positions, lattice vectors, constraints on the atoms, etc.
     """
 
     m_def = Section(validate=False)

@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 
-# Contains more general test cases that are replaced continiously by more specialized
+# Contains more general test cases that are replaced continuously by more specialized
 # in-depth tests in test_* files of the same module.
 
 import pytest
@@ -156,8 +156,8 @@ def test_overwrite_programmatic():
     section_def = Section(name='Section', base_sections=[BaseSection.m_def])
     section_def.m_add_sub_section(Section.quantities, Quantity(name='test_quantity'))
 
-    # This happens automatically in Python class based section defintions, but
-    # has to be called manually in programatic section definitions.
+    # This happens automatically in Python class based section definitions, but
+    # has to be called manually in programmatic section definitions.
     section_def.__init_metainfo__()
 
     section_cls = section_def.section_cls

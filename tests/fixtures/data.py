@@ -414,7 +414,7 @@ def example_data(
             data.create_upload(
                 upload_id=upload_id,
                 upload_name=upload_name,
-                description=f'Descripton for upload {upload_id}',
+                description=f'Description for upload {upload_id}',
                 coauthors=coauthors,
                 reviewers=reviewers,
                 published=published,

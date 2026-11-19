@@ -368,11 +368,11 @@ class Primitive(Datatype):
             if self._disable_auto_conversion:
                 raise ValueError(f'Cannot set {value} for {self._definition}.')
 
-            # conversion is allowed, explicitly convertable
+            # conversion is allowed, explicitly convertible
             if self.convertible_from(given_type):
                 return self._dtype(value)
 
-            # not explicitly convertable, try to convert implicitly
+            # not explicitly convertible, try to convert implicitly
             if self._disable_type_check:
                 # if no type check, always return something, even if it is not the same type
                 try:
@@ -721,7 +721,7 @@ class m_complex128(m_complex):
         if isinstance(value, list | tuple):
             return {'re': [v.real for v in value], 'im': [v.imag for v in value]}
 
-        # ND
+        # ND  # typos: ignore
         if isinstance(value, np.ndarray):
             return {'re': value.real.tolist(), 'im': value.imag.tolist()}
 

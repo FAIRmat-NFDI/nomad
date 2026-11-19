@@ -81,14 +81,14 @@ def test_basis_set(normalized_example):
         'qbox': [],
         'YAMBO': [],
     }
-    codes_withouth_methods = ['libAtoms', 'MOLCAS', 'ASR']
+    codes_without_methods = ['libAtoms', 'MOLCAS', 'ASR']
     try:
         base = normalized_example.results.method.simulation
     except AttributeError:
         return
     if base is not None:
         program_name = base.program_name
-        if program_name in codes_withouth_methods:
+        if program_name in codes_without_methods:
             assert (
                 not base.precision
             )  # precision is generated only if run.method exists

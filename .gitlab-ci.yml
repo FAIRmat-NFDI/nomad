@@ -45,7 +45,10 @@ update changelog:
   stage: build
   when: manual
   script:
-    - curl -X POST "https://gitlab.mpcdf.mpg.de/api/v4/projects/$CI_PROJECT_ID/repository/changelog?branch=${CI_COMMIT_REF_NAME}&version=${CI_COMMIT_REF_NAME:1}&access_token=$CI_ACCESS_TOKEN&message=Add%20changelog%20for%20version%20$CI_COMMIT_REF_NAME%20%5Bskip-ci%5D"
+    - >-
+      curl --fail-with-body -X POST
+      --header "PRIVATE-TOKEN: ${CI_ACCESS_TOKEN}"
+      "https://gitlab.mpcdf.mpg.de/api/v4/projects/$CI_PROJECT_ID/repository/changelog?branch=${CI_COMMIT_REF_NAME}&version=${CI_COMMIT_REF_NAME:1}&message=Add%20changelog%20for%20version%20$CI_COMMIT_REF_NAME%20%5Bskip-ci%5D"
   rules:
     - if: $CI_COMMIT_REF_NAME =~ /^release\/\d+\.\d+\.\d+$/
 
@@ -108,6 +111,22 @@ python linting:
     reports:
       codequality: gl-code-quality-report.json
     expire_in: never
+
+spellcheck:
+  stage: test
+  image: $UV_IMAGE
+  needs: []
+  script:
+    - >-
+      uvx --from typos==1.52.2 typos --files .
+      | grep -E '^(\./)?(nomad/|tests/)|\.md$'
+      | uvx --from typos==1.52.2 typos --file-list -
+  # Report existing findings without blocking pipelines during rollout.
+  allow_failure: true
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: never
+    - when: on_success
 
 python package clean up:
   stage: test

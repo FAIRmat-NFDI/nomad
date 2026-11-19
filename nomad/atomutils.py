@@ -145,7 +145,7 @@ def get_masses_from_computational_model(
         if mass_labels is not None:
             if any(
                 [label not in atom_labels for label in mass_labels]
-            ):  # cannot perform the mapping between atom_params and atoms with mis-matched labels
+            ):  # cannot perform the mapping between atom_params and atoms with mismatched labels
                 return []
             else:
                 return {label: mass for label, mass in zip(mass_labels, masses)}
@@ -668,7 +668,7 @@ def get_formula_string(symbols: Iterable[str], counts: Iterable[int]) -> str:
 
     Args:
         symbols: List of chemical species
-        counts: List of chemical species occurences
+        counts: List of chemical species occurrences
 
     Returns:
         The formula as a string.
@@ -697,7 +697,7 @@ def get_normalized_wyckoff(
     Returns:
         Returns a dictionary that maps each present Wyckoff letter to a
         dictionary. The dictionary contains the number of atoms for each
-        species, where the species names have been anomymized in the form
+        species, where the species names have been anonymized in the form
         'X_<index>'.
     """
     # Count the occurrence of each chemical species
@@ -830,11 +830,11 @@ def get_brillouin_zone(reciprocal_lattice: np.ndarray) -> dict:
     # different regions that were found during the Voronoi creation. We want
     # the Voronoi region for the point at the origin.
     point_region = voronoi.point_region[13]
-    vertice_indices = voronoi.regions[point_region]
-    vertices = voronoi.vertices[vertice_indices].tolist()
+    vertex_indices = voronoi.regions[point_region]
+    vertices = voronoi.vertices[vertex_indices].tolist()
 
     # Create a mapping between the original index and an index in the new list
-    index_map = {old_id: new_id for (new_id, old_id) in enumerate(vertice_indices)}
+    index_map = {old_id: new_id for (new_id, old_id) in enumerate(vertex_indices)}
 
     # The ridges are the faces of a 3D Voronoi cell. Here we search for ridges
     # that are placed between the origin and some other point. These form the

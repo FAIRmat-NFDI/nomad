@@ -577,7 +577,7 @@ def test_transform_use_array_rules_without_array_notation(transformation_name, t
     assert result == expected, f"Failed for transformation '{transformation_name}''"
 
 
-def test_transform_array_rules_preseves_other_params():
+def test_transform_array_rules_preserves_other_params():
     transformation_rule = Rule(
         source='a[n]',
         target='b[n]',

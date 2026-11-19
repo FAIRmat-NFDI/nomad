@@ -832,7 +832,7 @@ def dft_method_referenced() -> EntryArchive:
 
 @pytest.fixture(scope='session')
 def dft_exact_exchange() -> EntryArchive:
-    """Add exact exchange explicitely to a PBE calculation."""
+    """Add exact exchange explicitly to a PBE calculation."""
     assert runschema is not None
     template = set_dft_values(['GGA_C_PBE', 'GGA_X_PBE'])
     template.run[0].method[0].dft.xc_functional.hybrid.append(

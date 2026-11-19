@@ -641,7 +641,7 @@ plugins:
           path: eln
           category: Experiment
           description: Search electronic lab notebooks
-          readme: 'This page allows you to specifically seach **electronic
+          readme: 'This page allows you to specifically search **electronic
             lab notebooks (ELNs)** within NOMAD. It is very similar
             to the entries search, but with a reduced filter set and
             specialized arrangement of default columns.'

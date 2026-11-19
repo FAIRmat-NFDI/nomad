@@ -115,7 +115,7 @@ class UploadTransferRequest(BaseModel):
     )
     auth_token: str = Field(
         ...,
-        description='Token used to authenticate the upload transfer in the target deployment. You can use the /auth/token API endpoint in the target depoyment to retrieve the token. Provide the plain token, do not include the "Bearer"',
+        description='Token used to authenticate the upload transfer in the target deployment. You can use the /auth/token API endpoint in the target deployment to retrieve the token. Provide the plain token, do not include the "Bearer"',
         examples=['eyJhbGciOiJSUzI1NiIsInR5cCI...'],
     )
     embargo_length: int | None = Field(

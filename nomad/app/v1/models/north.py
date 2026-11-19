@@ -48,7 +48,7 @@ class ReadMode(str, Enum):
 
 class Kind(str, Enum):
     """Type of the mount. Different spawners may support different types of mounts.
-    - bind: in case of Dockerspawner this equaivalent to bind mounts. In case of KubeSpawner this equivalent to hostpath mounts.
+    - bind: in case of Dockerspawner this equivalent to bind mounts. In case of KubeSpawner this equivalent to hostpath mounts.
     - volume: reuse or create a new volume.
     """
 

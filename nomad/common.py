@@ -103,7 +103,7 @@ def download_file(url: str, filepath: str) -> str | None:
                 with open(tmp_filepath, mode='wb') as file:
                     for chunk in response.iter_bytes(chunk_size=10 * 1024):
                         file.write(chunk)
-                # If download has succeeeded, copy the files over to
+                # If download has succeeded, copy the files over to
                 # final location
                 os.makedirs(directory, exist_ok=True)
                 shutil.copyfile(tmp_filepath, final_filepath)

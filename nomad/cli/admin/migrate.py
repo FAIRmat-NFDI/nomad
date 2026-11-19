@@ -334,7 +334,7 @@ def _convert_mongo_upload(
             assert first_external_db, (
                 'Different uploader on entry and upload, but external_db not set'
             )
-            # It's ok, but we should fetch main_author from entries.uploader instead of uplad.user_id
+            # It's ok, but we should fetch main_author from entries.uploader instead of upload.user_id
             upload_dict['main_author'] = first_entry_uploader
         # coauthors - put as many as possible in Upload.coauthors, the rest in entry.entry_coauthors
         if common_coauthors:
@@ -398,7 +398,7 @@ def _convert_mongo_upload(
                     )
                 elif not ds_cache.converted_dataset_dict:
                     # The value must be the empty dict, which represents a conversion failure
-                    assert False, f'Reference to unconvertable dataset {dataset_id}'
+                    assert False, f'Reference to unconvertible dataset {dataset_id}'
                 else:
                     # Dataset record exists and has been converted suuccessfully
                     converted_datasets.append(dataset_id)
@@ -465,7 +465,7 @@ def _convert_mongo_entry(
         for key in _metadata_keys_to_flatten_v0:
             if key in entry_metadata:
                 entry_dict[key] = entry_metadata.pop(key)
-        # Remove redunant keys from the metadata dict; then it should be empty
+        # Remove redundant keys from the metadata dict; then it should be empty
         for key in _metadata_keys_to_remove_v0:
             if key in entry_metadata:
                 entry_metadata.pop(key)
@@ -632,7 +632,7 @@ def _rename_key(d: dict[str, Any], old_name: str, new_name: str):
 
 
 def _seconds_to_h_m(seconds: float):
-    """Converst a time in seconds to a nicer string with hour and minute parts."""
+    """Converts a time in seconds to a nicer string with hour and minute parts."""
     return f'{seconds // 3600:>3.0f} h {(seconds % 3600) / 60:2.0f} min'
 
 

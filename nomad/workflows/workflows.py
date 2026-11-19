@@ -933,7 +933,7 @@ class PublishExternallyWorkflow:
             )
 
         except Exception as e:
-            print('THIS IS THE ORIGINAL ERRROR', e)
+            print('THIS IS THE ORIGINAL ERROR', e)
             finalize_input = FinalizeUploadProcessingFailureInput(
                 result='failure',
                 upload_id=input.upload_id,

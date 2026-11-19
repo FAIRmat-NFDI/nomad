@@ -47,7 +47,7 @@ class Formats(str, Enum):
     trig = 'trig'
 
 
-all_repsonse_types = {
+all_response_types = {
     'application/xml': 'xml',
     'application/rdf+prettyxml': 'pretty-xml',
     'application/rdf': 'xml',
@@ -80,14 +80,14 @@ def rdf_response(
     format_ = format.value if format else None
     if format_ is None:
         if accept:
-            format_ = all_repsonse_types.get(accept, 'pretty-xml')
+            format_ = all_response_types.get(accept, 'pretty-xml')
         else:
             format_ = 'pretty-xml'
 
     def create_response(g: Graph):
         try:
             content_type = next(
-                key for key, value in all_repsonse_types.items() if value == format_
+                key for key, value in all_response_types.items() if value == format_
             )
         except StopIteration:
             content_type = (

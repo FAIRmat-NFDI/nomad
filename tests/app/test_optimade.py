@@ -157,7 +157,7 @@ def example_structures(
         ('nelements LENGTH = 1', -1),
         ('LENGTH nelements = 1', -1),
         ('chemical_formula_anonymous starts with "A"', -1),
-        ('elements HAS ONY "H", "O"', -1),
+        ('elements HAS ONY "H", "O"', -1),  # typos: ignore
         ('last_modified >= "2009-02-01T20:07:00Z"', 0),
         ('_nmd_results_material_structural_type = "molecule / cluster"', 3),
         ('_nmd_results_material_chemical_formula_reduced = "H20"', 0),

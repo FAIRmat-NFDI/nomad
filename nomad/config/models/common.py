@@ -151,7 +151,7 @@ class Options(OptionsBase):
     )
 
     def filtered_keys(self) -> list[str]:
-        """Returns a list of keys that fullfill the include/exclude
+        """Returns a list of keys that fulfill the include/exclude
         requirements.
         """
         if (self.include is None or '*' in self.include) and self.options is not None:
@@ -167,7 +167,7 @@ class Options(OptionsBase):
         return [key for key in include if key not in exclude]
 
     def filtered_values(self) -> list[Any]:
-        """Returns a list of values that fullfill the include/exclude
+        """Returns a list of values that fulfill the include/exclude
         requirements.
         """
         return [
@@ -177,7 +177,7 @@ class Options(OptionsBase):
         ]
 
     def filtered_items(self) -> list[tuple[str, Any]]:
-        """Returns a list of key/value pairs that fullfill the include/exclude
+        """Returns a list of key/value pairs that fulfill the include/exclude
         requirements.
         """
         return [

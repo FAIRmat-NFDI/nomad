@@ -157,7 +157,7 @@ def post_upload_action_publish(
             description=strip(
                 """
             DEPRECATED
-            To publish to an external oasis or to the central nomad you can use the new entpoint /uploads/{upload_id}/action/transfer.
+            To publish to an external oasis or to the central nomad you can use the new endpoint /uploads/{upload_id}/action/transfer.
                 """
             ),
             deprecated=True,
@@ -494,7 +494,7 @@ def transfer_upload(
     """
     Start a transfer of an upload to another NOMAD deployment.
     By default the transfer will target the central nomad deployment if no `target_deployment_url` is provided.
-    `auth_token` is required to authenticate the transfer process in the target deploment (custom OASIS or central NOMAD).
+    `auth_token` is required to authenticate the transfer process in the target deployment (custom OASIS or central NOMAD).
     """
     upload = get_upload_with_read_access(
         upload_id=upload_id, user=user, include_others=True

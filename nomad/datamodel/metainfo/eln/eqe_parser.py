@@ -168,7 +168,7 @@ class EQEAnalyzer:
     def fit_urbach_tail(self, fit_window=0.06, filter_window=20):
         """
         Fits the Urbach tail to the EQE data. To select the fitting range,
-        finds the maximun of the derivative of the log(eqe) data. Then selects the range
+        finds the maximum of the derivative of the log(eqe) data. Then selects the range
         by going down a factor of 8 in eqe values from this reference point and up a factor of 2.
         This is unfortunately only a quick fix, but it works well enough based a few empirical tests
         with eqe data of perovskite solar cells.
@@ -317,7 +317,7 @@ class EQEAnalyzer:
 
     def calculate_voc_rad(self):
         """
-        Calculates the radiative open circuit voltage (voc_rad) with the calculted j0rad
+        Calculates the radiative open circuit voltage (voc_rad) with the calculated j0rad
         and j_sc.
 
         Returns:

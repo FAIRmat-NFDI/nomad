@@ -394,7 +394,7 @@ class Auth(ConfigBaseModel):
             share the same keycloak instance, and users can thus be authenticated
             correctly, without having authorization to access the deployment. If False,
             unauthorized users can still perform actions as defined by
-            `unathorized_user_scopes`.
+            `unauthorized_user_scopes`.
         """,
     )
     authorized_users: list[str] | None = Field(

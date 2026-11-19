@@ -406,7 +406,7 @@ def upgrade():
 @click.option(
     '--fix-problems',
     is_flag=True,
-    help="""If a minor, fixable problem is encountered, fixes it automaticall; otherwise fail.""",
+    help="""If a minor, fixable problem is encountered, fixes it automatically; otherwise fail.""",
 )
 @click.option(
     '--dry',

@@ -340,12 +340,12 @@ def assert_processing(
     assert_response(response_entries, 200)
     response_entries_json = response_entries.json()
     response_entries_data = response_entries_json['data']
-    all_entries_succesful = True
+    all_entries_successful = True
 
     for entry in response_entries_data:
         entry_succeeded = entry['process_status'] == ProcessStatus.SUCCESS
         if not entry_succeeded:
-            all_entries_succesful = False
+            all_entries_successful = False
             if all_entries_should_succeed:
                 assert False, 'One or more entries failed to process'
         pagination = response_entries_json['pagination']
@@ -357,7 +357,7 @@ def assert_processing(
             files.PublicUploadFiles if published else files.StagingUploadFiles
         )
         assert_upload_files(upload_id, entries, expected_file_class)
-    if check_search and all_entries_succesful:
+    if check_search and all_entries_successful:
         assert_search_upload(
             entries,
             additional_keys=[
@@ -414,7 +414,7 @@ def assert_pagination(pagination, expected_pagination):
             )
         else:
             assert pagination.get(key) == value, (
-                f'For {key} we expecte {value}, but got {pagination.get(key)}'
+                f'For {key} we expected {value}, but got {pagination.get(key)}'
             )
 
 
@@ -2176,7 +2176,7 @@ async def _perform_create_new_folder(
 
 
 @pytest.mark.parametrize(
-    'source_path, new_file_name, expected_status_code, expected_error_message, orignal_file_should_exist, trigger_processing',
+    'source_path, new_file_name, expected_status_code, expected_error_message, original_file_should_exist, trigger_processing',
     [
         pytest.param(
             'examples_template/0.aux',
@@ -2245,7 +2245,7 @@ async def test_rename_file(
     new_file_name: str,
     expected_status_code: int,
     expected_error_message: None | str,
-    orignal_file_should_exist: bool,
+    original_file_should_exist: bool,
     trigger_processing: bool,
 ):
     upload_id: str = non_empty_processed_with_temporal.upload_id
@@ -2280,7 +2280,7 @@ async def test_rename_file(
             if expected_error_message is not None:
                 assert expected_error_message in message
 
-            if orignal_file_should_exist:
+            if original_file_should_exist:
                 assert _raw_path_exists(upload_id, source_path)
             else:
                 assert not _raw_path_exists(upload_id, source_path)

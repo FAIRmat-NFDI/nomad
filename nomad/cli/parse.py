@@ -32,7 +32,7 @@ from .cli import cli
     '--archive-with-meta',
     is_flag=True,
     default=False,
-    help='If the archvie is printed, it would include metadata like m_def and m_annotations.',
+    help='If the archive is printed, it would include metadata like m_def and m_annotations.',
 )
 @click.option(
     '--show-metadata',

@@ -1,0 +1,35 @@
+[files]
+extend-exclude = [
+    # Scientific fixtures and generated reference data within the checked directories.
+    "tests/data/**",
+    "nomad/aflow_prototypes.py",
+    "nomad/normalizing/data/**",
+    # Vendored Markdown also falls within the pipeline's Markdown scope.
+    "gui/public/tinymce/**",
+]
+
+[default]
+# Suppress only the marked line; use for isolated legacy names or intentional typos.
+extend-ignore-re = ['(?m)^.*# typos: ignore$']
+
+[default.extend-words]
+# Chemical symbols, scientific acronyms, units, and cited journal abbreviations.
+Ba = "Ba"
+Nd = "Nd"
+Pn = "Pn"
+BSE = "BSE"
+bse = "bse"
+Comput = "Comput"
+# External software and file-format names.
+atomate = "atomate"
+# NumPy's public flags API (also used in fixture names).
+writeable = "writeable"
+
+[default.extend-identifiers]
+# Abbreviations in local variables and MongoDB operators.
+nd = "nd"
+fo = "fo"
+struc_type = "struc_type"
+conv_thr = "conv_thr"
+# Deliberately invalid inputs in negative tests.
+dne = "dne"

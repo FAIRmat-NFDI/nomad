@@ -906,7 +906,7 @@ class MenuItemPeriodicTable(MenuItem, PeriodicTableBase):
 
 
 class MenuItemVisibility(MenuItem):
-    """Menu item that shows a radio button that can be used to change the visiblity."""
+    """Menu item that shows a radio button that can be used to change the visibility."""
 
     type: Literal['visibility'] = Field(
         description='Set as `visibility` to get this menu item type.',
@@ -1075,7 +1075,7 @@ class SearchQuantities(OptionsGlob):
     the search interface of the app, but also targeted in the rest of the app
     configuration. You can load quantities from custom schemas as search
     quantities, but note that not all quantities will be loaded: only scalar
-    values are supported at the moment. The `include` and `exlude` attributes
+    values are supported at the moment. The `include` and `exclude` attributes
     can use glob syntax to target metainfo, e.g. `results.*` or
     `*.#myschema.schema.MySchema`.
     """

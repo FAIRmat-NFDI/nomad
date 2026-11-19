@@ -129,7 +129,7 @@ def test_stale_schema_export_does_not_write_output(monkeypatch, tmp_path, zipped
     ],
 )
 def test_get_used_schemas(monkeypatch, use_in_upload, use_installed):
-    # Create the dummy test uplaod
+    # Create the dummy test upload
     upload = SimpleNamespace(
         upload_id='test-upload',
         main_author='test-user',

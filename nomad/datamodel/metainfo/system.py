@@ -178,7 +178,7 @@ class Atoms(ArchiveSection):
         same species assigned to different atom-centered basis sets or pseudo-potentials,
         or simply atoms in different locations in the structure such as those in the bulk
         and on the surface. In the case where a species is not an atom, and therefore
-        cannot be representated by a chemical symbol, the label can simply be the name of
+        cannot be represented by a chemical symbol, the label can simply be the name of
         the particles.
         """,
     )

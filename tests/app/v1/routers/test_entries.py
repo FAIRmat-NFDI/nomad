@@ -53,11 +53,11 @@ from .common import (
 )
 
 # These are the tests for all API operations below ``entries``. The tests are organized
-# using the following type of methods: fixtures, ``perfrom_*_test``, ``assert_*``, and
+# using the following type of methods: fixtures, ``perform_*_test``, ``assert_*``, and
 # ``test_*``. While some ``test_*`` methods test individual API operations, some
 # test methods will test multiple API operations that use common aspects like
 # supporting queries, pagination, or the owner parameter. The test methods will use
-# ``perform_*_test`` methods as an parameter. Similarely, the ``assert_*`` methods allow
+# ``perform_*_test`` methods as an parameter. Similarly, the ``assert_*`` methods allow
 # to assert for certain aspects in the responses.
 
 
@@ -719,9 +719,7 @@ def test_entries_aggregations_percentiles_dynamic(
             {'include': ['results.*', 'upload_id']}, 200, id='include-section'
         ),
         pytest.param({'exclude': ['upload_id']}, 200, id='exclude'),
-        pytest.param(
-            {'exclude': ['missspelled', 'upload_id']}, 422, id='bad-quantitiy'
-        ),
+        pytest.param({'exclude': ['misspelled', 'upload_id']}, 422, id='bad-quantity'),
         pytest.param({'exclude': ['entry_id']}, 200, id='exclude-id'),
         pytest.param(
             {'exclude': ['results.material.*']}, 200, id='exclude-sub-section'

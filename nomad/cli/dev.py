@@ -310,9 +310,9 @@ def _generate_search_quantities():
             metadict['dynamic'] = search_quantity.dynamic
             metadict['repeats'] = search_quantity.repeats
             if search_quantity.dynamic:
-                splitted = search_quantity.qualified_name.split(schema_separator, 1)
-                if len(splitted) == 2:
-                    metadict['schema'] = splitted[1]
+                split = search_quantity.qualified_name.split(schema_separator, 1)
+                if len(split) == 2:
+                    metadict['schema'] = split[1]
                     keys.append('schema')
 
         result = {}
@@ -473,7 +473,7 @@ def update_parser_readmes(parser):
     with open(generic_fn) as generic:  # read only
         generic_contents = generic.read()
 
-    # Replace the comment at the top of the gereral template
+    # Replace the comment at the top of the general template
     generic_contents = re.sub(
         rf'\*\*\*Note:\*\* This is a general README file for NOMAD parsers, '
         rf'consult the README of specific parser projects for more detailed '

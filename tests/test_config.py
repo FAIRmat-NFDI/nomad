@@ -417,7 +417,7 @@ def test_config_merge(conf_yaml, conf_env, conf_expected, mockopen, monkeypatch)
                     }
                 },
             },
-            id='old, new and default options are merged with old config having precendence over new values.',
+            id='old, new and default options are merged with old config having precedence over new values.',
         ),
     ],
 )

@@ -412,7 +412,7 @@ def create_staging_upload(
 ) -> StagingUploadWithFiles:
     """
     Create an upload according to given spec. Additional arguments are given to
-    the StagingUploadFiles contstructor.
+    the StagingUploadFiles constructor.
 
     Arguments:
         upload_id: The id that should be given to this test upload.

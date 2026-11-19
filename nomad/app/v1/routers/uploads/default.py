@@ -1307,7 +1307,7 @@ def get_upload_raw_path(
         FastApiQuery(
             description=strip(
                 """
-                When dowloading individual files with `compress = false`, this can be
+                When downloading individual files with `compress = false`, this can be
                 used to seek to a specified position within the file in question. Default
                 is 0, i.e. the start of the file."""
             )
@@ -1318,7 +1318,7 @@ def get_upload_raw_path(
         FastApiQuery(
             description=strip(
                 """
-                When dowloading individual files with `compress = false`, this can be
+                When downloading individual files with `compress = false`, this can be
                 used to specify the number of bytes to read. By default, the value is -1,
                 which means that the remainder of the file is streamed."""
             )
