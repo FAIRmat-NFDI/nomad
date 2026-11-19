@@ -27,6 +27,7 @@ import pytest
 from nomad import infrastructure, utils
 from nomad.app.v1.models import (
     Direction,
+    Metadata,
     MetadataPagination,
     MetadataRequired,
     WithQuery,
@@ -314,6 +315,18 @@ def test_search_query(indices, example_data, api_query, total):
     api_query = json.loads(api_query)
     results = search(owner='all', query=WithQuery(query=api_query).query)
     assert results.pagination.total == total  # pylint: disable=no-member
+
+
+@pytest.mark.parametrize('operator', ['gt', 'gte', 'lt', 'lte'])
+@pytest.mark.parametrize('shorthand', [False, True], ids=['dict', 'shorthand'])
+def test_zero_bound_range_query(operator, shorthand):
+    quantity = 'results.material.n_elements'
+    bounds = {operator: 0}
+    api_query = {f'{quantity}:{operator}': 0} if shorthand else {quantity: bounds}
+
+    query = normalize_api_query(Metadata(query=api_query).query)
+
+    assert _api_to_es_query(query).to_dict() == {'range': {quantity: bounds}}
 
 
 @pytest.mark.parametrize(
