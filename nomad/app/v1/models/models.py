@@ -146,7 +146,7 @@ class Range(BaseModel):
         gt = values.gt
         gte = values.gte
 
-        if not any([lt, lte, gt, gte]):
+        if all(bound is None for bound in (lt, lte, gt, gte)):
             raise PydanticCustomError(
                 'range_undefined', 'At least one range boundary must be defined'
             )
