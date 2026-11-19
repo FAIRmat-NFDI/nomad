@@ -20,7 +20,7 @@ import matid.symmetry.symmetryanalyzer  # pylint: disable=import-error
 import matid.utils.segfault_protect  # pylint: disable=import-error
 
 
-# A patch for the segfault protection of systax (internally uses protection for spglib calls.)
+# A patch for segfault protection (internally used for spglib calls).
 # We basically disable the protection. The multiprocessing based original protection.
 # somehow interferes with the celery work infrastructure and leads to a deadlock. Its a TODO.
 # It also seems to deadlock without celery .. just not working consistently.

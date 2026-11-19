@@ -277,7 +277,7 @@ stokes = centimeter ** 2 / second = St
 
 # Fluidity
 [fluidity] = 1 / [viscosity]
-rhe = 1 / poise
+rhe = 1 / poise  # typos: ignore
 
 # Amount of substance
 particle = 1 / N_A = _ = molec = molecule

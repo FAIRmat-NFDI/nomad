@@ -147,7 +147,7 @@ class StructureCollection(EntryCollection):
                 entry_archive_reader = archive_reader[entry_id]
                 archive = {'metadata': to_json(entry_archive_reader['metadata'])}
 
-                # Lazy load results if only if results provider specfic field is requested
+                # Lazy load results if only if results provider specific field is requested
                 def get_results():
                     if 'results' not in archive:
                         archive['results'] = to_json(entry_archive_reader['results'])

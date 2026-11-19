@@ -51,7 +51,7 @@ def post_query_test_parameters(
         pytest.param({}, 200, total, id='empty'),
         pytest.param('str', 422, -1, id='not-dict'),
         pytest.param({entity_id: 'id_01'}, 200, 1, id='match'),
-        pytest.param({'mispelled': 'id_01'}, 422, -1, id='not-quantity'),
+        pytest.param({'misspelled': 'id_01'}, 422, -1, id='not-quantity'),
         pytest.param({entity_id: ['id_01', 'id_02']}, 200, 0, id='match-list-0'),
         pytest.param(
             {entity_id: 'id_01', elements: ['H', 'O']}, 200, 1, id='match-list-1'
@@ -63,7 +63,7 @@ def post_query_test_parameters(
         pytest.param({f'{entity_id}:gt': 'id_01'}, 200, total - 1, id='gt-short'),
         pytest.param({entity_id: {'gt': 'id_01'}}, 200, total - 1, id='gt'),
         pytest.param({entity_id: {'gt': ['id_01']}}, 422, total - 1, id='gt-list'),
-        pytest.param({entity_id: {'missspelled': 'id_01'}}, 422, -1, id='not-op'),
+        pytest.param({entity_id: {'misspelled': 'id_01'}}, 422, -1, id='not-op'),
         pytest.param({f'{entity_id}:lt': ['id_01']}, 422, -1, id='gt-shortlist'),
         pytest.param({f'{entity_id}:misspelled': 'id_01'}, 422, -1, id='not-op-short'),
         pytest.param(
@@ -154,7 +154,7 @@ def get_query_test_parameters(
         # Empty
         pytest.param({}, 200, total, id='empty'),
         # Errors
-        pytest.param({'mispelled': 'no-value'}, 200, total, id='not-quantity'),
+        pytest.param({'misspelled': 'no-value'}, 200, total, id='not-quantity'),
         # Match str
         pytest.param(
             {str['name']: str['values'][0]}, 200, str['total'], id='str-match'
@@ -177,9 +177,7 @@ def get_query_test_parameters(
             str['total_all'],
             id='str-match-many-all',
         ),
-        pytest.param(
-            {f'{str["name"]}__missspelled': 'id_01'}, 422, -1, id='str-not-op'
-        ),
+        pytest.param({f'{str["name"]}__misspelled': 'id_01'}, 422, -1, id='str-not-op'),
         pytest.param(
             {f'{str["name"]}__gt': str['values'][0]}, 200, str['total_gt'], id='str-gt'
         ),
@@ -203,7 +201,7 @@ def get_query_test_parameters(
         pytest.param(
             {int['name'] + '__gt': int['values'][0]}, 200, int['total_gt'], id='int-gt'
         ),
-        pytest.param({int['name'] + '__missspelled': 2}, 422, -1, id='int-not-op-2'),
+        pytest.param({int['name'] + '__misspelled': 2}, 422, -1, id='int-not-op-2'),
         # Date
         pytest.param(
             {date['name'] + '__gt': '1970-01-01'}, 200, date['total'], id='date-gt'
@@ -253,7 +251,7 @@ def get_query_test_parameters(
             id='q-int-gt',
         ),
         pytest.param({'q': 'bad_encoded'}, 422, -1, id='q-bad-encode'),
-        pytest.param({'q': 'missspelled__id_01'}, 422, -1, id='q-bad-quantity'),
+        pytest.param({'q': 'misspelled__id_01'}, 422, -1, id='q-bad-quantity'),
         # JSON
         pytest.param(
             {'json_query': f'{{"{str["name"]}:any": {json.dumps(str["values"])}}}'},

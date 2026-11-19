@@ -291,7 +291,7 @@ def structures_2d(original_atoms, logger=None):
 
             # If two axis are not periodic, return. This only happens if the vacuum
             # gap is not aligned with a cell vector or if the linear gap search is
-            # unsufficient (the structure is "wavy" making also the gap highly
+            # insufficient (the structure is "wavy" making also the gap highly
             # nonlinear).
             if sum(periodicity) != 2:
                 if logger:

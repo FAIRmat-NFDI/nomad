@@ -541,7 +541,7 @@ def test_topology_core_hole(settings):
             ['Br', 'K', 'Si', 'Si'],
             [('Si', 0.0), ('K', 0.0), ('Br', 0.0)],
             2148.4338041312812,
-            id='test the calculation of mass_density via the default route, i.e., using masses based on atomic masses, even when masses via atom parameters (compuational model) is available',
+            id='test the calculation of mass_density via the default route, i.e., using masses based on atomic masses, even when masses via atom parameters (computational model) is available',
         ),
         pytest.param(
             ['XBr', 'XK', 'XSi', 'XSi'],

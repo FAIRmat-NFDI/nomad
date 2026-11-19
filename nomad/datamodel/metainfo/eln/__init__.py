@@ -639,10 +639,10 @@ class SampleID(ArchiveSection):
     )
     sample_short_name = Quantity(
         type=str,
-        description='''A short name of the sample (the identifier scribed on the smaple,
+        description='''A short name of the sample (the identifier scribed on the sample,
          or in the sample container), e.g. 4001-8, YAG-2-34.
          This is to be managed and decided internally by the labs,
-         although we recomend to avoid the following characters on it: "_", "/", "\" and "."''',
+         although we recommend to avoid the following characters on it: "_", "/", "\" and "."''',
         a_eln=dict(component='StringEditQuantity'),
     )
     sample_id = Quantity(
@@ -661,7 +661,7 @@ class SampleID(ArchiveSection):
         The normalizer for the `SampleID` class.
         If sample owner is not filled the field will be filled by the first two letters of
         the first name joined with the first two letters of the last name of the author.
-        If the institute is not filled a institute abreviations will be constructed from
+        If the institute is not filled a institute abbreviations will be constructed from
         the author's affiliation.
         If no creation datetime is filled, the datetime will be taken from the `datetime`
         property of the parent, if it exists, otherwise the creation time of the entry
@@ -765,7 +765,11 @@ class CASPropertyCitation(MSection):
 
     docUri = Quantity(type=str, description='CAS property citation document uri.')
 
-    sourceNumber = Quantity(type=int, decription='CAS property citation source number.')
+    # TODO: Correct the description keyword in a separate metadata behavior fix.
+    sourceNumber = Quantity(
+        type=int,
+        decription='CAS property citation source number.',  # typos: ignore
+    )
 
     source = Quantity(type=str, description='CAS property citation source.')
 
@@ -867,7 +871,7 @@ class Substance(System):
     def _populate_from_cas(self, archive, logger: Any) -> None:
         """Private method for populating the attributes from a call to the CAS API using
         the `cas_number`.
-        Will overwrite exisiting CAS attributes if the query provides a value for them.
+        Will overwrite existing CAS attributes if the query provides a value for them.
         I.e. all attributes that begin with `cas_`.
 
         Args:
@@ -1501,7 +1505,8 @@ class SolarCellJV(PlotSection):
         a_eln=dict(component='NumberEditQuantity'),
     )
 
-    current_density_at_maximun_power_point = Quantity(
+    # TODO: Correct maximum with a compatibility alias and review serialized-key changes.
+    current_density_at_maximun_power_point = Quantity(  # typos: ignore
         type=np.dtype(np.float64),
         unit='mA / cm**2',
         shape=[],
@@ -1567,7 +1572,7 @@ class SolarCellJV(PlotSection):
 class SolarCellJVCurve(SolarCellJV):
     def cell_params(self):
         """
-        Calculates basic solar cell parametes form a current density (mA/cm**2)
+        Calculates basic solar cell parameters form a current density (mA/cm**2)
         voltage (V) curve.
 
         Returns:

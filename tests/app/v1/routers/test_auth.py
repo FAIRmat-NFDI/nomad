@@ -564,9 +564,9 @@ async def test_get_current_user(
         assert exc.value.status_code == status_code
     else:
         patch_user_get(allowed_user)
-        reveived_user = await dep(keycloak_token='abc')
+        received_user = await dep(keycloak_token='abc')
         if user is not None:
-            assert reveived_user == allowed_user
+            assert received_user == allowed_user
 
 
 @pytest.mark.asyncio

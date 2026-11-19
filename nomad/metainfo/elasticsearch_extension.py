@@ -188,7 +188,7 @@ def _estimate_bytes(obj) -> int | None:
 class DocumentType:
     """
     DocumentType allows to create Elasticsearch index mappings and documents based on
-    Metainfo definitions and instances. Genrally this class should not be used outside
+    Metainfo definitions and instances. Generally this class should not be used outside
     the elasticsearch_extension module.
 
     Attributes:
@@ -602,7 +602,7 @@ class DocumentType:
                 # that actually contains the quantity definition. This is a
                 # workaround to allow base class searches at the top level.
                 # NOTE: This implementation ignores classes that might exist
-                # between the topmost classs and the class that contains the
+                # between the topmost class and the class that contains the
                 # definition, e.g. if the hierarchy is A->B->C, and C contains
                 # the definition, it won't be available under the class B.
                 class_names = (
@@ -760,7 +760,7 @@ entry_index = Index(entry_type, index_config_key='entries_index')
 
 def get_tokenizer(regex):
     """Returns a function that tokenizes a given string using the provided
-    regular epression.
+    regular expression.
     """
 
     def tokenizer(value):
@@ -788,7 +788,7 @@ tokenizer_default = get_tokenizer(r'[_\s\.\/-]+')
 class Elasticsearch(DefinitionAnnotation):
     """
     A metainfo annotation for quantity definitions. This annotation can be used multiple
-    times on the same quantity (e.g. to define Elasticsearch fields with differrent mapping
+    times on the same quantity (e.g. to define Elasticsearch fields with different mapping
     types). Each annotation will create a field in the respective elasticsearch document type.
 
     This annotation has to be used on all sub sections that lead to quantities that should
@@ -1415,7 +1415,7 @@ def create_dynamic_quantity_annotation(quantity_def: Quantity) -> Elasticsearch 
 
 def find_base_classes(section):
     """Loops over the inheritance tree of the the given section and finds
-    all definitions that this section fullfills. ArchiveSection and
+    all definitions that this section fulfills. ArchiveSection and
     EntryData are for now ignored because they are too generic for any
     meaningful queries.
     """

@@ -421,7 +421,7 @@ def test_editing_raw_file(
 def test_get_upload_entries(auth_headers, client, mongo_module, example_data, kwargs):
     """
     Fetches the entries for a specific upload, by calling uploads/{upload_id}/entries,
-    with the provided query paramters, and checks the result.
+    with the provided query parameters, and checks the result.
     """
     upload_id = kwargs.get('upload_id', 'id_embargo')
     user = kwargs.get('user', 'user1')

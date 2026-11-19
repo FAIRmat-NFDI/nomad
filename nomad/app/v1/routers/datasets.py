@@ -90,7 +90,7 @@ _existing_name = (
         'model': HTTPExceptionModel,
         'description': strip(
             """
-        The chosen dataset name is already taken. Datesets of the same user must have a
+        The chosen dataset name is already taken. Datasets of the same user must have a
         unique name.
     """
         ),
@@ -232,6 +232,7 @@ def _create_exception(status_code, response_dict):
     return HTTPException(status_code, detail=response_dict.get('description'))
 
 
+# TODO: Make the generated response model honor the entries quantity's list shape.
 Dataset = datamodel.Dataset.m_def.a_pydantic.model
 
 
@@ -467,7 +468,8 @@ def post_datasets(
     if dataset_type != DatasetType.owned:
         if create.query is not None:
             dataset.query = create.model_dump()['query']
-        dataset.entrys = create.entries
+        # TODO: Assign to entries and persist foreign dataset entries/query in a separate fix.
+        dataset.entrys = create.entries  # typos: ignore
         empty = True
     else:
         # add dataset to entries in mongo and elastic

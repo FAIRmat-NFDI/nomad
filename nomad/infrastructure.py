@@ -226,7 +226,7 @@ def reset(remove: bool) -> None:
         if not mongo_client:
             setup_mongo()
         mongo_client.drop_database(config.mongo.db_name)
-        logger.info('mongodb resetted')
+        logger.info('mongodb reset')
     except Exception as e:
         logger.error('exception reset mongodb', exc_info=e)
 
@@ -244,7 +244,7 @@ def reset(remove: bool) -> None:
         if not remove:
             create_indices()
 
-        logger.info('elastic index resetted')
+        logger.info('elastic index reset')
     except Exception as e:
         logger.error('exception resetting elastic', exc_info=e)
 
@@ -264,7 +264,7 @@ def reset(remove: bool) -> None:
                 except Exception:
                     pass
 
-        logger.info('files resetted')
+        logger.info('files reset')
     except Exception as e:
         logger.error('exception deleting files', exc_info=e)
 

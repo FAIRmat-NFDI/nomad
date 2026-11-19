@@ -115,7 +115,7 @@ class Mesh(MSection):
 
         | `'Gamma-offcenter'` | Regular mesh with an offset that is neither `'Gamma-centered'`, nor `'Monkhorst-Pack'`. |
 
-        | `'Line-path'` | Line path along high-symmetry points. Typically employed for simualting band structures. |
+        | `'Line-path'` | Line path along high-symmetry points. Typically employed for simulating band structures. |
 
         | `'Equidistant'`  | Equidistant 1D grid (also known as 'Newton-Cotes')                      |
 
@@ -162,7 +162,7 @@ class Mesh(MSection):
         shape=['*'],
         description="""
         The amount of times the same point reappears. These are accounted for in `n_points`.
-        A value larger than 1, typically indicates a symmtery operation that was applied to the mesh.
+        A value larger than 1, typically indicates a symmetry operation that was applied to the mesh.
         """,
     )
 
@@ -171,7 +171,7 @@ class Mesh(MSection):
         shape=['*'],
         description="""
         The frequency of times the same point reappears.
-        A value larger than 1, typically indicates a symmtery operation that was applied to the mesh.
+        A value larger than 1, typically indicates a symmetry operation that was applied to the mesh.
         """,
     )
 
@@ -187,7 +187,7 @@ class LinePathSegment(MSection):
         type=str,
         shape=[],
         description="""
-        Name of the hihg-symmetry starting point of the line path segment.
+        Name of the high-symmetry starting point of the line path segment.
         """,
     )
 
@@ -547,7 +547,8 @@ class SingleElectronState(MSection):  # inherit from AtomicOrbitalState?
         'degeneracy',
     ]
     s_quantum_number = 0.5
-    nominal_occuption = 1.0
+    # TODO: Introduce nominal_occupation with a compatibility alias in a separate fix.
+    nominal_occuption = 1.0  # typos: ignore
 
     l_quantum_symbols = orbitals[-1]
     ml_quantum_symbols = {i: orbitals[i] for i in range(4)}
@@ -1432,7 +1433,7 @@ class BasisSetContainer(MSection):
         | `'plane waves'`                | Plane waves                       |
         | `'gaussians + plane waves'`    | Basis set of the Quickstep algorithm (DOI: 10.1016/j.cpc.2004.12.014) |
         | `'real-space grid'`            | Real-space grid                   |
-        | `'suppport functions'`         | Support functions                 |
+        | `'support functions'`         | Support functions                 |
         """,
     )
 
@@ -2329,7 +2330,7 @@ class BSE(ExcitedStateMethodology):
         type=MEnum('Full-diagonalization', 'Lanczos-Haydock', 'GMRES', 'SLEPc', 'TDA'),
         shape=[],
         description="""
-        Solver algotithm used to diagonalize the BSE Hamiltonian.
+        Solver algorithm used to diagonalize the BSE Hamiltonian.
 
         | Name | Description | Reference |
 

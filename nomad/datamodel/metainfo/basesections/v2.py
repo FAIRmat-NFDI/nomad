@@ -1417,7 +1417,7 @@ class ReadableIdentifiers(ArchiveSection):
         The normalizer for the `ReadableIdentifiers` class.
         If owner is not filled the field will be filled by the first two letters of
         the first name joined with the first two letters of the last name of the author.
-        If the institute is not filled a institute abreviations will be constructed from
+        If the institute is not filled a institute abbreviations will be constructed from
         the author's affiliation.
         If no datetime is filled, the datetime will be taken from the `datetime`
         property of the parent, if it exists, otherwise the creation time of the entry

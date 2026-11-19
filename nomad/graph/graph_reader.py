@@ -1259,7 +1259,7 @@ class GeneralReader:
         self.global_root: dict = global_root
         self._reader_cache = reader_cache or _ReaderCache()
 
-        # for cacheing
+        # for caching
         # can only store uploads in the reader
         # due to limitations of upload class (open/close limitations)
         self.upload_pool: dict[str, UploadFiles] = {}

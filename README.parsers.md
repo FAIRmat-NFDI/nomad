@@ -17,7 +17,7 @@ For each parser there is one type of file that the respective parser can recogni
 these files *mainfiles*. For each mainfile that NOMAD discovers it will create an *entry*
 in the database, which users can search, view, and download. NOMAD will consider all files
 in the same directory as *auxiliary files* that also are associated with that entry. Parsers
-might also read information from these auxillary files. This way you can add more files
+might also read information from these auxiliary files. This way you can add more files
 to an entry, even if the respective parser/code might not use them. However, we strongly
 recommend to not have multiple mainfiles in the same directory. For CMS calculations, we
 recommend having a separate directory for each code run.

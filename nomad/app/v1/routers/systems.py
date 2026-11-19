@@ -155,7 +155,7 @@ format_map: dict[str, dict] = OrderedDict(
         'pdb': {
             'label': 'pdb',
             'description': """Protein Data Bank file. Note that valid PDB files
-        require a CRYST1 record, while certains systems in NOMAD may not have a
+        require a CRYST1 record, while certain systems in NOMAD may not have a
         unit cell associated with them. In this case the returned structure file
         will contain a dummy CRYST1 record in order to load the atomic
         positions.""",
@@ -355,7 +355,7 @@ Here is a brief rundown of the different features each format supports:
     All length dimensions in the structure files are in Ångstroms (=1e-10 meter).
 
     Note that some formats are more restricted and cannot fully
-    describe certains kinds of systems. For examples some entries within NOMAD
+    describe certain kinds of systems. For examples some entries within NOMAD
     do not contain a unit cell (e.g. molecules), whereas some formats require it
     to be present.
     """

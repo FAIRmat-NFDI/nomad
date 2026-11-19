@@ -166,7 +166,9 @@ def _run_processing(
 @click.option('--entries-mongo-query', type=str, help='A query')
 @click.option('--entries-es-query', type=str, help='A query')
 @click.option('--unpublished', help='Select only uploads in staging', is_flag=True)
-@click.option('--published', help='Select only uploads that are publised', is_flag=True)
+@click.option(
+    '--published', help='Select only uploads that are published', is_flag=True
+)
 @click.option(
     '--outdated', help='Select published uploads with older nomad version', is_flag=True
 )
@@ -194,7 +196,7 @@ def _run_processing(
 @click.option(
     '--processing-incomplete-entries',
     is_flag=True,
-    help='Select uploads where any entry has net yot been processed',
+    help='Select uploads where any entry has not yet been processed',
 )
 @click.option(
     '--processing-incomplete',
@@ -236,7 +238,7 @@ def _query_uploads(
 ):
     """
     Produces a list of uploads (mongoengine proc.Upload objects) based on a given
-    list of upoad ids and further filter parameters.
+    list of upload ids and further filter parameters.
     """
 
     import json
@@ -600,7 +602,7 @@ def reset(ctx, uploads, with_entries, success, failure):
             upload.process_status = proc.ProcessStatus.FAILURE
         upload.save()
         i += 1
-        print(f'resetted {i} of {uploads_count} uploads')
+        print(f'reset {i} of {uploads_count} uploads')
 
 
 @uploads.command(help='(Re-)index all entries of the given uploads.')

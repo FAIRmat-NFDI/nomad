@@ -18,7 +18,7 @@
 
 """
 Generates a msgpack database of springer-related quantities downloaded from
-http://materials.springer.com. The database is stuctured as
+http://materials.springer.com. The database is structured as
 
 space_group_number : normalized_formula : springer_id : entry
 """
@@ -179,7 +179,7 @@ def update_springer(max_n_query: int = 10, retry_time: int = 120):
     database.
     """
     # load database
-    # querying database with unvailable dataset leads to error,
+    # querying database with unavailable dataset leads to error,
     # get toc keys first by making an empty query
     with read_archive(config.normalize.springer_db_path) as springer_archive:
         archive_keys = springer_archive.keys()

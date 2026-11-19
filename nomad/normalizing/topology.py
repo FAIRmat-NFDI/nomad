@@ -69,7 +69,7 @@ with open(pathlib.Path(__file__).parent / 'data/top_50k_material_ids.json') as f
 
 
 def get_topology_id(index: int) -> str:
-    """Retuns a valid topology identifier with the given index.
+    """Returns a valid topology identifier with the given index.
     Args:
         index: The index of the topology. Must be unique.
 

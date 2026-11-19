@@ -808,7 +808,7 @@ class TermsAggregation(BucketAggregation):
         description=strip(
             """
         The amount of aggregation values is limited. This allows you to configure the
-        maximum number of aggregated values to return. If you need to exaust all
+        maximum number of aggregated values to return. If you need to exhaust all
         possible value, use `pagination`.
         """
         ),
@@ -1169,7 +1169,7 @@ class Aggregation(BaseModel):
         None,
         description=strip(
             """
-            A `min_max` aggregation allows to get the minumum and maximum quantity values:
+            A `min_max` aggregation allows to get the minimum and maximum quantity values:
 
             ```json
             {
@@ -1505,9 +1505,10 @@ class Files(BaseModel):
                 'invalid_pattern', f'could not parse the re pattern: {e}'
             )
 
+    # TODO: Rename the validator separately and review compatibility for direct callers.
     @model_validator(mode='after')
     @classmethod
-    def vaildate(cls, values):  # pylint: disable=no-self-argument
+    def vaildate(cls, values):  # pylint: disable=no-self-argument  # typos: ignore
         # use the compiled glob pattern as re
         if values.re_pattern is None:
             values.re_pattern = values.glob_pattern

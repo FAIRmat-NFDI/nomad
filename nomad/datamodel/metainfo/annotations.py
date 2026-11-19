@@ -707,7 +707,7 @@ class BrowserAnnotation(AnnotationModel):
       Possible values are:
 
       `HtmlValue`: Renders a string as HTML.<br/>
-      `JsonValue`: Renders a dict or list in a collapsable tree.
+      `JsonValue`: Renders a dict or list in a collapsible tree.
     """,
     )
 
@@ -749,7 +749,7 @@ class TabularMappingOptions(BaseModel):
         separated list of nested sub-sections. The targeted sub-sections, will be
         considered when mapping table columns to quantities. Has to be used to annotate the quantity that
         holds the path to the `.csv` or excel file.<br/>
-    `enrty`: A `list` of paths to the (sub)sections where the tabular quantities are to be filled from individual rows
+    `entry`: A `list` of paths to the (sub)sections where the tabular quantities are to be filled from individual rows
         of the excel/csv file, to create distinct entries. Each path is a
         `/` separated list of nested sub-sections. The targeted (sub)sections, will be
         considered when mapping table rows to quantities. The schema of the resultant entry follows the

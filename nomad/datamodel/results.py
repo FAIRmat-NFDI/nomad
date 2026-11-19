@@ -578,7 +578,7 @@ class Structures(MSection):
     structure_conventional = SubSection(
         description="""
         Contains the conventional structure that is derived from
-        structure_original. This conventional stucture has been idealized and
+        structure_original. This conventional structure has been idealized and
         the conventions employed by spglib are used.
         """,
         sub_section=Structure.m_def,
@@ -587,7 +587,7 @@ class Structures(MSection):
     structure_primitive = SubSection(
         description="""
         Contains the primitive structure that is derived from
-        structure_original. This primitive stucture has been idealized and the
+        structure_original. This primitive structure has been idealized and the
         conventions employed by spglib are used.
         """,
         sub_section=Structure.m_def,
@@ -1481,7 +1481,7 @@ class System(MSection):
             'common_solvent_accessible_volume',
             'csav',
             'solvent_accessible_volume',
-            'sav',
+            'sav',  # typos: ignore
         ],
         unit='m ** 3',
         description="""
@@ -2070,7 +2070,7 @@ class BSE(ExcitedStateMethodology):
         type=MEnum('Full-diagonalization', 'Lanczos-Haydock', 'GMRES', 'SLEPc', 'TDA'),
         shape=[],
         description="""
-        Solver algotithm used to diagonalize the BSE Hamiltonian.
+        Solver algorithm used to diagonalize the BSE Hamiltonian.
         """,
         a_elasticsearch=[
             Elasticsearch(),
@@ -2274,7 +2274,7 @@ class Precision(MSection):
         description="""
         Amount of sampled k-points per unit reciprocal length along each axis.
         Contains the least precise density out of all axes.
-        Should only be compared between calulations of similar dimensionality.
+        Should only be compared between calculations of similar dimensionality.
         """,
         a_elasticsearch=[Elasticsearch()],
     )
@@ -2326,7 +2326,7 @@ class Precision(MSection):
         | `'plane waves'`                | Plane waves                       |
         | `'gaussians + plane waves'`    | Basis set of the Quickstep algorithm (DOI: 10.1016/j.cpc.2004.12.014) |
         | `'real-space grid'`            | Real-space grid                   |
-        | `'suppport functions'`         | Support functions                 |
+        | `'support functions'`         | Support functions                 |
         """,
         a_elasticsearch=[
             Elasticsearch(),
@@ -2454,7 +2454,7 @@ class Method(MSection):
         description="""
         Contains a summary of the methodology that has been used in this entry.
         This methodology applies to all of the reported properties and
-        determines the result of a single energy evalution. The individual
+        determines the result of a single energy evaluation. The individual
         properties may be further methodological details affect e.g. the
         sampling.
         """
@@ -2644,7 +2644,7 @@ class DOSElectronic(DOS):
 class DOSNew(MSection):
     m_def = Section(
         description="""
-        Section containign the density of states data.
+        Section containing the density of states data.
 
         It includes the total DOS and the projected DOS values. We differentiate `species_projected` as the
         projected DOS for same atomic species, `atom_projected` as the projected DOS for different
@@ -2809,7 +2809,7 @@ class BandStructurePhonon(BandStructure):
 class BandStructureElectronic(BandStructure):
     m_def = Section(
         description="""
-        This section stores information on a electonic band structure
+        This section stores information on a electronic band structure
         evaluation along one-dimensional pathways in the reciprocal space.
         """
     )
@@ -3756,7 +3756,7 @@ class SolarCell(MSection):
         type=np.float64,
         shape=[],
         description="""
-        Power conversion effciency of a solar cell in percentage %.
+        Power conversion efficiency of a solar cell in percentage %.
         """,
         a_elasticsearch=Elasticsearch(),
     )
@@ -4350,7 +4350,7 @@ class Catalyst(MSection):
         type=str,
         shape=['*'],
         description="""
-        The type of catalyst, whether metal or oxide, model, bulk, supported, ect.
+        The type of catalyst, whether metal or oxide, model, bulk, supported, etc.
         Multiple values can apply.
         """,
         links=['https://w3id.org/nfdi4cat/voc4cat_0007014'],
@@ -4475,7 +4475,7 @@ class EELSInstrument(MSection):
     dark_current = Quantity(
         type=bool,
         description="""
-        Is dark current or noise to be substract included in the output?
+        Is dark current or noise to be subtracted included in the output?
         """,
     )
 

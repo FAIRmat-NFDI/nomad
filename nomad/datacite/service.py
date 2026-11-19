@@ -68,7 +68,7 @@ def create_doi(attributes: DoiRequestAttributes) -> dict | None:
     if not client.enabled:
         return None
 
-    # Using POST to trigger error if DOI alread exists
+    # Using POST to trigger error if DOI already exists
     response = client.post_doi(attributes)
     return response
 

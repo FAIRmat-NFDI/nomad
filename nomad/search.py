@@ -1128,7 +1128,7 @@ def _api_to_es_aggregation(
                 agg.pagination, loc=['aggregation']
             )
 
-            # We are using elastic searchs 'composite aggregations' here. We do not really
+            # We are using elastic searches 'composite aggregations' here. We do not really
             # compose aggregations, but only those pseudo composites allow us to use the
             # 'after' feature that allows to scan through all aggregation values.
             terms = A(
@@ -1842,7 +1842,7 @@ def search(
         # TODO this is a temporary performance hot-fix. Sort is expensive and we sort
         # by default. In the future, the client should explicitly state if sort is necessary.
         # Now, we simply do never sort, if there is a top-level AND match for a single id in the query.
-        # In this case, there wil always be just one result and sorting is not necessary.
+        # In this case, there will always be just one result and sorting is not necessary.
         # This catches a lot of problematic queries as a hot-fix.
         skip_sort = isinstance(query, dict) and isinstance(
             query.get(entry_type.id_field, None), str

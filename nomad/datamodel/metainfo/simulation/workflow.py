@@ -619,7 +619,7 @@ class SinglePointResults(SimulationWorkflowResults):
         type=bool,
         shape=[],
         description="""
-        Indicates if the convergence criteria were fullfilled.
+        Indicates if the convergence criteria were fulfilled.
         """,
     )
 
@@ -905,7 +905,7 @@ class GeometryOptimizationMethod(SimulationWorkflowMethod):
 
         | `"atomic"`             | the atomic coordinates alone are updated |
 
-        | `"cell_volume"`         | `"atomic"` + cell lattice paramters are updated isotropically |
+        | `"cell_volume"`         | `"atomic"` + cell lattice parameters are updated isotropically |
 
         | `"cell_shape"`        | `"cell_volume"` but without the isotropic constraint: all cell parameters are updated |
 
@@ -1296,7 +1296,7 @@ class ThermostatParameters(MSection):
         shape=[],
         unit='kilogram',
         description="""
-        The effective or fictitious mass of the temperature resevoir.
+        The effective or fictitious mass of the temperature reservoir.
         """,
     )
 
@@ -3765,7 +3765,7 @@ class EquationOfState(ParallelSimulation):
                     )
                     self.results.eos_fit.append(eos_fit)
                 except Exception:
-                    self.logger.warning('EOS fit not succesful.')
+                    self.logger.warning('EOS fit not successful.')
 
 
 class ChemicalReactionMethod(SimulationWorkflowMethod):
@@ -3844,7 +3844,7 @@ class ChemicalReaction(SimulationWorkflow):
                     lattices.append(lattice)
             return lattices
 
-        # check compatibiliy of cell sizes
+        # check compatibility of cell sizes
         reactant_lattices = get_lattices(reactants)
         for reference_lattice in reactant_lattices:
             for lattice in get_lattices(products):

@@ -303,7 +303,7 @@ class TextParser(FileParser):
         self._parsed: list[int] = []
         # True if multiple quantities can match a line
         self.allow_overlap = kwargs.get('allow_overlap', False)
-        # maximum mumber of lines to cache in a multiline search
+        # maximum number of lines to cache in a multiline search
         self.max_lines = kwargs.get('max_lines', 10)
         self.line_parsing = kwargs.get('line_parsing', False)
         if quantities is None:

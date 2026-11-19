@@ -160,7 +160,7 @@ def quantity_generator(quantity_name, header_name, shape, to_dict=False):
                     data_file: Test.xlsx
         """
             ),
-            id='w_sheetName_colMode_multy_quantities',
+            id='w_sheetName_colMode_multi_quantities',
         ),
         pytest.param(
             strip(

@@ -372,8 +372,8 @@ class NudgedElasticBand(MSection):
         type=str,
         shape=[],
         description="""
-        Specifies the method used in calculating the minumum energy path. Can be one of
-        standard, improved_tangeant, full_spring_force, spline_interpolation, string.
+        Specifies the method used in calculating the minimum energy path. Can be one of
+        standard, improved_tangent, full_spring_force, spline_interpolation, string.
         """,
     )
 
@@ -635,7 +635,7 @@ class GeometryOptimization(MSection):
 
         | `"atomic"`             | the atomic coordinates alone are updated |
 
-        | `"cell_volume"`         | `"atomic"` + cell lattice paramters are updated isotropically |
+        | `"cell_volume"`         | `"atomic"` + cell lattice parameters are updated isotropically |
 
         | `"cell_shape"`        | `"cell_volume"` but without the isotropic constraint: all cell parameters are updated |
 
@@ -2225,7 +2225,7 @@ class SinglePoint(MSection):
         type=bool,
         shape=[],
         description="""
-        Indicates if the convergence criteria were fullfilled
+        Indicates if the convergence criteria were fulfilled
         """,
     )
 
@@ -2315,7 +2315,7 @@ class Task(MSection):
         type=str,
         shape=[],
         description="""
-        Descibes the relationship between the input and output workflows. For example, if
+        Describes the relationship between the input and output workflows. For example, if
         a single_point workflow uses the relaxed structure from a geometry_optimization as
         an input, the description may be "relaxed structure from geometry_optimization
         used to calucalate single_point properties"

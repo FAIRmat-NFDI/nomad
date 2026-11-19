@@ -801,7 +801,7 @@ async def _request_transfer_start(
     params:
         user: Used to authorize the request.
         target_deployment_user: Will be used to authorize the transfer in the target deployment. If not provided, it will use the same user of the request.
-        check_success: Verify if the whole transfer process is successfull. This includes waiting for the workflow to finish and compare internal variables to check the integrity of the transfer
+        check_success: Verify if the whole transfer process is successful. This includes waiting for the workflow to finish and compare internal variables to check the integrity of the transfer
     """
     upload_id, suffix = oasis_publishable_upload
     user_auth = auth_headers[user]

@@ -12,7 +12,7 @@
 
 ### Added (8 changes)
 
-- [Added cabability for a project to include entries from other projects.](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/commit/fad4f15f96d66c3a033ec1ebb7afda99f9d84c38) ([merge request](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/merge_requests/3253))
+- [Added capability for a project to include entries from other projects.](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/commit/fad4f15f96d66c3a033ec1ebb7afda99f9d84c38) ([merge request](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/merge_requests/3253))
 - [Added graph API pagination features and added option to disable quantity fetching.](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/commit/48c2657740c432906ebf05215cbf6f69c7c105ba) ([merge request](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/merge_requests/3254))
 - [Added support for Elasticsearch 9.](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/commit/b6ad36f36e547029f425bf571df4f3b5bf1c4bed) ([merge request](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/merge_requests/2907))
 - [Added user notifications endpoint.](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/commit/e751339723af42f32596e2d872a100dc14288bf8) ([merge request](https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR/-/merge_requests/3136))
@@ -471,7 +471,7 @@ No changes.
 - [Fixed an url encoding issue in the h5groove integration.](nomad-lab/nomad-FAIR@b2ae7cfbefc22b685f1dfba912b90630e94a9ebc) ([merge request](nomad-lab/nomad-FAIR!1906))
 - [Add label argument in TextFieldWithHelp](nomad-lab/nomad-FAIR@d0c45bfe8258f57b48809f309a697aff3e3ec677) ([merge request](nomad-lab/nomad-FAIR!1902))
 - [Fixed handling of missing definitions for dynamic search quantities.](nomad-lab/nomad-FAIR@4639cb233e4ec75de78b0db1388d92ce204df374) ([merge request](nomad-lab/nomad-FAIR!1903))
-- [Fixed a problem in juypterhubconfig that was preventing priveledged services.](nomad-lab/nomad-FAIR@9808e817861c9124d00498fd4f551c940b7b50cc) ([merge request](nomad-lab/nomad-FAIR!1876))
+- [Fixed a problem in juypterhubconfig that was preventing privileged services.](nomad-lab/nomad-FAIR@9808e817861c9124d00498fd4f551c940b7b50cc) ([merge request](nomad-lab/nomad-FAIR!1876))
 - [Changed that uploads shared with all do not show in a users upload list.](nomad-lab/nomad-FAIR@9c135a35ca9bea64acb97da4685c3f0f2e941605) ([merge request](nomad-lab/nomad-FAIR!1876))
 - [Fixed the used request version to be compatible with current jupyterhub.](nomad-lab/nomad-FAIR@1e8eac635dfbcc047994fff540e42076fb0a9a06) ([merge request](nomad-lab/nomad-FAIR!1876))
 
@@ -497,7 +497,7 @@ No changes.
 
 ### Fixed (2 changes)
 
-- [Fixed a problem in juypterhubconfig that was preventing priveledged services.](nomad-lab/nomad-FAIR@9808e817861c9124d00498fd4f551c940b7b50cc) ([merge request](nomad-lab/nomad-FAIR!1876))
+- [Fixed a problem in juypterhubconfig that was preventing privileged services.](nomad-lab/nomad-FAIR@9808e817861c9124d00498fd4f551c940b7b50cc) ([merge request](nomad-lab/nomad-FAIR!1876))
 - [Fixed issue with wrong example_uploads.yaml path.](nomad-lab/nomad-FAIR@cf82f7d46e003f2af3e794a9851a294f3cd6916c) ([merge request](nomad-lab/nomad-FAIR!1883))
 
 ## 1.3.2 (2024-05-31)
@@ -551,7 +551,7 @@ No changes.
 - [Fix quantum espresso parser](nomad-lab/nomad-FAIR@c3e589dfde91dc1bd29f6525ecb66b0f731d41e5) ([merge request](nomad-lab/nomad-FAIR!1619))
 - [Removed `species_at_site` from indexed optimade properties.](nomad-lab/nomad-FAIR@16228696c5516caf6d0547d02df7ff7d0468bb41) ([merge request](nomad-lab/nomad-FAIR!1603))
 - [Fixed issue with datetime fields not being updated in the ELN.](nomad-lab/nomad-FAIR@67b7525caade853f6b60baa9022512705788dcc4) ([merge request](nomad-lab/nomad-FAIR!1596))
-- [Fix assigment of entry domain](nomad-lab/nomad-FAIR@88bf5e17d3d37b86579f12a8e6eb880e93391d70) ([merge request](nomad-lab/nomad-FAIR!1600))
+- [Fix assignment of entry domain](nomad-lab/nomad-FAIR@88bf5e17d3d37b86579f12a8e6eb880e93391d70) ([merge request](nomad-lab/nomad-FAIR!1600))
 - [Resolve "wrong margin in subplot"](nomad-lab/nomad-FAIR@d4d8a5a37108fddbc414b614b38d53a73157713b) ([merge request](nomad-lab/nomad-FAIR!1589))
 - [content is missing in Labfolder data element](nomad-lab/nomad-FAIR@4dc7e199d777febc3675371ba08da7524e5f6e5c) ([merge request](nomad-lab/nomad-FAIR!1595))
 - [Resolve "updating Labfolder api"](nomad-lab/nomad-FAIR@06d44cf301194f0e02e9b07d579d8383d80601ee) ([merge request](nomad-lab/nomad-FAIR!1586))
@@ -574,7 +574,7 @@ No changes.
 - [Fixed issue with plots not having enough space for title.](nomad-lab/nomad-FAIR@dd10d0e2d03a069ab44063bad421f25cc3f90d13) ([merge request](nomad-lab/nomad-FAIR!1518))
 - [Resolve "Deprecated plot annotation"](nomad-lab/nomad-FAIR@2d2059e3fca372f4c3c0e048eba24930b4514e4e) ([merge request](nomad-lab/nomad-FAIR!1512))
 - [Fixed wrong dataset URL in EditMetaDataDialog.](nomad-lab/nomad-FAIR@2ef8d2f5ee402d6c8c8529d1545132d4094daf2c) ([merge request](nomad-lab/nomad-FAIR!1509))
-- [Fixed exessively long entry results columns.](nomad-lab/nomad-FAIR@59f15dd92950589e4a0ab13b7747ee9ffe5b3344) ([merge request](nomad-lab/nomad-FAIR!1508))
+- [Fixed excessively long entry results columns.](nomad-lab/nomad-FAIR@59f15dd92950589e4a0ab13b7747ee9ffe5b3344) ([merge request](nomad-lab/nomad-FAIR!1508))
 - [Gromacs cleanup](nomad-lab/nomad-FAIR@938cb3a1a4a85d2c4fadd4f2679a39e7a49406ab) ([merge request](nomad-lab/nomad-FAIR!1505))
 - [Fixed missing link to download installation files for oasis with keycloak.](nomad-lab/nomad-FAIR@1a3de09ea48aeadaace0532139458ef48b0901d7) ([merge request](nomad-lab/nomad-FAIR!1497))
 - [Update file parser and parser documentation](nomad-lab/nomad-FAIR@c3304ff32a4bd6136d24c905c0bf204a516076e3) ([merge request](nomad-lab/nomad-FAIR!1479))
@@ -600,7 +600,7 @@ No changes.
 - [Merge branch 'auto-format' into 'develop'](nomad-lab/nomad-FAIR@5d5879a4b4f12fec1ebd0d133684190810b6a838) ([merge request](nomad-lab/nomad-FAIR!1610))
 - [Merge branch 'add-tabular-description' into 'develop'](nomad-lab/nomad-FAIR@67c960b4491cf01787e96593dd4e36094def9f59) ([merge request](nomad-lab/nomad-FAIR!1612))
 - [Merge branch 'fix-mypy' into 'develop'](nomad-lab/nomad-FAIR@6432c8b35bdd43f1c351183139bb5567baa21ae5) ([merge request](nomad-lab/nomad-FAIR!1609))
-- [Resolve "Include Perovskite Solar Cells Database Pugin"](nomad-lab/nomad-FAIR@6c2f381bc8b477c364a8f5b9cf115528036da6ab) ([merge request](nomad-lab/nomad-FAIR!1605))
+- [Resolve "Include Perovskite Solar Cells Database Plugin"](nomad-lab/nomad-FAIR@6c2f381bc8b477c364a8f5b9cf115528036da6ab) ([merge request](nomad-lab/nomad-FAIR!1605))
 - [Resolve "Create entry with custom schema: filter results ordered by EntryId?"](nomad-lab/nomad-FAIR@f275b37103d58ab605da3879f1652c1b3e58e41e) ([merge request](nomad-lab/nomad-FAIR!1590))
 - [Resolve "DataTextParser inheriting from TextParser"](nomad-lab/nomad-FAIR@86d672fcb3c732fa01596a74f37f585a69bb853a) ([merge request](nomad-lab/nomad-FAIR!1530))
 
@@ -618,7 +618,7 @@ No changes.
 - [Add functionality to convert archives created with the old writer.](nomad-lab/nomad-FAIR@6f57f6557be41a62a71414e7cdd0591ee5cbe29e) ([merge request](nomad-lab/nomad-FAIR!1699))
 - [Added possibility to use provide units and labels for scatter plot axes, added...](nomad-lab/nomad-FAIR@accd453c60c6ced89c4c707bb6827d6b65b9b7d8) ([merge request](nomad-lab/nomad-FAIR!1678))
 - [Introduce common parser class](nomad-lab/nomad-FAIR@a5f5740f515af14d4fee583736e1a5467bf0411a) ([merge request](nomad-lab/nomad-FAIR!1686))
-- [Resolve "Defaul global unit system"](nomad-lab/nomad-FAIR@06509bb4f5ba586f39d039521e1c689f3c97d986) ([merge request](nomad-lab/nomad-FAIR!1597))
+- [Resolve "Default global unit system"](nomad-lab/nomad-FAIR@06509bb4f5ba586f39d039521e1c689f3c97d986) ([merge request](nomad-lab/nomad-FAIR!1597))
 - [Added a publish command to the cli.](nomad-lab/nomad-FAIR@f33d0421102161e6230862dfa8bdb1aa8ddd919c) ([merge request](nomad-lab/nomad-FAIR!1679))
 - [Converter for json to and from pd dataframe.](nomad-lab/nomad-FAIR@b40e32921573344f90c12fdea2b1dd0c266c1c01) ([merge request](nomad-lab/nomad-FAIR!1628))
 - [Add deprecation note on old run schema](nomad-lab/nomad-FAIR@b11bd7a3710e7c5b5246dd92b2139d3726efd87e) ([merge request](nomad-lab/nomad-FAIR!1672))
@@ -666,7 +666,7 @@ No changes.
 ### Added (8 changes)
 
 - [CLI utility to export archive data.](nomad-lab/nomad-FAIR@88c59a988e2cfafa321466b2aadef70ef16f74ed) ([merge request](nomad-lab/nomad-FAIR!1452))
-- [Added Activity ID to ExperiementStep](nomad-lab/nomad-FAIR@1ff3610d114820df24b5cfd7a77415b1707a2893) ([merge request](nomad-lab/nomad-FAIR!1456))
+- [Added Activity ID to ExperimentStep](nomad-lab/nomad-FAIR@1ff3610d114820df24b5cfd7a77415b1707a2893) ([merge request](nomad-lab/nomad-FAIR!1456))
 - [Added oasis registration link to the docs.](nomad-lab/nomad-FAIR@3b06ce9a083414da1340be14bbbc48a525436c10) ([merge request](nomad-lab/nomad-FAIR!1450))
 - [Added authentication for mongo and elastic use.](nomad-lab/nomad-FAIR@c1f4147dddbaf6def6e831bd924a170a401b7db8) ([merge request](nomad-lab/nomad-FAIR!1332))
 - [Added YAML linting plugin for NOMAD schemas.](nomad-lab/nomad-FAIR@d6ae88b6a84a7505d0f85d43a9e12a544c3780a0) ([merge request](nomad-lab/nomad-FAIR!1439))
@@ -706,14 +706,14 @@ No changes.
 ### Added (39 changes)
 
 - [CLI utility to export archive data.](nomad-lab/nomad-FAIR@88c59a988e2cfafa321466b2aadef70ef16f74ed) ([merge request](nomad-lab/nomad-FAIR!1452))
-- [Added Activity ID to ExperiementStep](nomad-lab/nomad-FAIR@1ff3610d114820df24b5cfd7a77415b1707a2893) ([merge request](nomad-lab/nomad-FAIR!1456))
+- [Added Activity ID to ExperimentStep](nomad-lab/nomad-FAIR@1ff3610d114820df24b5cfd7a77415b1707a2893) ([merge request](nomad-lab/nomad-FAIR!1456))
 - [Added oasis registration link to the docs.](nomad-lab/nomad-FAIR@3b06ce9a083414da1340be14bbbc48a525436c10) ([merge request](nomad-lab/nomad-FAIR!1450))
 - [Added authentication for mongo and elastic use.](nomad-lab/nomad-FAIR@c1f4147dddbaf6def6e831bd924a170a401b7db8) ([merge request](nomad-lab/nomad-FAIR!1332))
 - [Added YAML linting plugin for NOMAD schemas.](nomad-lab/nomad-FAIR@d6ae88b6a84a7505d0f85d43a9e12a544c3780a0) ([merge request](nomad-lab/nomad-FAIR!1439))
 - [Added System and PureSubstance components for CompositeSystem, added...](nomad-lab/nomad-FAIR@03b23a052eb6d6c2e0cf06596c73b64ec2518f8a) ([merge request](nomad-lab/nomad-FAIR!1385))
 - [Added better search filters when searching for custom schemas.](nomad-lab/nomad-FAIR@d97d90e2c993fad1e5a199e6e7d03c36757578f4) ([merge request](nomad-lab/nomad-FAIR!1335))
 - [Resolve "Refactoring tabular parser"](nomad-lab/nomad-FAIR@1a68e76252f6da76aab40eff7250d99119d9b8e1) ([merge request](nomad-lab/nomad-FAIR!1377))
-- [Added compression suport to quantum expresso mainfiles.](nomad-lab/nomad-FAIR@cb7326b31a3f13fcb9c204c2c45c68144becec80) ([merge request](nomad-lab/nomad-FAIR!1401))
+- [Added compression support to quantum espresso mainfiles.](nomad-lab/nomad-FAIR@cb7326b31a3f13fcb9c204c2c45c68144becec80) ([merge request](nomad-lab/nomad-FAIR!1401))
 - [Added a new code contribution guide to the docs.](nomad-lab/nomad-FAIR@5fef1c2eabdc6fcf14f32236ec38d4b57e269793) ([merge request](nomad-lab/nomad-FAIR!1396))
 - [Added helm config options for plugins and normalize.](nomad-lab/nomad-FAIR@73cdacf80c4b1abc54911dfb706791b6fd400be2) ([merge request](nomad-lab/nomad-FAIR!1393))
 - [Added more documentation on data, schemas, and plugins.](nomad-lab/nomad-FAIR@b0d590503e3eea3dff0e30672257cd4c0ab2318d) ([merge request](nomad-lab/nomad-FAIR!1390))
@@ -721,7 +721,7 @@ No changes.
 - [Added a soap normalizer normalizer.](nomad-lab/nomad-FAIR@f6c5064f27056e70f920d8aeb5efc2ed4629124f) ([merge request](nomad-lab/nomad-FAIR!1391))
 - [Added list of all parsers to the reference documentation.](nomad-lab/nomad-FAIR@1c066432dd3fae88aa610c4d97397e66744456d8) ([merge request](nomad-lab/nomad-FAIR!1268))
 - [Added authors column to the processing table](nomad-lab/nomad-FAIR@bc2e6c7a5b0429772f273f20d647a70c6d186c6d) ([merge request](nomad-lab/nomad-FAIR!1360))
-- [Hight props for RichTextEditor](nomad-lab/nomad-FAIR@121ddcab7885105235dc0dc42903e1a1a8506562) ([merge request](nomad-lab/nomad-FAIR!1334))
+- [Height props for RichTextEditor](nomad-lab/nomad-FAIR@121ddcab7885105235dc0dc42903e1a1a8506562) ([merge request](nomad-lab/nomad-FAIR!1334))
 - [1. Foldable list of edit quantities](nomad-lab/nomad-FAIR@c77e2bff38999f55c9baf8fa80c536d526fd2ded) ([merge request](nomad-lab/nomad-FAIR!1337))
 - [Added normalizer for analyzing porous systems.](nomad-lab/nomad-FAIR@304c411013b2b3820188ef40846bdb0cab6b2d11) ([merge request](nomad-lab/nomad-FAIR!1294))
 - [Added new file formats for the API endpoint used for downloading atomistic...](nomad-lab/nomad-FAIR@55eb60873b65e5f6238cb0ff7dfb7006b192db0f) ([merge request](nomad-lab/nomad-FAIR!1353))
@@ -860,7 +860,7 @@ No changes.
 - [Improved the metainfo search visuals and performance.](nomad-lab/nomad-FAIR@56658e712b8f252ddc1aff1021091440d05127f0) ([merge request](nomad-lab/nomad-FAIR!1127))
 - [Changed the icon used for navigating to a particular entry/upload/dataset.](nomad-lab/nomad-FAIR@296519efd1e6eb6b04182cd8fde0f0992667d230) ([merge request](nomad-lab/nomad-FAIR!1150))
 - [1. Show upload name column by default in section select dialog](nomad-lab/nomad-FAIR@8fcf6107762d2852909d4e36cea3b8b9ecf5e8eb) ([merge request](nomad-lab/nomad-FAIR!1151))
-- [Disabled optimade respone validation.](nomad-lab/nomad-FAIR@582a90c77558b10cc1bf6574b2c0f6d051119645) ([merge request](nomad-lab/nomad-FAIR!1153))
+- [Disabled optimade response validation.](nomad-lab/nomad-FAIR@582a90c77558b10cc1bf6574b2c0f6d051119645) ([merge request](nomad-lab/nomad-FAIR!1153))
 - [Improved the custom quantities search menu layout and search functionality.](nomad-lab/nomad-FAIR@0c0cf1ccfdd50dbf2aa139104c20a3313b14319c) ([merge request](nomad-lab/nomad-FAIR!1144))
 
 ### Fixed (15 changes)
@@ -888,7 +888,7 @@ No changes.
 - [Fixed a bug in handling UI load errors.](nomad-lab/nomad-FAIR@bc01f359fbd55048fff0c7213ba42ae53451add3) ([merge request](nomad-lab/nomad-FAIR!1143))
 - [Add parsers](nomad-lab/nomad-FAIR@b1c177f75cd72dfabaea6137d93375357857b3a6) ([merge request](nomad-lab/nomad-FAIR!1136))
 - [Fixed the backend test batch to actually show the coverage.](nomad-lab/nomad-FAIR@532eba1e0ae44f56a93a9580b11ac44d02fa49e5) ([merge request](nomad-lab/nomad-FAIR!1131))
-- [Check existance of `m_proxy_value` for references.](nomad-lab/nomad-FAIR@79040365fd370257941f663b92a40984da3bd67b) ([merge request](nomad-lab/nomad-FAIR!1123))
+- [Check existence of `m_proxy_value` for references.](nomad-lab/nomad-FAIR@79040365fd370257941f663b92a40984da3bd67b) ([merge request](nomad-lab/nomad-FAIR!1123))
 - [Minor fix workflow visualizer](nomad-lab/nomad-FAIR@1b0154166bf24b17a701e91564140e1fdfaf0d7f) ([merge request](nomad-lab/nomad-FAIR!1121))
 - [ability to reference to the other uploads properly](nomad-lab/nomad-FAIR@8befc8efe92218aa63a63c562ac8057de54e5ba2) ([merge request](nomad-lab/nomad-FAIR!1070))
 - [Added the staging url](nomad-lab/nomad-FAIR@5a0b31a7cff12106a28f0fc02bba7fda764d4708) ([merge request](nomad-lab/nomad-FAIR!1086))
@@ -971,7 +971,7 @@ No changes.
 
 ### Fixed (1 change)
 
-- [Fixed failing plot annotation valiation.](nomad-lab/nomad-FAIR@3cd5d0635566d9882e1c44cd922e113dfbeb1292) ([merge request](nomad-lab/nomad-FAIR!1005))
+- [Fixed failing plot annotation validation.](nomad-lab/nomad-FAIR@3cd5d0635566d9882e1c44cd922e113dfbeb1292) ([merge request](nomad-lab/nomad-FAIR!1005))
 
 ### Feature (1 change)
 

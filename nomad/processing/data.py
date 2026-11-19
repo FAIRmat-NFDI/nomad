@@ -535,7 +535,7 @@ class MetadataEditRequestHandler:
                 ).items():
                     verified_metadata.setdefault(quantity, verified_value)
                 if not path_dir:
-                    break  # We're done witht the root folder (the raw dir)
+                    break  # We're done with the root folder (the raw dir)
                 path_dir = os.path.dirname(path_dir)  # Move to the parent folder
 
             if self.root_file_entries:
@@ -684,7 +684,7 @@ class MetadataEditRequestHandler:
         """
         Verifies a *singular* raw value (i.e. for list quantities we should run this method
         for each value in the list, not with the list itself as input). Returns the verified
-        value, which may be different from the origial value. It:
+        value, which may be different from the original value. It:
             1) ensures a return value of a primitive type (str, int, float, bool or None),
             2) that user refs exist,
             3) that datasets refs exist and do not have a doi.
@@ -2308,9 +2308,9 @@ class Upload(Proc):
         reprocessing happens through the usual `process_upload` function.
 
         Arguments:
-            entry_point_id: The unique indentifier for the example upload entry
+            entry_point_id: The unique identifier for the example upload entry
                 point id to initialize.
-            file_operattions: Additional file operations that should be added on
+            file_operations: Additional file operations that should be added on
                 top of the file operations coming from the entry point.
         """
         self.process_status = ProcessStatus.PENDING
@@ -2357,7 +2357,7 @@ class Upload(Proc):
     ):
         """Used to initiate the example upload files of an example upload entry point.
         Arguments:
-            entry_point_id: The unique indentifier for the example upload entry
+            entry_point_id: The unique identifier for the example upload entry
                 point id to initialize.
         """
         logger = self.get_logger()
@@ -2402,7 +2402,11 @@ class Upload(Proc):
                 '_id': self.id,
                 '$and': [
                     {'process_status': self.process_status},
-                    {'process_status': {'$nin': ProcessStatus.STATUSES_PROCESSING}},
+                    {
+                        'process_status': {
+                            '$nin': ProcessStatus.STATUSES_PROCESSING,  # typos: ignore
+                        }
+                    },
                     {
                         '$or': [
                             {'workflow_ids': []},
@@ -3241,7 +3245,7 @@ class Upload(Proc):
                     # exception will be raised.
                     entry.process_entry_local()
                 else:
-                    # NOTE: Temporal child workflows can't be spawned within an activitiy
+                    # NOTE: Temporal child workflows can't be spawned within an activity
                     # so we just process this from the current activity.
                     # NOTE: If this function is called by a parser, we only process the
                     # updated data if it is of smaller or equal level: this way we don't

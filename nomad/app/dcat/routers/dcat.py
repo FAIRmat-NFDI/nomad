@@ -70,7 +70,7 @@ _raw_response = (
 )
 def get_dataset(
     entry_id: Annotated[str, Path(description='The unique NOMAD entry id.')],
-    rdf_respose=Depends(rdf_response),
+    rdf_response=Depends(rdf_response),
 ):
     """Returns a DCAT dataset for a given NOMAD entry id."""
 
@@ -88,7 +88,7 @@ def get_dataset(
 
     mapping = Mapping()
     mapping.map_entry(entry)
-    return rdf_respose(mapping.g)
+    return rdf_response(mapping.g)
 
 
 @router.get(
@@ -105,7 +105,7 @@ def get_catalog(
         datetime | date | None,
         Query(description='maximum entry time (e.g. upload time)'),
     ] = None,
-    rdf_respose=Depends(rdf_response),
+    rdf_response=Depends(rdf_response),
 ):
     """Returns a DCAT dataset for a given NOMAD entry id."""
 
@@ -128,4 +128,4 @@ def get_catalog(
         modified_since=modified_since,
         slim=False,
     )
-    return rdf_respose(mapping.g)
+    return rdf_response(mapping.g)

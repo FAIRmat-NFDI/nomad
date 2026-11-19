@@ -34,11 +34,11 @@ from .common import assert_response
 
 """
 These are the tests for all API operations below ``datasets``. The tests are organized
-using the following type of methods: fixtures, ``perfrom_*_test``, ``assert_*``, and
+using the following type of methods: fixtures, ``perform_*_test``, ``assert_*``, and
 ``test_*``. While some ``test_*`` methods test individual API operations, some
 test methods will test multiple API operations that use common aspects like
 supporting queries, pagination, or the owner parameter. The test methods will use
-``perform_*_test`` methods as an parameter. Similarely, the ``assert_*`` methods allow
+``perform_*_test`` methods as an parameter. Similarly, the ``assert_*`` methods allow
 to assert for certain aspects in the responses.
 """
 
@@ -347,6 +347,7 @@ def test_post_datasets(
         dataset_type=dataset_type,
     )
     assert Dataset.m_def.a_mongo.objects().count() == 5
+    # TODO: Assert returned and persisted foreign entries after fixing dataset creation.
 
 
 @pytest.mark.parametrize(

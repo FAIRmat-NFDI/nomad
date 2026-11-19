@@ -186,7 +186,7 @@ class MatchingParser(Parser):
             be automatically added for legacy reasons.
         code_name: The displayed name for the parser
         code_homepage: The homepage of the code or input format
-        code_catogory: An optional category for the code.
+        code_category: An optional category for the code.
         mainfile_mime_re: A regexp that is used to match against a files mime type
         mainfile_contents_re: A regexp that is used to match the first 1024 bytes of a
             potential mainfile.
