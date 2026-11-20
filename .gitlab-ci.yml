@@ -48,7 +48,7 @@ update changelog:
     - >-
       curl --fail-with-body -X POST
       --header "PRIVATE-TOKEN: ${CI_ACCESS_TOKEN}"
-      "https://gitlab.mpcdf.mpg.de/api/v4/projects/$CI_PROJECT_ID/repository/changelog?branch=${CI_COMMIT_REF_NAME}&version=${CI_COMMIT_REF_NAME:1}&message=Add%20changelog%20for%20version%20$CI_COMMIT_REF_NAME%20%5Bskip-ci%5D"
+      "https://gitlab.mpcdf.mpg.de/api/v4/projects/$CI_PROJECT_ID/repository/changelog?branch=${CI_COMMIT_REF_NAME}&version=${CI_COMMIT_REF_NAME#release/}&message=Add%20changelog%20for%20version%20$CI_COMMIT_REF_NAME%20%5Bskip-ci%5D"
   rules:
     - if: $CI_COMMIT_REF_NAME =~ /^release\/\d+\.\d+\.\d+$/
 
