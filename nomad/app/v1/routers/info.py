@@ -31,6 +31,7 @@ from pydantic.main import BaseModel
 
 from nomad.app.v1.routers.auth import get_current_user
 from nomad.auth.scopes import Scope
+from nomad.config import config
 from nomad.config.models.plugins import PluginPackage
 from nomad.models.common import UTCDateTime
 from nomad.server_stats import deployment_info, load_server_stats
@@ -129,8 +130,12 @@ class InfoModel(BaseModel):
 
 
 def _info_key_builder(func, namespace: str = '', **_: Any) -> str:
-    # The response does not depend on the user, so all requests share one entry.
-    return f'{namespace}:{func.__module__}:{func.__name__}'
+    # The response does not depend on the user, so all requests to the same
+    # deployment share one entry, scoped by api_base_path so deployments
+    # sharing a MongoDB database do not overwrite each other.
+    return (
+        f'{namespace}:{config.services.api_base_path}:{func.__module__}:{func.__name__}'
+    )
 
 
 @router.get(

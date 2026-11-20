@@ -20,6 +20,7 @@ import json
 from unittest.mock import MagicMock
 
 from nomad.common import now
+from nomad.config import config
 from nomad.mongo.cache import SERVER_STATS_CACHE_KEY, MongoCache
 from nomad.server_stats import SERVER_STATS_TTL, collect_server_stats
 
@@ -112,3 +113,25 @@ def test_info_cache_headers(client, mongo_function, auth_headers):
     assert rv.status_code == 200
     assert rv.headers['ETag'] == etag
     assert MongoCache.objects(key__ne=SERVER_STATS_CACHE_KEY).count() == 1
+
+
+def test_info_cache_isolated_by_api_base_path(client, mongo_function, monkeypatch):
+    monkeypatch.setattr(config.services, 'api_base_path', '/backend')
+    monkeypatch.setattr(config.meta, 'deployment', 'nomad-prod')
+    rv = client.get('info')
+    assert rv.status_code == 200
+    assert rv.json()['deployment'] == 'nomad-prod'
+
+    monkeypatch.setattr(config.services, 'api_base_path', '/develop/backend')
+    monkeypatch.setattr(config.meta, 'deployment', 'nomad-prod-develop')
+    rv = client.get('info')
+    assert rv.status_code == 200
+    assert rv.json()['deployment'] == 'nomad-prod-develop'
+
+    # Switching back to /backend still hits its own cached entry.
+    monkeypatch.setattr(config.services, 'api_base_path', '/backend')
+    rv = client.get('info')
+    assert rv.status_code == 200
+    assert rv.json()['deployment'] == 'nomad-prod'
+
+    assert MongoCache.objects(key__ne=SERVER_STATS_CACHE_KEY).count() == 2
