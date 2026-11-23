@@ -38,10 +38,46 @@ class ReadMode(str, Enum):
     rw = 'rw'
 
 
+class ImagePullPolicy(str, Enum):
+    """Image pull policies supported by both the Docker and Kubernetes spawners.
+
+    Values use the Kubernetes spelling, but are parsed case-insensitively so that
+    the lowercase values used by DockerSpawner (e.g. `ifnotpresent`) also work.
+    """
+
+    always = 'Always'
+    if_not_present = 'IfNotPresent'
+    never = 'Never'
+
+    @classmethod
+    def _missing_(cls, value):
+        if isinstance(value, str):
+            for member in cls:
+                if member.value.lower() == value.lower():
+                    return member
+        return None
+
+
 class NORTHExternalMount(BaseModel):
-    host_path: str
-    bind: str
-    mode: ReadMode = ReadMode.ro
+    host_path: str = Field(
+        description=(
+            'Absolute path of the directory to mount. The path is resolved by the '
+            'Docker daemon (or Kubernetes node) that runs the tool containers, so it '
+            'must be a path on that host, not a path inside the NOMAD or NORTH '
+            'containers.'
+        ),
+    )
+    bind: str = Field(
+        description=(
+            'Target path inside the tool container. A relative path is resolved '
+            'against the `mount_path` of the tool (e.g. `data` becomes '
+            '`/home/jovyan/data`); an absolute path is used as is.'
+        ),
+    )
+    mode: ReadMode = Field(
+        ReadMode.ro,
+        description='Mount the directory read-only (`ro`) or writable (`rw`).',
+    )
 
 
 class NORTHTool(BaseModel):
@@ -62,8 +98,19 @@ class NORTHTool(BaseModel):
     cmd: str | None = Field(
         None, description='The container cmd that is passed to the spawner.'
     )
-    image_pull_policy: str = Field(
-        'Always', description='The image pull policy used in k8s deployments.'
+    image_pull_policy: ImagePullPolicy = Field(
+        ImagePullPolicy.always,
+        description=(
+            'When the NORTH hub pulls the tool image before starting a container. '
+            '`Always` pulls the image on every start: this keeps moving tags like '
+            '`latest` up to date, but fails for images that only exist locally and '
+            'replaces local builds that share a tag with a registry image. Use '
+            '`IfNotPresent` (pull only if the image is missing) or `Never` (only use '
+            'local images) for locally built images. Values are case-insensitive. '
+            'Only the Docker-based NORTH hub uses this setting. In Kubernetes '
+            'deployments, the pull policy of all tools is set with '
+            '`jupyterhub.singleuser.image.pullPolicy` in the Helm values instead.'
+        ),
     )
     privileged: bool = Field(
         False, description='Whether the tool needs to run in privileged mode.'
