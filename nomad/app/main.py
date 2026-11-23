@@ -16,8 +16,9 @@
 # limitations under the License.
 #
 
+import asyncio
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request, Response, status
 from fastapi.exception_handlers import (
@@ -29,6 +30,7 @@ from fastapi_cache import FastAPICache
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from temporalio.client import Client
 
+from nomad.actions.bootstrap import action_service
 from nomad.actions.client import close_client, get_client
 from nomad.auth.scopes import Scope
 from nomad.auth.tokens import check_api_secret
@@ -66,6 +68,17 @@ def mount_with_trailing_slash_redirect(
     parent_app.mount(normalized_path, mounted_app)
 
 
+async def reconcile_action_statuses():
+    """Keep stored action statuses in sync with completed Temporal workflows."""
+    logger = get_logger(__name__)
+    while True:
+        try:
+            await action_service.a_reconcile_active()
+        except Exception:
+            logger.exception('Could not scan active actions')
+        await asyncio.sleep(30)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from nomad import infrastructure
@@ -98,9 +111,12 @@ async def lifespan(app: FastAPI):
     # Validate API secret
     check_api_secret()
 
+    reconciliation_task = None
     try:
         app.state.temporal_client = await get_client()
         await setup_server_stats(app.state.temporal_client)
+
+        reconciliation_task = asyncio.create_task(reconcile_action_statuses())
 
         yield
     except Exception as e:
@@ -109,6 +125,10 @@ async def lifespan(app: FastAPI):
         logger.error(f'Failed to connect to temporal', exc_info=e)
         raise
     finally:
+        if reconciliation_task is not None:
+            reconciliation_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await reconciliation_task
         await close_client()
         if infrastructure.async_mongo_client is not None:
             await infrastructure.async_mongo_client.close()

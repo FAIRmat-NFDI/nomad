@@ -32,6 +32,14 @@ from nomad.actions.domain import (
 class AsyncActionRepository(Protocol):
     async def create(self, record: ActionRecord) -> ActionRecord: ...
 
+    async def list_active(
+        self, after_instance_id: str | None, limit: int
+    ) -> list[ActionRecord]: ...
+
+    async def finish_if_active(
+        self, action_instance_id: str, status: str, results: Any = None
+    ) -> ActionRecord | None: ...
+
     async def get_for_user(
         self, action_instance_id: str, user_id: str
     ) -> ActionRecord | None: ...

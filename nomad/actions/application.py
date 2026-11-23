@@ -47,6 +47,9 @@ from nomad.actions.ports import (
 )
 from nomad.actions.serialization import _to_dict, serialize_payload
 from nomad.common import now
+from nomad.utils.structlogging import get_logger
+
+logger = get_logger(__name__)
 
 
 class ActionCreation:
@@ -218,6 +221,40 @@ class ActionService:
             action.action_instance_id, action.user_id, status.value
         )
         return updated or action
+
+    async def a_reconcile_active(self, page_size: int = 100) -> None:
+        """Scan active actions and persist terminal states from the workflow engine."""
+        after_instance_id = None
+        while True:
+            actions = await self.a_repository.list_active(after_instance_id, page_size)
+            if not actions:
+                return
+            for action in actions:
+                try:
+                    status = await self.a_workflow.get_status(action.action_instance_id)
+                    if status is None:
+                        # The record can briefly precede workflow creation.
+                        continue
+                    if is_active_status(status.value):
+                        continue
+                    result = None
+                    if status == ActionStatus.COMPLETED:
+                        result = await self.a_workflow.get_result(
+                            action.action_instance_id
+                        )
+                        if result is not None:
+                            result = serialize_payload(result)
+                    await self.a_repository.finish_if_active(
+                        action.action_instance_id, status.value, result
+                    )
+                except Exception:
+                    logger.exception(
+                        'Could not reconcile action status',
+                        action_instance_id=action.action_instance_id,
+                    )
+            after_instance_id = actions[-1].action_instance_id
+            if len(actions) < page_size:
+                return
 
     async def a_get_owned(
         self, action_instance_id: str, user_id: str
