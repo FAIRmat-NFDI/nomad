@@ -62,6 +62,38 @@ class MongoAsyncActionRepository:
         await document.insert()
         return _record_from_document(document)
 
+    async def list_active(
+        self, after_instance_id: str | None, limit: int
+    ) -> list[ActionRecord]:
+        """Page through pending and running actions across all owners."""
+        filters: dict[str, Any] = {'status': {'$in': ['PENDING', 'RUNNING']}}
+        if after_instance_id is not None:
+            filters['action_instance_id'] = {'$gt': after_instance_id}
+        documents = (
+            await ActionDocument.find(filters)
+            .sort('action_instance_id')
+            .limit(limit)
+            .to_list()
+        )
+        return [_record_from_document(document) for document in documents]
+
+    async def finish_if_active(
+        self, action_instance_id: str, status: str, results: Any = None
+    ) -> ActionRecord | None:
+        """Persist a terminal workflow state without reverting a concurrent stop."""
+        update = {'status': status, 'updated_at': _utcnow()}
+        if results is not None:
+            update['results'] = results
+        document = await ActionDocument.get_pymongo_collection().find_one_and_update(
+            {
+                'action_instance_id': action_instance_id,
+                'status': {'$in': ['PENDING', 'RUNNING']},
+            },
+            {'$set': update},
+            return_document=ReturnDocument.AFTER,
+        )
+        return _record_from_mongo(document) if document is not None else None
+
     async def get_for_user(
         self, action_instance_id: str, user_id: str
     ) -> ActionRecord | None:

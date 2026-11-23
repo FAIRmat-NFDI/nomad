@@ -24,7 +24,83 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from nomad.actions.application import ActionService
-from nomad.actions.domain import ActionNotFoundError, ActionNotRunningError
+from nomad.actions.domain import (
+    ActionNotFoundError,
+    ActionNotRunningError,
+    ActionStatus,
+)
+
+
+@pytest.mark.asyncio
+async def test_reconcile_active_paginates_and_updates_terminal_actions():
+    actions = [
+        SimpleNamespace(action_instance_id=instance_id)
+        for instance_id in ('a', 'b', 'c', 'd')
+    ]
+    repository = SimpleNamespace(
+        list_active=AsyncMock(side_effect=[actions[:2], actions[2:], []]),
+        finish_if_active=AsyncMock(),
+    )
+    workflow = SimpleNamespace(
+        get_status=AsyncMock(
+            side_effect=[
+                ActionStatus.RUNNING,
+                ActionStatus.COMPLETED,
+                ActionStatus.FAILED,
+                None,
+            ]
+        ),
+        get_result=AsyncMock(return_value={'answer': 42}),
+    )
+    service = ActionService(
+        repository=Mock(),
+        workflow=Mock(),
+        a_repository=repository,
+        a_workflow=workflow,
+        creation=Mock(),
+    )
+
+    await service.a_reconcile_active(page_size=2)
+
+    assert [call.args for call in repository.list_active.await_args_list] == [
+        (None, 2),
+        ('b', 2),
+        ('d', 2),
+    ]
+    assert [call.args for call in repository.finish_if_active.await_args_list] == [
+        ('b', 'COMPLETED', {'answer': 42}),
+        ('c', 'FAILED', None),
+    ]
+    workflow.get_result.assert_awaited_once_with('b')
+
+
+@pytest.mark.asyncio
+async def test_reconcile_active_continues_after_workflow_error():
+    repository = SimpleNamespace(
+        list_active=AsyncMock(
+            return_value=[
+                SimpleNamespace(action_instance_id='bad'),
+                SimpleNamespace(action_instance_id='good'),
+            ]
+        ),
+        finish_if_active=AsyncMock(),
+    )
+    workflow = SimpleNamespace(
+        get_status=AsyncMock(
+            side_effect=[RuntimeError('Temporal unavailable'), ActionStatus.FAILED]
+        )
+    )
+    service = ActionService(
+        repository=Mock(),
+        workflow=Mock(),
+        a_repository=repository,
+        a_workflow=workflow,
+        creation=Mock(),
+    )
+
+    await service.a_reconcile_active()
+
+    repository.finish_if_active.assert_awaited_once_with('good', 'FAILED', None)
 
 
 @pytest.mark.asyncio

@@ -134,6 +134,31 @@ async def test_async_repository_list_and_count(
 
 
 @pytest.mark.asyncio
+async def test_async_repository_reconciles_only_active_actions(
+    mongo_function, async_mongo_function, user1
+):
+    repo = AsyncActionRepository()
+    for instance_id, status in (
+        ('active-a', 'PENDING'),
+        ('active-b', 'RUNNING'),
+        ('finished', 'COMPLETED'),
+    ):
+        await repo.create(_record(instance_id, user1.user_id, status=status))
+
+    first_page = await repo.list_active(None, 1)
+    second_page = await repo.list_active('active-a', 10)
+    assert [record.action_instance_id for record in first_page] == ['active-a']
+    assert [record.action_instance_id for record in second_page] == ['active-b']
+
+    updated = await repo.finish_if_active('active-b', 'FAILED')
+    assert updated is not None and updated.status == 'FAILED'
+    assert await repo.finish_if_active('finished', 'FAILED') is None
+    assert (
+        await repo.require_for_user('finished', user1.user_id)
+    ).status == 'COMPLETED'
+
+
+@pytest.mark.asyncio
 async def test_async_repository_pending_signal_input_roundtrip(
     mongo_function, async_mongo_function, user1
 ):
