@@ -20,9 +20,10 @@ import os
 import tempfile
 
 import pytest
+from pydantic import ValidationError
 
 from nomad.config import Config
-from nomad.config.models.north import NORTHTool
+from nomad.config.models.north import ImagePullPolicy, NORTHTool
 from nomad.config.models.plugins import (
     APIEntryPoint,
     DashboardEntryPoint,
@@ -613,6 +614,30 @@ def test_north_tool_entry_point():
             'external_mounts': [],
         },
     }
+
+
+@pytest.mark.parametrize(
+    'value, expected',
+    [
+        pytest.param('Always', ImagePullPolicy.always, id='always'),
+        pytest.param(
+            'IfNotPresent', ImagePullPolicy.if_not_present, id='if-not-present'
+        ),
+        pytest.param('Never', ImagePullPolicy.never, id='never'),
+        pytest.param('always', ImagePullPolicy.always, id='lowercase'),
+        pytest.param('IFNOTPRESENT', ImagePullPolicy.if_not_present, id='uppercase'),
+    ],
+)
+def test_north_tool_image_pull_policy(value, expected):
+    tool = NORTHTool(image_pull_policy=value)
+    assert tool.image_pull_policy is expected
+    assert tool.model_dump(mode='json')['image_pull_policy'] == expected.value
+
+
+@pytest.mark.parametrize('value', ['skip', 'sometimes', ''])
+def test_north_tool_image_pull_policy_invalid(value):
+    with pytest.raises(ValidationError):
+        NORTHTool(image_pull_policy=value)
 
 
 @pytest.mark.parametrize(
