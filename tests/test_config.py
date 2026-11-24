@@ -48,6 +48,40 @@ def assert_dict_str_str(dct: dict):
         assert isinstance(v, str), f'value {v} is not a string'
 
 
+@pytest.mark.parametrize('datacite', [{}, {'enabled': False}, {'publisher': None}])
+def test_datacite_disabled_without_publisher(datacite):
+    assert Config(datacite=datacite).datacite.publisher is None
+
+
+@pytest.mark.parametrize(
+    'datacite', [{'enabled': True}, {'enabled': True, 'publisher': None}]
+)
+def test_datacite_enabled_requires_publisher(datacite):
+    with pytest.raises(ValidationError, match='Publisher metadata must be filled in'):
+        Config(datacite=datacite)
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+def test_datacite_publisher_metadata(enabled, datacite_publisher):
+    config = Config(datacite={'enabled': enabled, 'publisher': datacite_publisher})
+    assert config.datacite.publisher.model_dump() == datacite_publisher
+
+
+@pytest.mark.parametrize('enabled', [False, True])
+@pytest.mark.parametrize(
+    'field',
+    ['name', 'publisher_identifier', 'publisher_identifier_scheme', 'scheme_uri'],
+)
+@pytest.mark.parametrize('missing', [True, False], ids=['missing', 'null'])
+def test_datacite_invalid_publisher(enabled, datacite_publisher, field, missing):
+    if missing:
+        del datacite_publisher[field]
+    else:
+        datacite_publisher[field] = None
+    with pytest.raises(ValidationError, match=field):
+        Config(datacite={'enabled': enabled, 'publisher': datacite_publisher})
+
+
 def load_test_config(conf_yaml, conf_env, mockopen=None, monkeypatch=None):
     if conf_env:
         assert_dict_str_str(conf_env)

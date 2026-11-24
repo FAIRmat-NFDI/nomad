@@ -103,6 +103,41 @@ def test_generate_unique_doi_name():
     assert doi1 != doi2
 
 
+@pytest.mark.parametrize('configured', [False, True])
+def test_generate_base_attributes(monkeypatch, configured):
+    from nomad.config.models.config import DataCitePublisher
+    from nomad.datacite.service import generate_base_attributes
+
+    publisher = {
+        'name': 'Example repository',
+        'publisherIdentifier': 'https://ror.org/example',
+        'publisherIdentifierScheme': 'ROR',
+        'schemeUri': 'https://ror.org/',
+    }
+    monkeypatch.setattr(
+        config.datacite,
+        'publisher',
+        DataCitePublisher(
+            name=publisher['name'],
+            publisher_identifier=publisher['publisherIdentifier'],
+            publisher_identifier_scheme=publisher['publisherIdentifierScheme'],
+            scheme_uri=publisher['schemeUri'],
+        )
+        if configured
+        else None,
+    )
+
+    if not configured:
+        with pytest.raises(ValueError, match='Configure datacite.publisher'):
+            generate_base_attributes()
+        return
+
+    attributes = generate_base_attributes()
+    assert attributes.publisher.model_dump(exclude_none=True) == publisher
+    assert attributes.types.resourceTypeGeneral == 'Collection'
+    assert attributes.types.resourceType == 'Materials Science Data'
+
+
 @pytest.mark.parametrize(
     'affiliation,affiliation_address,expected_affiliation_name',
     [
@@ -131,12 +166,16 @@ def test_convert_user_to_creator(
 
 
 @pytest.fixture
-def captured_doi_attributes(monkeypatch):
+def captured_doi_attributes(monkeypatch, datacite_publisher):
     """Captures the attributes sent to DataCite without resolving real users."""
+    from nomad.config.models.config import DataCitePublisher
     from nomad.datacite import service
     from nomad.datacite.models import Creator
 
     captured = []
+    monkeypatch.setattr(
+        config.datacite, 'publisher', DataCitePublisher(**datacite_publisher)
+    )
     monkeypatch.setattr(service, 'create_doi', captured.append)
     monkeypatch.setattr(
         service, 'convert_user_id_to_creator', lambda user_id: Creator(name=user_id)

@@ -564,6 +564,7 @@ def create_upload(elastic_function, raw_files_function, mongo_function, user1):
 )
 def test_assign_doi_upload(
     datacite_mock: DataciteMock,
+    datacite_publisher,
     auth_headers,
     client,
     create_upload,
@@ -597,6 +598,13 @@ def test_assign_doi_upload(
     assert_upload(response)
     doi_name = response['data']['doi']['id']
     assert_doi_name(doi_name)
+    (payload,) = datacite_mock.payloads
+    assert payload['data']['attributes']['publisher'] == {
+        'name': datacite_publisher['name'],
+        'publisherIdentifier': datacite_publisher['publisher_identifier'],
+        'publisherIdentifierScheme': datacite_publisher['publisher_identifier_scheme'],
+        'schemeUri': datacite_publisher['scheme_uri'],
+    }
 
 
 def test_assign_doi_upload_datacite_error(

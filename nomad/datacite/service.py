@@ -19,11 +19,19 @@
 from typing import TYPE_CHECKING
 
 from nomad import datamodel
+from nomad.config import config
 from nomad.datamodel.data import User
 from nomad.datamodel.datamodel import Dataset
 
 from .client import DataCiteClient
-from .models import Affiliation, Creator, DoiRequestAttributes, Title, TypesBase
+from .models import (
+    Affiliation,
+    Creator,
+    DoiRequestAttributes,
+    Publisher,
+    Title,
+    TypesBase,
+)
 from .utils import (
     generate_dataset_target_url,
     generate_project_target_url,
@@ -55,7 +63,20 @@ def convert_user_to_creator(user: User) -> Creator:
 def generate_base_attributes() -> DoiRequestAttributes:
     """Generates base attributes for a DOI."""
     data = DoiRequestAttributes()
-    data.publisher = 'NOMAD Repository'
+
+    if config.datacite.publisher is None:
+        raise ValueError(
+            'Publisher metadata is required to generate DataCite attributes. '
+            'Configure datacite.publisher.'
+        )
+    publisher = config.datacite.publisher
+    data.publisher = Publisher(
+        name=publisher.name,
+        publisherIdentifier=publisher.publisher_identifier,
+        publisherIdentifierScheme=publisher.publisher_identifier_scheme,
+        schemeUri=publisher.scheme_uri,
+    )
+
     data.types = TypesBase()
     data.types.resourceTypeGeneral = 'Collection'
     data.types.resourceType = 'Materials Science Data'
