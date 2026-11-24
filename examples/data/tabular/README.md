@@ -20,4 +20,4 @@ search icon, from the dialogue, click on the _**Periodic Table**_ and select **_
 dropdown menu. Clicking on `Create` creates the entry; set its `data_file` to your own table to
 parse it.
 
-Consult our [documentation on the NOMAD Archive and Metainfo](https://nomad-lab.eu/prod/v1/staging/docs/) to learn more about schemas.
+Consult our [documentation on the schemas](https://docs.nomad-lab.eu/howto/schemas/schemas.html) to learn more.

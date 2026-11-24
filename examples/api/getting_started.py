@@ -23,7 +23,7 @@ import json
 
 import requests
 
-base_url = 'https://nomad-lab.eu/prod/v1/api/v1'
+base_url = 'https://nomad-lab.eu/backend/api/v1'
 
 response = requests.post(
     f'{base_url}/entries/query',

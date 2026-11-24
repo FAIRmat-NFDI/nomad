@@ -111,7 +111,7 @@ class UploadTransferRequest(BaseModel):
     target_deployment_url: str = Field(
         default_factory=_get_target_deployment_url,  # Factory has better behavior for testing
         description='If not provided, the transfer will target the central nomad deployment. The url must end with /api',
-        examples=['https://nomad-lab.eu/prod/v1/api'],
+        examples=['https://nomad-lab.eu/backend/api'],
     )
     auth_token: str = Field(
         ...,

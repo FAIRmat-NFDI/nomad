@@ -321,7 +321,7 @@ export const routes = [
       },
       {
         menu: 'FAQ',
-        href: 'https://nomad-lab.eu/repository-archive-faqs',
+        href: 'https://about.nomad-lab.eu/faqs.html',
         tooltip: 'Frequently Asked Questions (FAQ)'
       },
       {

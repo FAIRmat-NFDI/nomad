@@ -55,7 +55,7 @@ bundle_import:
     trigger_processing: false
   required_nomad_version: 1.1.2
 client:
-  url: https://nomad-lab.eu/prod/v1/api
+  url: https://nomad-lab.eu/backend/api
 datacite:
   dataset_path: /datasets/doi
   enabled: false
@@ -135,7 +135,7 @@ meta:
   beta: { }
   commit: ''
   deployment: oasis
-  homepage: https://nomad-lab.eu
+  homepage: https://about.nomad-lab.eu
   maintainer_email: support@nomad-lab.eu
   name: NOMAD
   service: unknown nomad service
@@ -165,7 +165,7 @@ normalize:
   symmetry_tolerance: 0.1
   system_classification_with_clusters_threshold: 64
 oasis:
-  central_nomad_deployment_url: https://nomad-lab.eu/prod/v1/api
+  central_nomad_deployment_url: https://nomad-lab.eu/backend/api
   is_oasis: false
   uses_central_user_management: false
 process:
@@ -201,7 +201,6 @@ services:
   app_token_max_expires_in: 2592000
   console_log_level: 30
   dcat_enabled: true
-  encyclopedia_base: https://nomad-lab.eu/prod/rae/encyclopedia/#
   force_raw_file_decoding: false
   h5grove_enabled: true
   html_resource_http_max_age: 60

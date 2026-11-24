@@ -292,14 +292,14 @@ def mock_example_upload_entry_point(
             id='folder contents, with target pointing to an existing folder',
         ),
         pytest.param(
-            'https://nomad-lab.eu/nomad-lab/index.html',
+            'https://about.nomad-lab.eu/nomad-central.html',
             [],
-            ['index.html'],
+            ['nomad-central.html'],
             id='url, no target',
         ),
         pytest.param(
             UploadResource(
-                path='https://nomad-lab.eu/nomad-lab/index.html',
+                path='https://about.nomad-lab.eu/nomad-central.html',
                 target='test.html',
             ),
             [],
@@ -310,20 +310,20 @@ def mock_example_upload_entry_point(
             [
                 UploadResource(path='subfolder1', target='upload_subfolder1'),
                 UploadResource(
-                    path='https://nomad-lab.eu/nomad-lab/index.html',
+                    path='https://about.nomad-lab.eu/nomad-central.html',
                     target='upload_subfolder1',
                 ),
             ],
             ['subfolder1/data.csv'],
             [
                 'upload_subfolder1/data.csv',
-                'upload_subfolder1/index.html',
+                'upload_subfolder1/nomad-central.html',
             ],
             id='url, with target pointing to an existing folder',
         ),
         pytest.param(
             UploadResource(
-                path='https://nomad-lab.eu/nomad-lab/index.html',
+                path='https://about.nomad-lab.eu/nomad-central.html',
                 target='upload_subfolder/test.html',
             ),
             [],
@@ -344,13 +344,13 @@ def mock_example_upload_entry_point(
         ),
         pytest.param(
             [
-                'https://nomad-lab.eu/nomad-lab/index.html',
-                'https://nomad-lab.eu/nomad-lab/terms.html',
+                'https://about.nomad-lab.eu/nomad-central.html',
+                'https://about.nomad-lab.eu/nomad-oasis.html',
             ],
             [],
             [
-                'index.html',
-                'terms.html',
+                'nomad-central.html',
+                'nomad-oasis.html',
             ],
             id='multiple urls',
         ),
@@ -358,7 +358,7 @@ def mock_example_upload_entry_point(
             [
                 'subfolder1/data1.txt',
                 'subfolder2',
-                'https://nomad-lab.eu/nomad-lab/index.html',
+                'https://about.nomad-lab.eu/nomad-central.html',
             ],
             [
                 'subfolder1/data1.txt',
@@ -366,7 +366,7 @@ def mock_example_upload_entry_point(
             ],
             [
                 'data1.txt',
-                'index.html',
+                'nomad-central.html',
                 'subfolder2/data2.npy',
             ],
             id='mixed files, folders and urls',

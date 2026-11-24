@@ -197,7 +197,7 @@ class ArchiveQuery:
         self._current_results: int = 0
 
         # check if URL has the form of http(s)://<hostname>/api/v1
-        # https://nomad-lab.eu/prod/v1/api/v1
+        # https://nomad-lab.eu/backend/api/v1
         if self._url.endswith('/'):
             self._url = self._url[:-1]
         if not self._url.endswith('/api/v1'):

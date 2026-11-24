@@ -453,7 +453,7 @@ export default function About() {
 
         ${description}
 
-        You can learn more about NOMAD on its [homepage](https://nomad-lab.eu/nomad-lab/)
+        You can learn more about NOMAD on its [homepage](https://about.nomad-lab.eu)
         or our [documentation](${docsBase}/index.html).
         `}</Markdown>
       </Grid>

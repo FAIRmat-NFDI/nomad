@@ -152,13 +152,6 @@ class Services(ConfigBaseModel):
         `admin` owner setting in accessing data.
     """,
     )
-
-    encyclopedia_base: str = Field(
-        'https://nomad-lab.eu/prod/rae/encyclopedia/#',
-        description="""
-            This enables links to the given *encyclopedia* installation in the UI.
-        """,
-    )
     optimade_enabled: bool = Field(
         True, description="""If true, the app will serve the optimade API."""
     )
@@ -533,7 +526,7 @@ class Meta(ConfigBaseModel):
         description='Description of the NOMAD deployment. Shown at the GUI homepage.',
     )
     homepage: str = Field(
-        'https://nomad-lab.eu', description='Provider homepage.', deprecated=True
+        'https://about.nomad-lab.eu', description='Provider homepage.', deprecated=True
     )
     source_url: str = Field(
         'https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR',
@@ -1983,7 +1976,7 @@ class Client(ConfigBaseModel):
         description='Optional bearer access token used by the Python NOMAD client.',
     )
     url: str = Field(
-        'https://nomad-lab.eu/prod/v1/api',
+        'https://nomad-lab.eu/backend/api',
         description='Base URL of the NOMAD API used by the Python client.',
     )
 

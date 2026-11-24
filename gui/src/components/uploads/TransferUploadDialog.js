@@ -196,7 +196,7 @@ const TransferUploadDialog = ({ open, setOpen }) => {
             Target deployment API URL
           </DialogContentText>
           <TextField
-            placeholder='https://nomad-lab.eu/prod/v1/api'
+            placeholder='https://nomad-lab.eu/backend/api'
             value={targetDeploymentUrl}
             onBlur={() => setTouched(prev => ({...prev, targetDeploymentUrl: true}))}
             onChange={(e) => setTargetDeploymentUrl(e.target.value)}

@@ -17,7 +17,7 @@
 #
 import requests
 
-base_url = 'https://nomad-lab.eu/prod/v1/api/v1'
+base_url = 'https://nomad-lab.eu/backend/api/v1'
 json_body = {
     'query': {'results.material.elements': {'all': ['Ti', 'O']}},
     'pagination': {'page_size': 10},

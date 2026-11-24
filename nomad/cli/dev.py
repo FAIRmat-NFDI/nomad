@@ -411,9 +411,7 @@ def get_gui_config() -> str:
         'keycloakRealm': config.keycloak.realm_name,
         'keycloakClientId': config.keycloak.client_id,
         'debug': False,
-        'encyclopediaBase': config.services.encyclopedia_base
-        if config.services.encyclopedia_base
-        else None,
+        'encyclopediaBase': None,
         'oasis': config.oasis.is_oasis,
         'version': config.meta.beta if config.meta.beta else {},
         'globalLoginRequired': config.auth.require_authentication,
