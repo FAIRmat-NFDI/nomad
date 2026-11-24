@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -33,7 +33,7 @@ from nomad.config import config
 
 
 def _record(action_instance_id: str, user_id: str, **overrides) -> ActionRecord:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload: dict[str, Any] = {
         'action_id': 'my-action',
         'action_instance_id': action_instance_id,
@@ -194,7 +194,7 @@ async def test_async_repository_pending_signal_input_roundtrip(
     submitted_entry = {
         'signal_fn_name': 'approve',
         'data': {'accepted': True},
-        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'timestamp': datetime.now(UTC).isoformat(),
     }
     await repo.append_submitted_signal_input(
         'workflow-async-4',

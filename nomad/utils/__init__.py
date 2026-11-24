@@ -51,7 +51,7 @@ import uuid
 import time
 import hashlib
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 import collections
 import logging
 import inspect
@@ -98,8 +98,8 @@ def normalize_datetime_utc(value: datetime | None) -> datetime | None:
     """
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+            return value.replace(tzinfo=UTC)
+        return value.astimezone(UTC)
 
     return value
 

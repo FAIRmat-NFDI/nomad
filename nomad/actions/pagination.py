@@ -19,7 +19,7 @@
 """Action cursor encoding, shared by the application query use cases."""
 
 import base64
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 _CURSOR_DT_FMT = '%Y-%m-%dT%H:%M:%S.%f+00:00'
 
@@ -36,10 +36,10 @@ def _encode_cursor(dt: datetime) -> str:
     # Beanie/Mongo can return naive datetimes when tz-awareness is disabled;
     # treat those values as UTC to avoid timezone-shifted cursors.
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
 
     # Always work in UTC so the encoded string is unambiguous.
-    utc_dt = dt.astimezone(timezone.utc)
+    utc_dt = dt.astimezone(UTC)
     token = utc_dt.strftime(_CURSOR_DT_FMT)
     return base64.urlsafe_b64encode(token.encode()).decode()
 
@@ -53,6 +53,6 @@ def _decode_cursor(cursor: str) -> datetime:
     """
     try:
         token = base64.urlsafe_b64decode(cursor.encode()).decode()
-        return datetime.strptime(token, _CURSOR_DT_FMT).replace(tzinfo=timezone.utc)
+        return datetime.strptime(token, _CURSOR_DT_FMT).replace(tzinfo=UTC)
     except Exception as exc:
         raise ValueError(f'Invalid pagination cursor: {cursor!r}') from exc

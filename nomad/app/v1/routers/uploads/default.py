@@ -19,7 +19,7 @@
 import functools
 import os
 import shutil
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated, Any, cast
 
 import anyio
@@ -569,7 +569,7 @@ async def post_upload(
             upload_id=upload_id,
             main_author=user,
             upload_name=upload_name,
-            upload_create_time=datetime.now(timezone.utc),
+            upload_create_time=datetime.now(UTC),
             embargo_length=embargo_length,
             publish_directly=publish_directly,
         )
@@ -2045,7 +2045,7 @@ def post_upload_raw_create_dir_path(
         upload.staging_upload_files.raw_create_directory(path)
         # No real processing is needed when just adding a folder, but we should signal that
         # the upload has changed.
-        upload.complete_time = datetime.now(timezone.utc)
+        upload.complete_time = datetime.now(UTC)
         upload.save()
     except Exception as e:
         raise HTTPException(

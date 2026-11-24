@@ -17,7 +17,7 @@
 #
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -27,14 +27,14 @@ from nomad.notifications import NotificationRecord
 
 
 def _record(source='user'):
-    created_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    created_at = datetime(2026, 1, 1, tzinfo=UTC)
     return NotificationRecord(
         id='ownership-transfer-request-1',
         user_id='user-1',
         source=source,
         notification_type='ownership_transfer',
         created_at=created_at,
-        expires_at=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        expires_at=datetime(2026, 4, 1, tzinfo=UTC),
         actor_user_id=None,
         data={},
     )

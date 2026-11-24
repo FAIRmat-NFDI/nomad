@@ -21,7 +21,7 @@ import math
 import os
 import uuid
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 import pytest_asyncio
@@ -516,7 +516,7 @@ def example_data_schema_python(
     """
     data = ExampleData(main_author=user1)
     upload_id = 'id_plugin_schema_published'
-    date_value = datetime.now(timezone.utc)
+    date_value = datetime.now(UTC)
 
     data.create_upload(upload_id=upload_id, upload_name=upload_id, published=True)
     for i in range(0, 15):
@@ -658,7 +658,7 @@ def example_data_schema_yaml(
     """
     data = ExampleData(main_author=user1)
     upload_id = 'id_plugin_schema_published'
-    date_value = datetime.now(timezone.utc)
+    date_value = datetime.now(UTC)
 
     data.create_upload(upload_id=upload_id, upload_name=upload_id, published=True)
     for i in range(0, 15):
@@ -798,7 +798,7 @@ def example_datasets(mongo_function, user1, user2):
     )
     datasets = []
     for dataset_name, user, doi in dataset_specs:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         dataset = datamodel.Dataset(
             dataset_id=utils.create_uuid(),
             dataset_name=dataset_name,

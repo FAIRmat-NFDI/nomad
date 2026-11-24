@@ -21,7 +21,7 @@ import fnmatch
 import json
 import re
 from collections.abc import Mapping
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Any
 
 from fastapi import Body, HTTPException, Request, status
@@ -77,7 +77,7 @@ owner_documentation = strip(
 )
 
 
-class Owner(str, Enum):
+class Owner(StrEnum):
     __doc__ = owner_documentation
 
     # There seems to be a slight bug in fast API. When it creates the example in OpenAPI

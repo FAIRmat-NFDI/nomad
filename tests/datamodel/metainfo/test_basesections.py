@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -29,7 +29,7 @@ from nomad.datamodel.metainfo.eln import ELNProcess, ELNSample, ELNSubstance, Sa
 from nomad.utils import get_logger
 from tests.normalizing.conftest import run_normalize, run_processing
 
-ENTRY_CREATE_TIME = datetime(2026, 10, 2, 13, 27, tzinfo=timezone.utc)
+ENTRY_CREATE_TIME = datetime(2026, 10, 2, 13, 27, tzinfo=UTC)
 
 
 @pytest.mark.parametrize(

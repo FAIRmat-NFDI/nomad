@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
@@ -38,7 +38,7 @@ from ..data import Query
 from .plot import PlotlyError
 
 
-class ELNComponentEnum(str, Enum):
+class ELNComponentEnum(StrEnum):
     StringEditQuantity = 'StringEditQuantity'
     URLEditQuantity = 'URLEditQuantity'
     EnumEditQuantity = 'EnumEditQuantity'
@@ -658,11 +658,11 @@ class ELNAnnotation(AnnotationModel):
         return definition
 
 
-class BrowserAdaptors(str, Enum):
+class BrowserAdaptors(StrEnum):
     RawFileAdaptor = 'RawFileAdaptor'
 
 
-class BrowserRenderValues(str, Enum):
+class BrowserRenderValues(StrEnum):
     JsonValue = 'JsonValue'
     HtmlValue = 'HtmlValue'
 
@@ -712,7 +712,7 @@ class BrowserAnnotation(AnnotationModel):
     )
 
 
-class TabularMode(str, Enum):
+class TabularMode(StrEnum):
     row = 'row'
     column = 'column'
 
@@ -726,7 +726,7 @@ class TabularParsingOptions(BaseModel):
     separator: str | None = Field(None, description='Alias for `sep`')
 
 
-class TabularFileModeEnum(str, Enum):
+class TabularFileModeEnum(StrEnum):
     current_entry = 'current_entry'
     single_new_entry = 'single_new_entry'
     multiple_new_entries = 'multiple_new_entries'

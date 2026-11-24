@@ -18,14 +18,14 @@
 
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
 
-class Scope(str, Enum):
+class Scope(StrEnum):
     """
     Backend authorization scopes.
 

@@ -39,7 +39,7 @@ import threading
 import uuid
 from collections.abc import Coroutine, Iterable, Iterator, Sequence
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Union, cast
 
 import requests
@@ -1013,7 +1013,7 @@ class Entry(Proc):
     }
 
     def __init__(self, *args, **kwargs):
-        kwargs.setdefault('entry_create_time', datetime.now(timezone.utc))
+        kwargs.setdefault('entry_create_time', datetime.now(UTC))
         super().__init__(*args, **kwargs)
         self._parser_results: EntryArchive = None
         self._is_initial_processing: bool = False
@@ -1167,7 +1167,7 @@ class Entry(Proc):
                 )
 
         entry_metadata.files = self.upload_files.entry_files(self.mainfile)
-        entry_metadata.last_processing_time = datetime.now(timezone.utc)
+        entry_metadata.last_processing_time = datetime.now(UTC)
         entry_metadata.processing_errors = []
 
     def _apply_metadata_from_mongo(
@@ -1863,7 +1863,7 @@ class Upload(Proc):
         return rv
 
     def __init__(self, **kwargs):
-        kwargs.setdefault('upload_create_time', datetime.now(timezone.utc))
+        kwargs.setdefault('upload_create_time', datetime.now(UTC))
         super().__init__(**kwargs)
         self._upload_files: UploadFiles = None
         self.archive_context = ServerContext(self)
@@ -2143,11 +2143,11 @@ class Upload(Proc):
                 if isinstance(self.upload_files, StagingUploadFiles):
                     with utils.timer(logger, 'upload staging files deleted'):
                         self.upload_files.delete()
-                        self.publish_time = datetime.now(timezone.utc)
-                        self.last_update = datetime.now(timezone.utc)
+                        self.publish_time = datetime.now(UTC)
+                        self.last_update = datetime.now(UTC)
                         self.save()
                 else:
-                    self.last_update = datetime.now(timezone.utc)
+                    self.last_update = datetime.now(UTC)
                     self.save()
 
     def unpublish_upload(self):
@@ -2181,7 +2181,7 @@ class Upload(Proc):
 
         self.embargo_length = 0
         self.publish_time = None
-        self.last_update = datetime.now(timezone.utc)
+        self.last_update = datetime.now(UTC)
         self.save()
 
     def publish_externally(
@@ -3362,7 +3362,7 @@ class Upload(Proc):
                 )
 
             self._cleanup_staging_files()
-            self.last_update = datetime.now(timezone.utc)
+            self.last_update = datetime.now(UTC)
             self.save()
 
         if (
@@ -3383,8 +3383,8 @@ class Upload(Proc):
                 with utils.timer(logger, 'upload staging files deleted'):
                     self.staging_upload_files.delete()
 
-                self.publish_time = datetime.now(timezone.utc)
-                self.last_update = datetime.now(timezone.utc)
+                self.publish_time = datetime.now(UTC)
+                self.last_update = datetime.now(UTC)
                 self.save()
 
     def cleanup_entries_batch(
@@ -3657,7 +3657,7 @@ class Upload(Proc):
             PublicUploadFiles(self.upload_id).re_pack(with_embargo=self.with_embargo)
 
         # Entry level metadata
-        last_edit_time = datetime.now(timezone.utc)
+        last_edit_time = datetime.now(UTC)
         entry_mongo_writes = []
         updated_metadata: list[datamodel.EntryMetadata] = []
         for entry in handler.find_request_entries(self):

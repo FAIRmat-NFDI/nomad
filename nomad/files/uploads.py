@@ -1864,8 +1864,12 @@ class PublicUploadFiles(UploadFiles):
         if len(errors) == 1:
             raise errors[0]
         if errors:
-            # Python 3.10 is supported, so retain both failures through exception
-            # chaining instead of using the Python 3.11 ExceptionGroup type.
+            # Historically, the remote cleanup error has been raised as the
+            # primary exception, with the local error chained as its cause.
+            # Now that Python 3.11 is the minimum, consider using ExceptionGroup
+            # to report both failures independently and let callers handle each
+            # by type with except*. Review existing handlers first because they
+            # may rely on catching the remote exception directly.
             try:
                 raise errors[1]
             except Exception as local_error:

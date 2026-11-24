@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel
 
@@ -27,7 +27,7 @@ class ToolModel(NORTHTool):
     name: str
 
 
-class StateEnum(str, Enum):
+class StateEnum(StrEnum):
     running = 'running'
     starting = 'starting'
     stopping = 'stopping'
@@ -41,12 +41,12 @@ class ServerModel(BaseModel):
     # url: str | None = None
 
 
-class ReadMode(str, Enum):
+class ReadMode(StrEnum):
     ro = 'ro'
     rw = 'rw'
 
 
-class Kind(str, Enum):
+class Kind(StrEnum):
     """Type of the mount. Different spawners may support different types of mounts.
     - bind: in case of Dockerspawner this equivalent to bind mounts. In case of KubeSpawner this equivalent to hostpath mounts.
     - volume: reuse or create a new volume.

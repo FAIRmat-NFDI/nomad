@@ -24,8 +24,8 @@ import json
 import os.path
 import tempfile
 from collections.abc import Iterator
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import Enum, StrEnum
 from typing import Annotated, Any, Literal
 
 import anyio
@@ -112,7 +112,7 @@ from ..utils import (
 router = APIRouter()
 
 
-class APITag(str, Enum):
+class APITag(StrEnum):
     DEFAULT = 'entries'
     METADATA = 'entries/metadata'
     RAW = 'entries/raw'
@@ -2647,7 +2647,7 @@ def post_entry_metadata_edit(
                                 dataset_id=utils.create_uuid(),
                                 user_id=user.user_id,
                                 dataset_name=action_value,
-                                dataset_create_time=datetime.now(timezone.utc),
+                                dataset_create_time=datetime.now(UTC),
                             )
                             dataset.a_mongo.create()
                             mongo_value = dataset.dataset_id
@@ -2704,7 +2704,7 @@ def post_entry_metadata_edit(
         return data
 
     # perform the change
-    mongo_update['last_edit_time'] = datetime.now(timezone.utc)
+    mongo_update['last_edit_time'] = datetime.now(UTC)
     edit(data.query, user, mongo_update, True)
 
     # remove potentially empty old datasets

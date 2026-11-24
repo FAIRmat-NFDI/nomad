@@ -16,9 +16,8 @@
 # limitations under the License.
 #
 
-import sys
 from collections import OrderedDict
-from enum import Enum
+from enum import StrEnum
 from io import BytesIO, StringIO
 from typing import Annotated
 
@@ -42,7 +41,7 @@ from .entries import answer_entry_archive_request
 router = APIRouter()
 
 
-class APITag(str, Enum):
+class APITag(StrEnum):
     DEFAULT = 'systems'
 
 
@@ -115,7 +114,7 @@ def write_xyz(atoms: NOMADAtoms, entry_id: str, formula: str | None = None) -> s
     return content
 
 
-class FormatFeature(str, Enum):
+class FormatFeature(StrEnum):
     """Contains features that are relevant for the different file formats used to
     serialize atomic configurations.
     """
@@ -194,15 +193,9 @@ for format in format_map.values():
     )
 format_features = '\n'.join(format_features_list)
 
-if sys.version_info < (3, 11):
 
-    class TempFormatEnum(str, Enum):
-        pass
-else:
-    from enum import StrEnum
-
-    class TempFormatEnum(StrEnum):
-        pass
+class TempFormatEnum(StrEnum):
+    pass
 
 
 FormatEnum = TempFormatEnum(
@@ -229,15 +222,8 @@ wrap_mode_map: dict[str, dict] = OrderedDict(
 )
 
 
-if sys.version_info < (3, 11):
-
-    class TempWrapModeEnum(str, Enum):
-        pass
-else:
-    from enum import StrEnum
-
-    class TempWrapModeEnum(StrEnum):
-        pass
+class TempWrapModeEnum(StrEnum):
+    pass
 
 
 WrapModeEnum = TempWrapModeEnum(

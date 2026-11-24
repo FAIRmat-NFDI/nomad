@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections.abc import AsyncIterator
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -36,7 +36,7 @@ from nomad.notifications import notification_service
 router = APIRouter()
 
 
-class APITag(str, Enum):
+class APITag(StrEnum):
     DEFAULT = 'notifications'
 
 

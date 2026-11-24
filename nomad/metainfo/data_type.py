@@ -23,7 +23,7 @@ import importlib
 import re
 import typing
 from base64 import b64decode, b64encode
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from functools import reduce
 from inspect import isclass
 from typing import Any as TypingAny
@@ -1080,9 +1080,9 @@ class Datetime(NonPrimitive):
             raise ValueError(f'Cannot convert {value} to datetime.')
 
         if datetime_obj.tzinfo is None:
-            datetime_obj = datetime_obj.replace(tzinfo=timezone.utc)
+            datetime_obj = datetime_obj.replace(tzinfo=UTC)
         else:
-            datetime_obj = datetime_obj.astimezone(timezone.utc)
+            datetime_obj = datetime_obj.astimezone(UTC)
 
         return datetime_obj
 

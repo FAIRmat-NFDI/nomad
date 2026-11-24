@@ -17,7 +17,7 @@
 #
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -38,7 +38,7 @@ __all__ = [
 ]
 
 
-class ActionStreamEventType(str, Enum):
+class ActionStreamEventType(StrEnum):
     """Generic event categories that action UIs can handle consistently."""
 
     STATE = 'state'
@@ -46,7 +46,7 @@ class ActionStreamEventType(str, Enum):
     OUTPUT_DELTA = 'output_delta'
 
 
-class ActionStreamEventSeverity(str, Enum):
+class ActionStreamEventSeverity(StrEnum):
     """User-facing severity for action stream events."""
 
     INFO = 'info'

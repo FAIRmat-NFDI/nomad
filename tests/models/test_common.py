@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 
-from datetime import timezone
+from datetime import UTC
 
 import pytest
 from pydantic import BaseModel
@@ -37,4 +37,4 @@ def test_utc_datetime_field_alias_normalizes(value):
 
     model = _Model(value=value)
     assert model.value.tzinfo is not None
-    assert model.value.utcoffset() == timezone.utc.utcoffset(model.value)
+    assert model.value.utcoffset() == UTC.utcoffset(model.value)

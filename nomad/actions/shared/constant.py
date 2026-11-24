@@ -16,10 +16,10 @@
 # limitations under the License.
 #
 
-from enum import Enum
+from enum import StrEnum
 
 
-class TaskQueue(str, Enum):
+class TaskQueue(StrEnum):
     CPU = 'cpu-task-queue'
     GPU = 'gpu-task-queue'
     NOMAD_INTERNAL_WORKFLOWS = 'nomad-internal-workflows-task-queue'

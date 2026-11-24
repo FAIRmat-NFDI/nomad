@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import timedelta
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
@@ -58,7 +58,7 @@ router = APIRouter()
 logger = utils.get_logger(__name__)
 
 
-class APITag(str, Enum):
+class APITag(StrEnum):
     DEFAULT = 'ownership-transfers'
 
 

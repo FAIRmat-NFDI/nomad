@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
@@ -31,11 +31,11 @@ from nomad.schemas import get_schema as get_schema_definition
 router = APIRouter()
 
 
-class APITag(str, Enum):
+class APITag(StrEnum):
     DEFAULT = 'schemas'
 
 
-class SerializationFormat(str, Enum):
+class SerializationFormat(StrEnum):
     JSONSCHEMA = 'jsonschema'
     METAINFO = 'metainfo'
 

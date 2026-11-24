@@ -19,7 +19,7 @@
 import asyncio
 import functools
 import os
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Any, Final, Literal
 
 from fastapi import (
@@ -72,7 +72,7 @@ from ..utils import create_responses
 router = APIRouter()
 
 
-class APITag(str, Enum):
+class APITag(StrEnum):
     DEFAULT = 'actions'
 
 

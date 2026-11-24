@@ -16,14 +16,14 @@
 # limitations under the License.
 #
 
-from enum import Enum
+from enum import StrEnum
 from inspect import cleandoc  # utils.strip caused circular imports
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_core import PydanticCustomError
 
 
-class Direction(str, Enum):
+class Direction(StrEnum):
     """
     Order direction, either ascending (`asc`) or descending (`desc`)
     """
