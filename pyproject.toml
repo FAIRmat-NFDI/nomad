@@ -56,8 +56,8 @@ dependencies = [
 ]
 
 [project.urls]
-homepage = "https://nomad-lab.eu/"
-documentation = "https://nomad-lab.eu/prod/v1/docs"
+homepage = "https://about.nomad-lab.eu"
+documentation = "https://docs.nomad-lab.eu"
 repository = "https://gitlab.mpcdf.mpg.de/nomad-lab/nomad-FAIR"
 
 [project.optional-dependencies]

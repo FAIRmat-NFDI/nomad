@@ -60,7 +60,7 @@ class Auth(requests.auth.AuthBase):
 
     .. code::
 
-        requests.get('https://nomad-lab.eu/prod/rae/api/v1/entries', auth=Auth())
+        requests.get('https://nomad-lab.eu/backend/api/v1/entries', auth=Auth())
 
     This Auth will given username/password to acquire a token, it will keep and manage
     the token, and apply it to the headers requests.

@@ -154,7 +154,7 @@ for name, collection in ENTRY_COLLECTIONS.items():
                 'name': 'Index meta-database',
                 'description': 'Index for NOMAD databases',
                 'base_url': 'http://providers.optimade.org/index-metadbs/nmd',
-                'homepage': 'https://nomad-lab.eu',
+                'homepage': 'https://about.nomad-lab.eu',
                 'link_type': 'root',
             }
         )
