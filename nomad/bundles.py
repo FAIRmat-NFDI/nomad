@@ -23,7 +23,7 @@ import os
 import shutil
 import tempfile
 from collections.abc import Iterable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 
 from fastapi import HTTPException, status
@@ -724,7 +724,7 @@ class BundleImporter:
         """
         self.upload = upload
         logger = self.upload.get_logger(bundle_path=self.bundle_path)
-        current_time = datetime.now(timezone.utc)
+        current_time = datetime.now(UTC)
         new_datasets: list[datamodel.Dataset] = []
         dataset_id_mapping: dict[str, str] = {}
         entry_data_to_index: list[datamodel.EntryArchive] = []  # Data to index in ES
@@ -901,7 +901,7 @@ class BundleImporter:
         ):
             assert (
                 timestamp is None
-                or timestamp.replace(tzinfo=timezone.utc) < current_time_plus_tolerance
+                or timestamp.replace(tzinfo=UTC) < current_time_plus_tolerance
             ), 'Timestamp is in the future'
         # Manage source info
         if self.import_settings.set_from_oasis:

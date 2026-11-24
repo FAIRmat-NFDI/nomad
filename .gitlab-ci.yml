@@ -425,6 +425,8 @@ audit python:
     - if: $CI_COMMIT_BRANCH == 'develop'
     - if: $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == 'main'
     - if: $CI_COMMIT_BRANCH == 'main'
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      <<: *manual-allow_failure
 
 python package install tests:
   stage: test
@@ -435,7 +437,7 @@ python package install tests:
     GIT_STRATEGY: none
   script:
     - |
-      for PYTHON_VERSION in 3.10 3.11 3.12 3.13; do
+      for PYTHON_VERSION in 3.11 3.12 3.13; do
         echo "Running for Python $PYTHON_VERSION"
 
         uv venv --clear -p $PYTHON_VERSION

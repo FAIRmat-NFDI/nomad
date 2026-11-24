@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, HTTPException
@@ -40,7 +40,7 @@ from .entries import EntriesArchive
 router = APIRouter()
 
 
-class APITag(str, Enum):
+class APITag(StrEnum):
     DEFAULT = 'graph'
 
 

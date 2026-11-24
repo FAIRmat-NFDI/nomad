@@ -18,7 +18,7 @@
 
 import asyncio
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Literal
 from unittest.mock import MagicMock, Mock
 
@@ -299,7 +299,7 @@ def test_stop_processing_action(
     upload = Upload.create(
         upload_id=upload_id,
         main_author=upload_owner,
-        publish_time=datetime.now(timezone.utc) if is_published else None,
+        publish_time=datetime.now(UTC) if is_published else None,
         workflow_ids=['example-workflow-id'],
     )
     upload.save()

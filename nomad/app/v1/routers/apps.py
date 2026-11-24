@@ -19,7 +19,7 @@
 import fnmatch
 import itertools
 import re
-from enum import Enum
+from enum import StrEnum
 from threading import Lock
 from typing import Annotated, Any
 
@@ -80,7 +80,7 @@ _bad_search_quantity_parse = (
 )
 
 
-class APITag(str, Enum):
+class APITag(StrEnum):
     DEFAULT = 'apps'
 
 
@@ -96,7 +96,7 @@ _init_lock = Lock()
 _initialized = False
 
 
-class DataType(str, Enum):
+class DataType(StrEnum):
     INT = 'int'
     FLOAT = 'float'
     TIMESTAMP = 'timestamp'

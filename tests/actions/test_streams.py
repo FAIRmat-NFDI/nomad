@@ -21,7 +21,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -88,7 +88,7 @@ async def test_stream_workflow_events_async_yields_typed_items(monkeypatch):
     event = ActionStreamEvent(
         type=ActionStreamEventType.MESSAGE,
         message='hello',
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
     )
     fake_client = _FakeStreamClient(
         [_FakeStreamItem(offset=3, topic=ACTION_STREAM_TOPIC, data=event)]
@@ -140,7 +140,7 @@ async def test_stream_processing_events_for_user_async_uses_processing_topic(
     event = ActionStreamEvent(
         type=ActionStreamEventType.MESSAGE,
         message='processing hello',
-        timestamp=datetime.now(timezone.utc),
+        timestamp=datetime.now(UTC),
     )
     fake_client = _FakeStreamClient(
         [_FakeStreamItem(offset=4, topic=PROCESSING_STREAM_TOPIC, data=event)]

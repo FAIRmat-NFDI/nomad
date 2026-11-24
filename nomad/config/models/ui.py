@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -31,7 +31,7 @@ from .common import (
 )
 
 
-class ScaleEnum(str, Enum):
+class ScaleEnum(StrEnum):
     LINEAR = 'linear'
     LOG = 'log'
     # TODO: The following should possibly be deprecated.
@@ -41,7 +41,7 @@ class ScaleEnum(str, Enum):
     POW8 = '1/8'
 
 
-class ScaleEnumPlot(str, Enum):
+class ScaleEnumPlot(StrEnum):
     LINEAR = 'linear'
     LOG = 'log'
 
@@ -231,7 +231,7 @@ class Pagination(ConfigBaseModel):
     page_size: int = Field(20, description='Number of results on each page.')
 
 
-class ModeEnum(str, Enum):
+class ModeEnum(StrEnum):
     STANDARD = 'standard'
     SCIENTIFIC = 'scientific'
     SEPARATORS = 'separators'
@@ -246,7 +246,7 @@ class Format(ConfigBaseModel):
     mode: ModeEnum = Field(ModeEnum.SCIENTIFIC, description='Display mode for numbers.')
 
 
-class AlignEnum(str, Enum):
+class AlignEnum(StrEnum):
     LEFT = 'left'
     RIGHT = 'right'
     CENTER = 'center'
@@ -461,7 +461,7 @@ class Rows(ConfigBaseModel):
 
 
 # Deprecated
-class FilterMenuActionEnum(str, Enum):
+class FilterMenuActionEnum(StrEnum):
     CHECKBOX = 'checkbox'
 
 
@@ -492,7 +492,7 @@ class FilterMenuActions(Options):
 
 
 # Deprecated
-class FilterMenuSizeEnum(str, Enum):
+class FilterMenuSizeEnum(StrEnum):
     S = 's'
     M = 'm'
     L = 'l'
@@ -574,7 +574,7 @@ class Axis(AxisScale, AxisQuantity):
     """Configuration for a plot axis with limited scaling options."""
 
 
-class QueryModeEnum(str, Enum):
+class QueryModeEnum(StrEnum):
     AND = 'and'
     OR = 'or'
 
@@ -820,7 +820,7 @@ class BoxPlotBase(ConfigBaseModel):
         return values
 
 
-class MenuSizeEnum(str, Enum):
+class MenuSizeEnum(StrEnum):
     XS = 'xs'
     SM = 'sm'
     MD = 'md'
@@ -1119,7 +1119,7 @@ class Layout(ConfigBaseModel):
     minW: int | None = Field(3, description='Minimum width in grid units.')
 
 
-class BreakpointEnum(str, Enum):
+class BreakpointEnum(StrEnum):
     SM = 'sm'
     MD = 'md'
     LG = 'lg'
@@ -1212,7 +1212,7 @@ class WidgetPeriodicTableDeprecated(WidgetPeriodicTable):
         return values
 
 
-class DragModeEnum(str, Enum):
+class DragModeEnum(StrEnum):
     ZOOM = 'zoom'
     PAN = 'pan'
     SELECT = 'select'
@@ -1360,7 +1360,7 @@ class Dashboard(ConfigBaseModel):
     )
 
 
-class ResourceEnum(str, Enum):
+class ResourceEnum(StrEnum):
     ENTRIES = 'entries'
     MATERIALS = 'materials'
 

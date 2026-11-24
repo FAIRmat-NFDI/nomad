@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import numpy as np
 import pytest
@@ -64,9 +64,9 @@ from tests.variables import python_schema_name
         pytest.param(Quantity(type=int), 1, SearchableQuantity.int_value, 1, id='long'),
         pytest.param(
             Quantity(type=Datetime),
-            datetime.fromtimestamp(0, tz=timezone.utc),
+            datetime.fromtimestamp(0, tz=UTC),
             SearchableQuantity.datetime_value,
-            datetime(1970, 1, 1, 0, 0, tzinfo=timezone.utc),
+            datetime(1970, 1, 1, 0, 0, tzinfo=UTC),
             id='date',
         ),
         pytest.param(Quantity(type=str, shape=['*']), ['test'], None, None, id='shape'),
@@ -243,9 +243,9 @@ def populate_reference(data):
         ),
         pytest.param(
             'timestamp',
-            datetime.fromtimestamp(0, tz=timezone.utc),
+            datetime.fromtimestamp(0, tz=UTC),
             SearchableQuantity.datetime_value,
-            datetime(1970, 1, 1, 0, 0, tzinfo=timezone.utc),
+            datetime(1970, 1, 1, 0, 0, tzinfo=UTC),
             f'{python_schema_name}.timestamp',
             id='datetime',
         ),
@@ -270,7 +270,7 @@ def populate_reference(data):
             'reference_section',
             populate_reference,
             None,
-            datetime(1970, 1, 1, 0, 0, tzinfo=timezone.utc),
+            datetime(1970, 1, 1, 0, 0, tzinfo=UTC),
             None,
             id='references are skipped',
         ),

@@ -65,7 +65,7 @@ class DOI(Document):
             id = generate_unique_doi_name()
 
         doi = DOI()
-        doi.create_time = datetime.datetime.now(datetime.timezone.utc)
+        doi.create_time = datetime.datetime.now(datetime.UTC)
         doi.doi = id
         doi.state = 'created'
         doi.url = generate_dataset_target_url(doi.doi)

@@ -17,7 +17,7 @@
 #
 
 import os
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Any, cast
 
 import requests
@@ -42,7 +42,7 @@ from ..utils import create_responses
 router = APIRouter()
 
 
-class APITag(str, Enum):
+class APITag(StrEnum):
     DEFAULT = 'north'
 
 
@@ -56,7 +56,7 @@ logger = get_logger(__name__)
 NORTH_HUB_TIMEOUT_SECONDS = 30
 
 
-class ToolStateEnum(str, Enum):
+class ToolStateEnum(StrEnum):
     running = 'running'
     starting = 'starting'
     stopping = 'stopping'

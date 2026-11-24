@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from fastapi import Body
@@ -32,7 +32,7 @@ from ...models import Direction, Owner, Pagination, PaginationResponse, WithQuer
 from ...utils import parameter_dependency_from_model
 
 
-class APITag(str, Enum):
+class APITag(StrEnum):
     DEFAULT = 'uploads'
     METADATA = 'uploads/metadata'
     RAW = 'uploads/raw'
@@ -42,7 +42,7 @@ class APITag(str, Enum):
     TRANSFER = 'uploads/transfer'
 
 
-class UploadTransferFormat(str, Enum):
+class UploadTransferFormat(StrEnum):
     bundle = 'bundle'
 
 
@@ -196,7 +196,7 @@ upload_import_options_parameters = parameter_dependency_from_model(
 )
 
 
-class UploadRole(str, Enum):
+class UploadRole(StrEnum):
     main_author = 'main_author'
     reviewer = 'reviewer'
     coauthor = 'coauthor'

@@ -17,7 +17,7 @@
 #
 
 import urllib.parse
-from enum import Enum
+from enum import StrEnum
 
 from fastapi import Header, Query, Response
 from rdflib import Graph
@@ -38,7 +38,7 @@ def url(*args, **kwargs):
         return url
 
 
-class Formats(str, Enum):
+class Formats(StrEnum):
     xml = 'xml'
     n3 = 'n3'
     turtle = 'turtle'

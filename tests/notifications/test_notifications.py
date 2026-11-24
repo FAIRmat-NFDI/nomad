@@ -56,7 +56,7 @@ class InMemoryNotificationRepository:
 
 @pytest.fixture
 def current_time():
-    return datetime.datetime(2026, 1, 1, tzinfo=datetime.timezone.utc)
+    return datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC)
 
 
 @pytest.fixture

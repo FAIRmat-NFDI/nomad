@@ -20,7 +20,7 @@ import logging
 import os
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from multiprocessing import current_process
 from typing import Any, NamedTuple
 
@@ -327,7 +327,7 @@ class Proc(Document):
             errors_str = '; '.join([str(error) for error in errors])
             Proc.log(logger, log_level, 'process failed', errors=errors_str)
 
-        self.complete_time = datetime.now(timezone.utc)
+        self.complete_time = datetime.now(UTC)
 
         try:
             self.on_fail()
@@ -600,7 +600,7 @@ def process_local(func):
                 # All looks good
                 self.on_success()
                 self.process_status = ProcessStatus.SUCCESS
-                self.complete_time = datetime.now(timezone.utc)
+                self.complete_time = datetime.now(UTC)
                 self.save()
                 if self.warnings:
                     self.last_status_message = (

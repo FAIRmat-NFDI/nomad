@@ -25,13 +25,13 @@ schemas.
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 
-class ActionStatus(str, Enum):
+class ActionStatus(StrEnum):
     PENDING = 'PENDING'
     RUNNING = 'RUNNING'
     COMPLETED = 'COMPLETED'

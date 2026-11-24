@@ -17,7 +17,7 @@
 #
 
 from datetime import date, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated
 
 from elasticsearch.dsl import Q
@@ -35,7 +35,7 @@ from ..mapping import Mapping
 router = APIRouter()
 
 
-class APITag(str, Enum):
+class APITag(StrEnum):
     DEFAULT = 'dcat'
 
 

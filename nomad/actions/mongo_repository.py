@@ -18,7 +18,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from pymongo import ReturnDocument
@@ -49,7 +49,7 @@ def _record_from_mongo(doc: dict[str, Any]) -> ActionRecord:
     for name in ('created_at', 'updated_at'):
         value = payload.get(name)
         if value is not None and value.tzinfo is None:
-            payload[name] = value.replace(tzinfo=timezone.utc)
+            payload[name] = value.replace(tzinfo=UTC)
     return ActionRecord.model_validate(payload)
 
 

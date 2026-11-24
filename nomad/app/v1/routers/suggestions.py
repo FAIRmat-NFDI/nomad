@@ -17,7 +17,7 @@
 #
 
 from collections import defaultdict
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated
 
 from elasticsearch.dsl import Search
@@ -36,7 +36,7 @@ from ..models import User
 router = APIRouter()
 
 
-class APITag(str, Enum):
+class APITag(StrEnum):
     DEFAULT = 'suggestions'
 
 

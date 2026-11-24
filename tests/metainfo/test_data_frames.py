@@ -210,8 +210,8 @@ m_package.__init_metainfo__()
         ),
         pytest.param(
             'datetime_value',
-            datetime.datetime(2021, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
-            datetime.datetime(2021, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            datetime.datetime(2021, 1, 1, 12, 0, 0, tzinfo=datetime.UTC),
+            datetime.datetime(2021, 1, 1, 12, 0, 0, tzinfo=datetime.UTC),
             id='datetime',
         ),
     ],

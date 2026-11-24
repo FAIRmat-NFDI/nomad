@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import json
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any, get_args, get_origin
 
 from mongoengine.queryset.visitor import Q
@@ -41,7 +41,7 @@ class MongoQueryError(Exception):
     """Raised when an API-level mongo query cannot be normalized or translated."""
 
 
-class StringMatchType(str, Enum):
+class StringMatchType(StrEnum):
     exact = 'exact'
     fuzzy = 'fuzzy'
 

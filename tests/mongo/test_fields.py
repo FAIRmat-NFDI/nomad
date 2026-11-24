@@ -29,7 +29,7 @@ from nomad.mongo.fields import UTCDateTimeField
     [
         pytest.param(datetime.datetime(2026, 1, 1, 12, 0, 0), id='naive'),
         pytest.param(
-            datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc),
+            datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.UTC),
             id='aware-utc',
         ),
     ],

@@ -42,7 +42,7 @@ from nomad.units import ureg
         pytest.param(np.float64, 0, 1.1, id='numpy'),
         pytest.param(MEnum('value1'), 0, 'value1', id='enum'),
         pytest.param(
-            Datetime, 0, datetime.datetime.now(tz=datetime.timezone.utc), id='datetime'
+            Datetime, 0, datetime.datetime.now(tz=datetime.UTC), id='datetime'
         ),
         pytest.param(Reference(Quantity.m_def), 1, None, id='reference'),
     ],

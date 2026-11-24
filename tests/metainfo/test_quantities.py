@@ -54,9 +54,7 @@ from tests.metainfo import MTypes
         pytest.param(Dimension, 1, id='Dimension-1'),
         pytest.param(Dimension, 'quantity', id='Dimension-quantity'),
         pytest.param(URL, 'http://google.com', id='Url-link'),
-        pytest.param(
-            Datetime, datetime.datetime.now(datetime.timezone.utc), id='Datetime'
-        ),
+        pytest.param(Datetime, datetime.datetime.now(datetime.UTC), id='Datetime'),
         pytest.param(
             Datetime,
             datetime.datetime.now(ZoneInfo('America/Los_Angeles')),
@@ -77,7 +75,7 @@ def test_basic_types(def_type, value):
     if not isinstance(value, datetime.datetime) and isinstance(value, datetime.date):
         assert section.quantity == datetime.datetime.combine(
             value, datetime.datetime.min.time()
-        ).replace(tzinfo=datetime.timezone.utc)
+        ).replace(tzinfo=datetime.UTC)
     else:
         assert section.quantity == value
 
@@ -87,7 +85,7 @@ def test_basic_types(def_type, value):
     if not isinstance(value, datetime.datetime) and isinstance(value, datetime.date):
         assert section.quantity == datetime.datetime.combine(
             value, datetime.datetime.min.time()
-        ).replace(tzinfo=datetime.timezone.utc)
+        ).replace(tzinfo=datetime.UTC)
     else:
         assert section.quantity == value
 

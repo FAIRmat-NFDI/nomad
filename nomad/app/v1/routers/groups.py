@@ -17,7 +17,7 @@
 #
 
 from collections.abc import Iterable
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -55,7 +55,7 @@ from ..models import User
 router = APIRouter()
 
 
-class APITag(str, Enum):
+class APITag(StrEnum):
     DEFAULT = 'groups'
 
 

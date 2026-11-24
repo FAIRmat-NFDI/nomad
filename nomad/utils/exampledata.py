@@ -17,7 +17,7 @@
 #
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from nomad import files, search
@@ -53,7 +53,7 @@ class ExampleData:
         self.entry_defaults = kwargs
         self._entry_id_counter = 1
 
-        self._time_stamp = datetime.now(timezone.utc)
+        self._time_stamp = datetime.now(UTC)
 
     def save(
         self,

@@ -17,7 +17,7 @@
 #
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -588,7 +588,7 @@ async def test_post_entries_edit(
         verify_only=verify_only,
     )
     url = 'entries/edit'
-    edit_start = datetime.now(timezone.utc).isoformat()[0:22]
+    edit_start = datetime.now(UTC).isoformat()[0:22]
 
     async with temporal_worker():
         response = await asyncio.to_thread(

@@ -17,8 +17,8 @@
 #
 
 import re
-from datetime import datetime, timezone
-from enum import Enum
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Annotated, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
@@ -55,7 +55,7 @@ from .entries import _do_exhaustive_search
 router = APIRouter()
 
 
-class APITag(str, Enum):
+class APITag(StrEnum):
     DEFAULT = 'datasets'
 
 
@@ -321,7 +321,7 @@ class DatasetResponse(BaseModel):
     data: Dataset = Field()  # type: ignore
 
 
-class DatasetType(str, Enum):
+class DatasetType(StrEnum):
     owned = 'owned'
     foreign = 'foreign'
 
@@ -437,7 +437,7 @@ def post_datasets(
     Create a new dataset.
     """
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     dataset_type = (
         create.dataset_type if create.dataset_type is not None else DatasetType.owned
     )
@@ -648,7 +648,7 @@ def assign_doi(
     try:
         doi.create_draft(
             title=f'NOMAD dataset: {dataset.dataset_name}',
-            publicationYear=datetime.now(timezone.utc).year,
+            publicationYear=datetime.now(UTC).year,
             user=user,
         )  # saves DOI document
     except DataCiteException:

@@ -16,13 +16,13 @@
 # limitations under the License.
 #
 
-from enum import Enum
+from enum import StrEnum
 from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-class ActionAssetPurpose(str, Enum):
+class ActionAssetPurpose(StrEnum):
     ACTION_START = 'action_start'
     ACTION_SIGNAL = 'action_signal'
 

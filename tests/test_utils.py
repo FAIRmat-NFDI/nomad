@@ -17,7 +17,7 @@
 #
 
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError
 
 import pandas as pd
@@ -88,14 +88,14 @@ def test_iso8601_datetime_format():
             id='naive->utc',
         ),
         pytest.param(
-            datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
+            datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
             id='aware-utc->same',
         ),
     ],
 )
 def test_normalize_datetime_utc(value):
     assert utils.normalize_datetime_utc(value) == datetime(
-        2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc
+        2026, 1, 2, 3, 4, 5, tzinfo=UTC
     )
 
 

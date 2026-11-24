@@ -17,7 +17,7 @@
 #
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from importlib.metadata import EntryPoint
 from unittest.mock import AsyncMock, MagicMock
 
@@ -694,8 +694,8 @@ def test_get_action_status_sync_facade_returns_value(
                 'user_id': user1.user_id,
                 'status': 'PENDING',
                 'input_data': {},
-                'created_at': datetime.now(timezone.utc),
-                'updated_at': datetime.now(timezone.utc),
+                'created_at': datetime.now(UTC),
+                'updated_at': datetime.now(UTC),
             }
         )
     )
@@ -725,8 +725,8 @@ def test_stop_action_sync_facade_cancels_workflow(monkeypatch, mongo_function, u
                 'user_id': user1.user_id,
                 'status': 'RUNNING',
                 'input_data': {},
-                'created_at': datetime.now(timezone.utc),
-                'updated_at': datetime.now(timezone.utc),
+                'created_at': datetime.now(UTC),
+                'updated_at': datetime.now(UTC),
             }
         )
     )
@@ -801,8 +801,8 @@ def test_get_action_result_sync_facade_returns_value(
                 'user_id': user1.user_id,
                 'status': 'RUNNING',
                 'input_data': {},
-                'created_at': datetime.now(timezone.utc),
-                'updated_at': datetime.now(timezone.utc),
+                'created_at': datetime.now(UTC),
+                'updated_at': datetime.now(UTC),
             }
         )
     )

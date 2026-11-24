@@ -23,7 +23,7 @@ import hashlib
 import secrets
 from collections.abc import Collection
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from nomad.auth.scopes import Scope
 from nomad.common import now
@@ -39,7 +39,7 @@ _PAT_FORBIDDEN_SCOPES = frozenset(
 )
 
 
-class PATState(str, Enum):
+class PATState(StrEnum):
     ACTIVE = 'active'
     REVOKED = 'revoked'
     EXPIRED = 'expired'

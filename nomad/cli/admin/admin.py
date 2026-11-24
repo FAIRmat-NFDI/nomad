@@ -16,6 +16,8 @@
 # limitations under the License.
 #
 
+from datetime import UTC
+
 import click
 
 from nomad.cli.cli import cli
@@ -62,7 +64,7 @@ def reset(remove, i_am_really_sure):
     '--zero-complete-time', is_flag=True, help='Sets the complete time to epoch zero.'
 )
 def reset_processing(zero_complete_time):
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from nomad import infrastructure
     from nomad import processing as proc
@@ -84,7 +86,7 @@ def reset_processing(zero_complete_time):
             celery_task_id=None,
             errors=[],
             warnings=[],
-            complete_time=datetime.fromtimestamp(0, tz=timezone.utc)
+            complete_time=datetime.fromtimestamp(0, tz=UTC)
             if zero_complete_time
             else now(),
         )
@@ -221,13 +223,13 @@ def prune_pats(
 
     cutoff_utc = result.cutoff
     if cutoff_utc.tzinfo is None:
-        cutoff_utc = cutoff_utc.replace(tzinfo=datetime.timezone.utc)
+        cutoff_utc = cutoff_utc.replace(tzinfo=datetime.UTC)
     cutoff_local = cutoff_utc.astimezone()
 
     click.echo('PAT prune summary')
     click.echo(f'  cutoff_local: {cutoff_local.isoformat(timespec="seconds")}')
     click.echo(
-        f'  cutoff_utc: {cutoff_utc.astimezone(datetime.timezone.utc).isoformat(timespec="seconds")}'
+        f'  cutoff_utc: {cutoff_utc.astimezone(datetime.UTC).isoformat(timespec="seconds")}'
     )
     click.echo(f'  user_id: {result.user_id or "all"}')
     click.echo(f'  expired_matched: {result.expired_matched}')

@@ -22,7 +22,7 @@ import os
 import re
 import threading
 import warnings
-from enum import Enum
+from enum import StrEnum
 from importlib.metadata import entry_points, version
 from typing import Any, ClassVar, Literal
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_API_KEY = 'default-api-secret-that-is-long-enough'
 
 
-class ModeEnum(str, Enum):
+class ModeEnum(StrEnum):
     PRODUCTION = 'production'
     DEVELOPMENT = 'development'
 
@@ -2357,7 +2357,7 @@ class Archive(ConfigBaseModel):
         )
 
 
-class MolIDSourceEnum(str, Enum):
+class MolIDSourceEnum(StrEnum):
     CACHE = 'cache'
     API = 'api'
 

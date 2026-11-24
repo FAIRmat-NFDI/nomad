@@ -1623,7 +1623,7 @@ class InMemoryPATRepository(PATRepository):
 
 def test_in_memory_create_enforces_max_active_tokens():
     repo = InMemoryPATRepository()
-    fixed_time = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    fixed_time = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.UTC)
     service = PATService(repository=repo, clock=lambda: fixed_time)
 
     user_id = 'user_in_memory'
@@ -1644,7 +1644,7 @@ def test_in_memory_create_enforces_max_active_tokens():
 
 def test_in_memory_rotate_concurrent_revocation_failure():
     repo = InMemoryPATRepository()
-    fixed_time = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    fixed_time = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.UTC)
     service = PATService(repository=repo, clock=lambda: fixed_time)
 
     user_id = 'user_in_memory'
@@ -1667,7 +1667,7 @@ def test_in_memory_rotate_concurrent_revocation_failure():
 
 def test_in_memory_token_digest_redacted():
     repo = InMemoryPATRepository()
-    fixed_time = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    fixed_time = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.UTC)
     service = PATService(repository=repo, clock=lambda: fixed_time)
 
     user_id = 'user_in_memory'
@@ -1688,7 +1688,7 @@ def test_in_memory_token_digest_redacted():
 
 def test_in_memory_list_owned_filters_and_ordering():
     repo = InMemoryPATRepository()
-    t0 = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    t0 = datetime.datetime(2026, 1, 1, 12, 0, 0, tzinfo=datetime.UTC)
     service = PATService(repository=repo, clock=lambda: t0)
 
     user_id = 'user_search'

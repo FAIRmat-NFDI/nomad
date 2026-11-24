@@ -31,7 +31,7 @@ directly from the ``v0`` and ``v1`` submodules.
 import json
 import math
 from collections.abc import Callable, Generator, Iterable, Iterator
-from enum import Enum
+from enum import StrEnum
 from typing import Any, cast
 
 from elasticsearch.dsl import A, Q, Search
@@ -100,7 +100,7 @@ from nomad.utils.pydantic import CustomErrorWrapper
 _metainfo_initialized = False
 
 
-class AggType(str, Enum):
+class AggType(StrEnum):
     """Enumeration for the different aggregation types."""
 
     TERMS = 'terms'

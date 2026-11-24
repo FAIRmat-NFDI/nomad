@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 
-from enum import Enum
+from enum import StrEnum
 
 from pydantic import BaseModel, Field, SecretStr
 
@@ -33,12 +33,12 @@ class NORTHToolMaintainer(BaseModel):
     email: str
 
 
-class ReadMode(str, Enum):
+class ReadMode(StrEnum):
     ro = 'ro'
     rw = 'rw'
 
 
-class ImagePullPolicy(str, Enum):
+class ImagePullPolicy(StrEnum):
     """Image pull policies supported by both the Docker and Kubernetes spawners.
 
     Values use the Kubernetes spelling, but are parsed case-insensitively so that

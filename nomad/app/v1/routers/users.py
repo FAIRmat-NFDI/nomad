@@ -16,7 +16,7 @@
 # limitations under the License.
 #
 
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -35,7 +35,7 @@ from ..utils import create_responses
 router = APIRouter()
 
 
-class APITag(str, Enum):
+class APITag(StrEnum):
     DEFAULT = 'users'
 
 

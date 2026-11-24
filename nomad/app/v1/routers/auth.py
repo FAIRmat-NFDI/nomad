@@ -18,7 +18,7 @@
 
 import urllib
 from collections.abc import Callable, Collection
-from enum import Enum
+from enum import StrEnum
 from inspect import Parameter, Signature
 from typing import Annotated
 
@@ -66,7 +66,7 @@ logger = get_logger(__name__)
 router = APIRouter()
 
 
-class APITag(str, Enum):
+class APITag(StrEnum):
     OIDC = 'OpenID Connect Token Endpoints'
     PAT = 'Personal Access Token (PAT) Endpoints'
     CUSTOM = 'NOMAD Custom Token Endpoints'

@@ -17,7 +17,7 @@
 #
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Final
 
 from fastapi_cache import Backend
@@ -90,7 +90,7 @@ class MongoBackend(Backend):
                 now_time = now()
 
                 # Check if expired
-                expire_time = cached.expire_time.replace(tzinfo=timezone.utc)
+                expire_time = cached.expire_time.replace(tzinfo=UTC)
                 if expire_time <= now_time:
                     return 0, None
 

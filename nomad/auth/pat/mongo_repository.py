@@ -37,7 +37,7 @@ from .ports import (
 def to_record(pat: PAT) -> PATRecord:
     def to_utc(value: datetime.datetime | None) -> datetime.datetime | None:
         if value is not None and value.tzinfo is None:
-            return value.replace(tzinfo=datetime.timezone.utc)
+            return value.replace(tzinfo=datetime.UTC)
         return value
 
     created_at = to_utc(pat.created_at)

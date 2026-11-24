@@ -30,7 +30,7 @@ import shutil
 import tarfile
 import warnings
 import zipfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from glob import has_magic
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING, Literal
@@ -323,7 +323,7 @@ def has_glob_wildcards(path: str) -> bool:
 
 # Return current UTC time (can be mocked for tests)
 def now():
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def parse_timedelta(value: str, *, default_unit: str = 'd') -> timedelta:

@@ -18,7 +18,7 @@
 
 import json
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, Final
 
 from nomad import normalizing
@@ -40,7 +40,7 @@ def load_server_stats() -> dict[str, Any] | None:
 
     expire_time = cached.expire_time
     if expire_time.tzinfo is None:
-        expire_time = expire_time.replace(tzinfo=timezone.utc)
+        expire_time = expire_time.replace(tzinfo=UTC)
     if expire_time <= now():
         return None
 

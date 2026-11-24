@@ -20,7 +20,7 @@
 API endpoint that deliver backend configuration details.
 """
 
-from enum import Enum
+from enum import StrEnum
 from typing import Annotated, Any, Final
 
 from fastapi import Depends
@@ -43,7 +43,7 @@ INFO_CACHE_TTL: Final[int] = 1 * 24 * 60 * 60  # 1 day in seconds
 router = APIRouter()
 
 
-class APITag(str, Enum):
+class APITag(StrEnum):
     DEFAULT = 'info'
 
 

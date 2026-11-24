@@ -17,7 +17,7 @@
 #
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 import yaml
@@ -378,7 +378,7 @@ def test_post_entry_edit_resolves_same_upload_yaml_schema(
         mainfile=data_mainfile,
         entry_hash=f'dummy_hash_{entry_id}',
         domain='dft',
-        entry_create_time=datetime.now(timezone.utc),
+        entry_create_time=datetime.now(UTC),
         processed=True,
         parser_name='parsers/archive',
         main_author=users_dict['user1'],

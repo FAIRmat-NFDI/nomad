@@ -179,7 +179,7 @@ class TestAdmin:
 
             # 2. Expired embargo with --dry -> does not lift
             published.publish_time = datetime.datetime(
-                year=2012, month=1, day=1, tzinfo=datetime.timezone.utc
+                year=2012, month=1, day=1, tzinfo=datetime.UTC
             )
             published.save()
             result = await asyncio.to_thread(
