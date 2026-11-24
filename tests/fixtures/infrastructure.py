@@ -40,6 +40,7 @@ from nomad.actions import TaskQueue
 from nomad.actions.activities.utils import get_nomad_internal_activities
 from nomad.actions.workflows.utils import get_nomad_internal_workflows
 from nomad.config import config
+from nomad.config.models.config import DataCitePublisher
 from nomad.elastic_compat import (
     CONFLICT_ERROR_TYPES,
     NOT_FOUND_ERROR_TYPES,
@@ -418,12 +419,15 @@ class DataciteMock:
 
     def __init__(self, monkeypatch):
         self._monkeypatch = monkeypatch
+        self.payloads: list[dict] = []
 
     def set_enabled(self, enabled: bool):
         self._monkeypatch.setattr(config.datacite, 'enabled', enabled)
 
     def set_requests(self, status_code: int, response_ok: bool, text: str):
         def request(*args, **kwargs):
+            if args[0] == 'POST':
+                self.payloads.append(kwargs['json'])
             mock_response = MagicMock()
             mock_response.status_code = status_code
             mock_response.ok = response_ok
@@ -433,10 +437,23 @@ class DataciteMock:
         self._monkeypatch.setattr(f'nomad.datacite.client.requests.request', request)
 
 
+@pytest.fixture
+def datacite_publisher():
+    return {
+        'name': 'NOMAD',
+        'publisher_identifier': 'https://re3data.org/repository/r3d100010468',
+        'publisher_identifier_scheme': 're3data',
+        'scheme_uri': 'https://re3data.org/',
+    }
+
+
 @pytest.fixture(scope='function')
-def datacite_mock(monkeypatch):
+def datacite_mock(monkeypatch, datacite_publisher):
     """Enables datacite, mocks success on all requests in doi module."""
 
+    monkeypatch.setattr(
+        config.datacite, 'publisher', DataCitePublisher(**datacite_publisher)
+    )
     datacite_mock = DataciteMock(monkeypatch)
     datacite_mock.set_enabled(True)
     # external response is always ok; fail cases should not request datacite at all

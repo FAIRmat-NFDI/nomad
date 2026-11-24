@@ -1988,6 +1988,26 @@ class Client(ConfigBaseModel):
     )
 
 
+class DataCitePublisher(ConfigBaseModel):
+    """Publisher information used in DataCite metadata.
+
+    cf. https://datacite-metadata-schema.readthedocs.io/en/4.7/properties/publisher/
+    """
+
+    name: str = Field(
+        description='Name of the publisher to be used in DataCite metadata.',
+    )
+    publisher_identifier: str = Field(
+        description='Identifier of the publisher, e.g. "https://ror.org/04z8jg394".',
+    )
+    publisher_identifier_scheme: str = Field(
+        description='Scheme of the publisher identifier, e.g. "ROR" or "re3data".',
+    )
+    scheme_uri: str = Field(
+        description='URI of the publisher identifier scheme, e.g. "https://ror.org/".',
+    )
+
+
 class DataCite(ConfigBaseModel):
     mds_host: str = Field(
         'https://api.test.datacite.org',
@@ -2017,6 +2037,20 @@ class DataCite(ConfigBaseModel):
         exclude=True,
         description='DataCite password.',
     )
+    publisher: DataCitePublisher | None = Field(
+        None,
+        description='Publisher metadata. Required when datacite.enabled is True.',
+    )
+
+    @model_validator(mode='after')
+    def validate_publisher(self):
+        if self.enabled and self.publisher is None:
+            raise ValueError(
+                'Publisher metadata must be filled in when datacite.enabled is True. '
+                'Configure datacite.publisher with name, publisher_identifier, '
+                'publisher_identifier_scheme, and scheme_uri.'
+            )
+        return self
 
 
 class GitLab(ConfigBaseModel):

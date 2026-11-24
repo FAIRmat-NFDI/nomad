@@ -503,6 +503,7 @@ def test_assign_doi_dataset_auth_and_errors(
 
 def test_assign_doi_dataset(
     datacite_mock: DataciteMock,
+    datacite_publisher,
     auth_headers,
     client,
     data,
@@ -519,6 +520,13 @@ def test_assign_doi_dataset(
     assert_dataset(dataset, user_id=user1.user_id)
     assert dataset['doi'] is not None
     assert DOI.objects().count() == 2
+    (payload,) = datacite_mock.payloads
+    assert payload['data']['attributes']['publisher'] == {
+        'name': datacite_publisher['name'],
+        'publisherIdentifier': datacite_publisher['publisher_identifier'],
+        'publisherIdentifierScheme': datacite_publisher['publisher_identifier_scheme'],
+        'schemeUri': datacite_publisher['scheme_uri'],
+    }
 
 
 def test_assign_doi_dataset_unpublished(
