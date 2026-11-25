@@ -29,16 +29,21 @@ from nomad.actions.domain import (
     ActionNotRunningError,
     ActionStatus,
 )
+from nomad.common import now
 
 
 @pytest.mark.asyncio
 async def test_reconcile_active_paginates_and_updates_terminal_actions():
     actions = [
-        SimpleNamespace(action_instance_id=instance_id)
+        SimpleNamespace(
+            action_id='action', action_instance_id=instance_id, created_at=now()
+        )
         for instance_id in ('a', 'b', 'c', 'd')
     ]
     repository = SimpleNamespace(
+        expire_unsubmitted_slots=AsyncMock(),
         list_active=AsyncMock(side_effect=[actions[:2], actions[2:], []]),
+        release_slots=AsyncMock(),
         finish_if_active=AsyncMock(),
     )
     workflow = SimpleNamespace(
@@ -71,18 +76,24 @@ async def test_reconcile_active_paginates_and_updates_terminal_actions():
         ('b', 'COMPLETED', {'answer': 42}),
         ('c', 'FAILED', None),
     ]
+    assert [call.args for call in repository.release_slots.await_args_list] == [
+        ('action', ['b']),
+        ('action', ['c']),
+    ]
     workflow.get_result.assert_awaited_once_with('b')
 
 
 @pytest.mark.asyncio
 async def test_reconcile_active_continues_after_workflow_error():
     repository = SimpleNamespace(
+        expire_unsubmitted_slots=AsyncMock(),
         list_active=AsyncMock(
             return_value=[
-                SimpleNamespace(action_instance_id='bad'),
-                SimpleNamespace(action_instance_id='good'),
+                SimpleNamespace(action_id='action', action_instance_id='bad'),
+                SimpleNamespace(action_id='action', action_instance_id='good'),
             ]
         ),
+        release_slots=AsyncMock(),
         finish_if_active=AsyncMock(),
     )
     workflow = SimpleNamespace(
@@ -111,7 +122,9 @@ async def test_single_service_routes_sync_and_async_calls_to_separate_ports():
     workflow = Mock()
     workflow.get_status.return_value = ActionStatus.RUNNING
     a_repository = SimpleNamespace(
-        require_for_user=AsyncMock(), set_status_for_user=AsyncMock()
+        require_for_user=AsyncMock(return_value=SimpleNamespace(action_id='action')),
+        set_status_for_user=AsyncMock(),
+        release_slots=AsyncMock(),
     )
     a_workflow = SimpleNamespace(
         get_status=AsyncMock(return_value=ActionStatus.COMPLETED)
@@ -134,6 +147,7 @@ async def test_single_service_routes_sync_and_async_calls_to_separate_ports():
     workflow.get_status.assert_called_once_with('sync-instance')
     a_repository.require_for_user.assert_awaited_once_with('async-instance', 'owner')
     a_workflow.get_status.assert_awaited_once_with('async-instance')
+    a_repository.release_slots.assert_awaited_once_with('action', ['async-instance'])
 
 
 @pytest.mark.asyncio
@@ -273,6 +287,9 @@ def service_ports():
 
     repository = SimpleNamespace(
         create=AsyncMock(),
+        reserve_slot=AsyncMock(return_value=True),
+        claim_submission=AsyncMock(return_value=True),
+        release_slots=AsyncMock(),
         require_for_user=AsyncMock(),
         set_status_for_user=AsyncMock(),
         save_result_for_user=AsyncMock(),
@@ -301,7 +318,7 @@ def service_ports():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('failure', ['create', 'start'])
+@pytest.mark.parametrize('failure', ['create', 'start', 'release'])
 async def test_start_compensates_assets(service_ports, failure):
     from pydantic import BaseModel, SecretStr
 
@@ -310,15 +327,19 @@ async def test_start_compensates_assets(service_ports, failure):
         secret: SecretStr
 
     service, repository, workflow, assets = service_ports
-    target = repository.create if failure == 'create' else workflow.start
+    target = workflow.start if failure == 'start' else repository.create
     target.side_effect = RuntimeError('failed')
-    with pytest.raises(RuntimeError, match='failed'):
+    if failure == 'release':
+        repository.release_slots.side_effect = RuntimeError('release failed')
+    with pytest.raises(
+        RuntimeError, match='release failed' if failure == 'release' else '^failed$'
+    ):
         await service.a_start('action', Input(user_id='owner', secret='hidden'))
     assets.rollback.assert_awaited_once_with(['receipt'])
     record = repository.create.call_args.args[0]
     assert record.input_data == {'user_id': 'owner'}
     assert record.created_at == record.updated_at
-    if failure == 'create':
+    if failure != 'start':
         workflow.start.assert_not_awaited()
 
 
@@ -397,7 +418,10 @@ async def test_refresh_returns_updated_record_and_preserves_empty_result(service
 
     service, repository, workflow, _ = service_ports
     old = SimpleNamespace(
-        action_instance_id='instance', user_id='owner', status='RUNNING'
+        action_id='action',
+        action_instance_id='instance',
+        user_id='owner',
+        status='RUNNING',
     )
     updated = SimpleNamespace(status='COMPLETED', results={})
     workflow.get_status.return_value = ActionStatus.COMPLETED

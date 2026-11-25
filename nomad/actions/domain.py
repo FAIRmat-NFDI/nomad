@@ -43,6 +43,16 @@ class ActionStatus(StrEnum):
     CONTINUED_AS_NEW = 'CONTINUED_AS_NEW'
 
 
+TERMINAL_WORKFLOW_STATUSES = frozenset(
+    {
+        ActionStatus.COMPLETED,
+        ActionStatus.FAILED,
+        ActionStatus.CANCELED,
+        ActionStatus.TERMINATED,
+        ActionStatus.TIMED_OUT,
+    }
+)
+
 _ACTIVE_STATUSES = frozenset({ActionStatus.PENDING.value, ActionStatus.RUNNING.value})
 
 
@@ -50,11 +60,17 @@ class ActionNotFoundError(Exception):
     """Raised when an action is absent or is not owned by the requesting user."""
 
 
+class ActionConcurrencyLimitError(Exception):
+    """Raised when an action's concurrency limit is reached."""
+
+
 @dataclass(frozen=True)
 class ActionDefinition:
     action_id: str
     priority_key: int | None = None
     priority_fairness_key: str | None = None
+    max_concurrent_runs_per_user: int = 100
+    max_concurrent_runs: int = 100
 
 
 @dataclass(frozen=True)

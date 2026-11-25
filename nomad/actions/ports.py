@@ -30,6 +30,20 @@ from nomad.actions.domain import (
 
 
 class AsyncActionRepository(Protocol):
+    async def reserve_slot(
+        self, definition: ActionDefinition, record: ActionRecord
+    ) -> bool: ...
+
+    async def claim_submission(self, record: ActionRecord) -> bool:
+        """Prevent cleanup from reclaiming the slot before submitting to Temporal."""
+        ...
+
+    async def expire_unsubmitted_slots(self, cutoff: datetime) -> None:
+        """Reclaim slots older than the cutoff that were never claimed for submission."""
+        ...
+
+    async def release_slots(self, action_id: str, instance_ids: list[str]) -> None: ...
+
     async def create(self, record: ActionRecord) -> ActionRecord: ...
 
     async def list_active(
@@ -149,6 +163,16 @@ class SyncActionWorkflow(Protocol):
 
 
 class SyncActionRepository(Protocol):
+    def reserve_slot(
+        self, definition: ActionDefinition, record: ActionRecord
+    ) -> bool: ...
+
+    def claim_submission(self, record: ActionRecord) -> bool:
+        """Prevent cleanup from reclaiming the slot before submitting to Temporal."""
+        ...
+
+    def release_slots(self, action_id: str, instance_ids: list[str]) -> None: ...
+
     def create(self, record: ActionRecord) -> ActionRecord: ...
 
     def get_for_user(

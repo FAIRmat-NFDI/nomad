@@ -89,6 +89,35 @@ async def test_action_start(
 
 
 @pytest.mark.asyncio
+async def test_action_start_concurrency_limit(
+    client: AsyncClient, auth_headers, async_mongo_function, monkeypatch
+):
+    from unittest.mock import AsyncMock
+
+    from nomad.actions.domain import ActionConcurrencyLimitError
+
+    entry = MagicMock(users=None, groups=None)
+    monkeypatch.setattr(
+        'nomad.app.v1.routers.actions.get_actions', lambda: {'my-action': entry}
+    )
+    monkeypatch.setattr(
+        'nomad.app.v1.routers.actions.validate_action_arg', lambda action_id, data: data
+    )
+    error = ActionConcurrencyLimitError('The concurrency limit has been reached.')
+    monkeypatch.setattr(
+        'nomad.app.v1.routers.actions.action_service.a_start',
+        AsyncMock(side_effect=error),
+    )
+    response = await client.post(
+        '/actions/my-action/start',
+        json={'data': {}},
+        headers=auth_headers['user1'],
+    )
+    assert response.status_code == 429
+    assert response.json()['detail'] == str(error)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     'allowed_users, allowed_groups, expected_status',
     [
