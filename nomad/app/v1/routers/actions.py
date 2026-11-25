@@ -42,6 +42,7 @@ from nomad.actions.assets.models import ActionAssetPurpose, ActionAssetUploadRes
 from nomad.actions.assets.service import clone_action_asset, upload_action_asset
 from nomad.actions.bootstrap import action_service
 from nomad.actions.domain import (
+    ActionConcurrencyLimitError,
     ActionNotFoundError,
     ActionNotRunningError,
     SignalInputNotFoundError,
@@ -216,7 +217,8 @@ async def action_asset_clone(
     '/{action_id}/start',
     tags=[APITag.DEFAULT],
     summary='Start an action',
-    description='Starts a new action with the given ID and input data.',
+    description='Starts a new action with the given ID and input data. Returns 429 if a configured concurrency limit is reached.',
+    responses={429: {'description': 'Action concurrency limit reached.'}},
 )
 async def action_start(
     action_id: str,
@@ -264,6 +266,8 @@ async def action_start(
             action_id=action_id, data=input_data
         )
         return {'action_instance_id': action_instance_id}
+    except ActionConcurrencyLimitError as e:
+        raise HTTPException(status_code=429, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

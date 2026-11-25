@@ -123,6 +123,8 @@ def mock_action_entry_point():
     mock_entry_point.plugin_package = 'my-plugin'
     mock_entry_point.priority_key = None
     mock_entry_point.priority_fairness_key = None
+    mock_entry_point.max_concurrent_runs_per_user = 100
+    mock_entry_point.max_concurrent_runs = 100
 
     return mock_entry_point
 
@@ -601,6 +603,8 @@ async def test_start_action_consumes_asset_refs(
         lambda: {'my-action': mock_entry_point},
     )
 
+    mock_entry_point.max_concurrent_runs_per_user = 100
+    mock_entry_point.max_concurrent_runs = 100
     called = {'count': 0}
 
     async def mock_consume_staged_assets(**kwargs):
@@ -648,6 +652,8 @@ async def test_start_action_rolls_back_assets_if_workflow_start_fails(
         lambda: {'my-action': mock_entry_point},
     )
 
+    mock_entry_point.max_concurrent_runs_per_user = 100
+    mock_entry_point.max_concurrent_runs = 100
     rollback_called = {'count': 0}
 
     async def mock_consume_staged_assets(**kwargs):

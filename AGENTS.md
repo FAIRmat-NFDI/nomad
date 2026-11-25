@@ -1,5 +1,13 @@
 # AGENTS
 
+## Before committing or pushing
+
+- Run `ruff check`, `ruff format --check`, and `mypy nomad tests` from the repository root. Fix any failures and rerun all three checks before committing or pushing.
+
+## Documentation
+
+- Add docstrings to public functions, methods, and properties. Describe what callers can expect, including non-obvious return values, side effects, and exceptions where relevant.
+
 ## Domain-driven backend design
 
 - Organize new backend features as bounded contexts with explicit layers: `domain.py` for business rules and invariants, `application.py` for use-case orchestration, `ports.py` for dependency interfaces, infrastructure adapters such as `mongo_repository.py`, and `bootstrap.py` as the composition root.

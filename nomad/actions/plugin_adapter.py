@@ -183,5 +183,9 @@ class PluginActionCatalog:
             raise ValueError(f'No action data for the given {action_id} ID')
         entry.load()
         return ActionDefinition(
-            action_id, entry.priority_key, entry.priority_fairness_key
+            action_id=action_id,
+            priority_key=entry.priority_key,
+            priority_fairness_key=entry.priority_fairness_key,
+            max_concurrent_runs_per_user=entry.max_concurrent_runs_per_user,
+            max_concurrent_runs=entry.max_concurrent_runs,
         )

@@ -21,15 +21,26 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from pymongo import ReturnDocument
+from pymongo import ReadPreference, ReturnDocument
+from pymongo.errors import DuplicateKeyError
+from pymongo.write_concern import WriteConcern
 
 from nomad import infrastructure
-from nomad.actions.domain import ActionNotFoundError, ActionRecord, SignalInputClaim
+from nomad.actions.domain import (
+    ActionDefinition,
+    ActionNotFoundError,
+    ActionRecord,
+    SignalInputClaim,
+)
 from nomad.common import now
 from nomad.config import config
 from nomad.mongo.action import ActionDocument
 
 __all__ = ['MongoAsyncActionRepository', 'MongoSyncActionRepository']
+
+# Stop older start paths before cutover: initialization seeds existing active
+# records once, and subsequent starts must use the shared reservation document.
+_CAPACITY_COLLECTION = 'action_capacity'
 
 
 def _utcnow() -> datetime:
@@ -53,8 +64,152 @@ def _record_from_mongo(doc: dict[str, Any]) -> ActionRecord:
     return ActionRecord.model_validate(payload)
 
 
+def _active_filter(action_id: str) -> dict[str, Any]:
+    """Match pending and running records for an action."""
+    return {'action_id': action_id, 'status': {'$in': ['PENDING', 'RUNNING']}}
+
+
+def _capacity_filter(definition: ActionDefinition, user_id: str) -> dict[str, Any]:
+    """Match the capacity document only if both limits allow another run."""
+    user_runs = {
+        '$filter': {
+            'input': '$active_runs',
+            'as': 'run',
+            'cond': {'$eq': ['$$run.user_id', {'$literal': user_id}]},
+        }
+    }
+    return {
+        '_id': definition.action_id,
+        '$expr': {
+            '$and': [
+                {'$lt': [{'$size': '$active_runs'}, definition.max_concurrent_runs]},
+                {
+                    '$lt': [
+                        {'$size': user_runs},
+                        definition.max_concurrent_runs_per_user,
+                    ]
+                },
+            ]
+        },
+    }
+
+
+def _slot(record: ActionRecord) -> dict[str, Any]:
+    """Store the reservation and its pre-submission expiry marker."""
+    return {
+        'instance_id': record.action_instance_id,
+        'user_id': record.user_id,
+        'unsubmitted_since': _utcnow(),
+    }
+
+
+def _unsubmitted_slot_filter(record: ActionRecord) -> dict[str, Any]:
+    """Match the reservation only while it is eligible for expiry."""
+    return {
+        '_id': record.action_id,
+        'active_runs': {
+            '$elemMatch': {
+                'instance_id': record.action_instance_id,
+                'unsubmitted_since': {'$exists': True},
+            }
+        },
+    }
+
+
+def _seed_slots(records: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Convert existing active MongoDB records to initial reservations."""
+    return [
+        {'instance_id': record['action_instance_id'], 'user_id': record['user_id']}
+        for record in records
+    ]
+
+
 class MongoAsyncActionRepository:
     """MongoDB adapter for the asynchronous action repository port."""
+
+    @property
+    def capacity(self):
+        """Return the async capacity collection with primary reads and majority writes."""
+        return ActionDocument.get_pymongo_collection().database.get_collection(
+            _CAPACITY_COLLECTION,
+            write_concern=WriteConcern('majority'),
+            read_preference=ReadPreference.PRIMARY,
+        )
+
+    async def reserve_slot(
+        self, definition: ActionDefinition, record: ActionRecord
+    ) -> bool:
+        """Atomically reserve a slot if neither concurrency limit is reached.
+
+        On first use, seed the capacity document from existing active records.
+        Return whether the slot was reserved; this does not create an action record.
+        """
+        capacity = self.capacity
+        query = _capacity_filter(definition, record.user_id)
+        update = {'$push': {'active_runs': _slot(record)}}
+        if (
+            await capacity.find_one_and_update(query, update, projection={'_id': 1})
+            is not None
+        ):
+            return True
+        # Seed once from existing runs. A concurrent initializer cannot replace the winner.
+        if await capacity.find_one({'_id': record.action_id}, {'_id': 1}) is None:
+            records = (
+                await ActionDocument.get_pymongo_collection()
+                .with_options(read_preference=ReadPreference.PRIMARY)
+                .find(
+                    _active_filter(record.action_id),
+                    {'action_instance_id': 1, 'user_id': 1},
+                )
+                .to_list()
+            )
+            try:
+                await capacity.update_one(
+                    {'_id': record.action_id},
+                    {'$setOnInsert': {'active_runs': _seed_slots(records)}},
+                    upsert=True,
+                )
+            except DuplicateKeyError:
+                pass  # Another request initialized this action's capacity.
+            return (
+                await capacity.find_one_and_update(query, update, projection={'_id': 1})
+                is not None
+            )
+        return False
+
+    async def claim_submission(self, record: ActionRecord) -> bool:
+        """Atomically remove the expiry marker before calling Temporal."""
+        result = await self.capacity.update_one(
+            _unsubmitted_slot_filter(record),
+            {'$unset': {'active_runs.$.unsubmitted_since': ''}},
+        )
+        return result.modified_count == 1
+
+    async def expire_unsubmitted_slots(self, cutoff: datetime) -> None:
+        """Release expired pre-submission slots, including those without a record."""
+        expired = {'unsubmitted_since': {'$lte': cutoff}}
+        # The pull and claim compete on the same document. Once claimed, a
+        # reservation cannot be expired even if Temporal does not find it yet.
+        cursor = self.capacity.find({'active_runs': {'$elemMatch': expired}})
+        async for document in cursor:
+            for slot in document['active_runs']:
+                if 'unsubmitted_since' not in slot:
+                    continue
+                instance_id = slot['instance_id']
+                match = {'instance_id': instance_id, **expired}
+                result = await self.capacity.update_one(
+                    {'_id': document['_id'], 'active_runs': {'$elemMatch': match}},
+                    {'$pull': {'active_runs': match}},
+                )
+                if result.modified_count:
+                    await self.finish_if_active(instance_id, 'FAILED')
+
+    async def release_slots(self, action_id: str, instance_ids: list[str]) -> None:
+        """Release the specified reservations; missing reservations are ignored."""
+        await self.capacity.update_one(
+            {'_id': action_id},
+            {'$pull': {'active_runs': {'instance_id': {'$in': instance_ids}}}},
+        )
 
     async def create(self, record: ActionRecord) -> ActionRecord:
         """Insert a new action record."""
@@ -65,17 +220,54 @@ class MongoAsyncActionRepository:
     async def list_active(
         self, after_instance_id: str | None, limit: int
     ) -> list[ActionRecord]:
-        """Page through pending and running actions across all owners."""
-        filters: dict[str, Any] = {'status': {'$in': ['PENDING', 'RUNNING']}}
+        """Page through active actions and non-active records that still hold slots."""
+        active_statuses = ['PENDING', 'RUNNING']
+        filters: dict[str, Any] = {'status': {'$in': active_statuses}}
+        reserved: list[dict[str, Any]] = [{'$unwind': '$active_runs'}]
         if after_instance_id is not None:
-            filters['action_instance_id'] = {'$gt': after_instance_id}
-        documents = (
-            await ActionDocument.find(filters)
-            .sort('action_instance_id')
-            .limit(limit)
-            .to_list()
+            after = {'$gt': after_instance_id}
+            filters['action_instance_id'] = after
+            reserved.append({'$match': {'active_runs.instance_id': after}})
+        collection = ActionDocument.get_pymongo_collection()
+        # A cancellation request can mark a record CANCELED before Temporal ends.
+        # Keep checking it while it holds a slot, without scanning old history.
+        reserved.extend(
+            [
+                {
+                    '$lookup': {
+                        'from': collection.name,
+                        'localField': 'active_runs.instance_id',
+                        'foreignField': 'action_instance_id',
+                        'as': 'record',
+                    }
+                },
+                {'$unwind': '$record'},
+                {
+                    '$match': {
+                        'record.status': {'$nin': active_statuses}  # typos: ignore
+                    }
+                },
+                {'$replaceWith': '$record'},
+            ]
         )
-        return [_record_from_document(document) for document in documents]
+        page: list[dict[str, Any]] = [
+            {'$sort': {'action_instance_id': 1}},
+            {'$limit': limit},
+        ]
+        cursor = await collection.aggregate(
+            [
+                {'$match': filters},
+                *page,
+                {
+                    '$unionWith': {
+                        'coll': _CAPACITY_COLLECTION,
+                        'pipeline': [*reserved, *page],
+                    }
+                },
+                *page,
+            ]
+        )
+        return [_record_from_mongo(document) async for document in cursor]
 
     async def finish_if_active(
         self, action_instance_id: str, status: str, results: Any = None
@@ -205,6 +397,7 @@ class MongoAsyncActionRepository:
     async def claim_pending_signal_input(
         self, action_instance_id: str, user_id: str, signal_fn_name: str
     ) -> SignalInputClaim | None:
+        """Atomically remove and return a pending signal request, if present."""
         document = await self._consume_pending_signal_input(
             action_instance_id, user_id, signal_fn_name
         )
@@ -279,6 +472,67 @@ class MongoAsyncActionRepository:
 
 class MongoSyncActionRepository:
     """MongoDB adapter for the synchronous action repository port."""
+
+    @property
+    def capacity(self):
+        """Return the sync capacity collection shared with async callers."""
+        return self.collection.database.get_collection(
+            _CAPACITY_COLLECTION,
+            write_concern=WriteConcern('majority'),
+            read_preference=ReadPreference.PRIMARY,
+        )
+
+    def reserve_slot(self, definition: ActionDefinition, record: ActionRecord) -> bool:
+        """Atomically reserve a slot if neither concurrency limit is reached.
+
+        On first use, seed the capacity document from existing active records.
+        Return whether the slot was reserved; this does not create an action record.
+        """
+        capacity = self.capacity
+        query = _capacity_filter(definition, record.user_id)
+        update = {'$push': {'active_runs': _slot(record)}}
+        if (
+            capacity.find_one_and_update(query, update, projection={'_id': 1})
+            is not None
+        ):
+            return True
+        if capacity.find_one({'_id': record.action_id}, {'_id': 1}) is None:
+            records = (
+                self.collection.with_options(read_preference=ReadPreference.PRIMARY)
+                .find(
+                    _active_filter(record.action_id),
+                    {'action_instance_id': 1, 'user_id': 1},
+                )
+                .to_list()
+            )
+            try:
+                capacity.update_one(
+                    {'_id': record.action_id},
+                    {'$setOnInsert': {'active_runs': _seed_slots(records)}},
+                    upsert=True,
+                )
+            except DuplicateKeyError:
+                pass  # Another request initialized this action's capacity.
+            return (
+                capacity.find_one_and_update(query, update, projection={'_id': 1})
+                is not None
+            )
+        return False
+
+    def claim_submission(self, record: ActionRecord) -> bool:
+        """Atomically remove the expiry marker before calling Temporal."""
+        result = self.capacity.update_one(
+            _unsubmitted_slot_filter(record),
+            {'$unset': {'active_runs.$.unsubmitted_since': ''}},
+        )
+        return result.modified_count == 1
+
+    def release_slots(self, action_id: str, instance_ids: list[str]) -> None:
+        """Release the specified reservations; missing reservations are ignored."""
+        self.capacity.update_one(
+            {'_id': action_id},
+            {'$pull': {'active_runs': {'instance_id': {'$in': instance_ids}}}},
+        )
 
     @property
     def collection(self):

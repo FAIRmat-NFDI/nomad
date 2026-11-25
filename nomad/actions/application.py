@@ -21,10 +21,12 @@
 import asyncio
 import uuid
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from nomad.actions.domain import (
+    TERMINAL_WORKFLOW_STATUSES,
+    ActionConcurrencyLimitError,
     ActionRecord,
     ActionStatus,
     SignalInputNotFoundError,
@@ -50,6 +52,14 @@ from nomad.common import now
 from nomad.utils.structlogging import get_logger
 
 logger = get_logger(__name__)
+
+_CAPACITY_MESSAGE = (
+    'The maximum number of concurrent runs for this action has been reached.'
+)
+
+
+_SUBMISSION_GRACE_PERIOD = timedelta(minutes=3)
+_EXPIRED_SUBMISSION_MESSAGE = 'Action reservation expired before workflow submission.'
 
 
 class ActionCreation:
@@ -117,7 +127,19 @@ class ActionService:
             raise ValueError(
                 'ActionAssetRef inputs are not supported from ELNs. Use the new Action form in the GUI to create an action.'
             )
-        self.repository.create(record)
+        if not self.repository.reserve_slot(definition, record):
+            raise ActionConcurrencyLimitError(_CAPACITY_MESSAGE)
+        try:
+            self.repository.create(record)
+            if not self.repository.claim_submission(record):
+                self.repository.set_status_for_user(
+                    record.action_instance_id, record.user_id, ActionStatus.FAILED.value
+                )
+                raise RuntimeError(_EXPIRED_SUBMISSION_MESSAGE)
+        except Exception:
+            self.repository.release_slots(action_id, [record.action_instance_id])
+            raise
+        # An ambiguous start error must not release a possibly running workflow.
         self.workflow.start(definition, data, record.action_instance_id, record.user_id)
         return record.action_instance_id
 
@@ -132,8 +154,14 @@ class ActionService:
 
     def get_status(self, action_instance_id: str, user_id: str) -> ActionStatus:
         """Fetch and persist the current status of an owned action."""
-        self.repository.require_for_user(action_instance_id, user_id)
-        status = self.workflow.get_status(action_instance_id) or ActionStatus.TERMINATED
+        action = self.repository.require_for_user(action_instance_id, user_id)
+        status = self.workflow.get_status(action_instance_id)
+        if status in TERMINAL_WORKFLOW_STATUSES:
+            self.repository.release_slots(action.action_id, [action_instance_id])
+        if status is None and action.status == ActionStatus.PENDING:
+            # A reservation may be visible before Temporal accepts the start.
+            return ActionStatus.TERMINATED
+        status = status or ActionStatus.TERMINATED
         self.repository.set_status_for_user(action_instance_id, user_id, status.value)
         return status
 
@@ -152,20 +180,39 @@ class ActionService:
     async def a_start(self, action_id: str, data: Any) -> str:
         """Create and asynchronously start an action, consuming staged assets."""
         definition, record = self.creation.prepare(action_id, data)
-        receipt = await self.creation.assets.consume(
-            data,
-            user_id=record.user_id,
-            instance_id=record.action_instance_id,
-            action_id=action_id,
-        )
+        if not await self.a_repository.reserve_slot(definition, record):
+            raise ActionConcurrencyLimitError(_CAPACITY_MESSAGE)
+        receipt = None
         try:
-            # Asset consumption may rewrite refs in the input; serialize afterwards.
+            receipt = await self.creation.assets.consume(
+                data,
+                user_id=record.user_id,
+                instance_id=record.action_instance_id,
+                action_id=action_id,
+            )
+            # Asset consumption may rewrite refs in the input.
             record.input_data = _to_dict(data)
             await self.a_repository.create(record)
+            if not await self.a_repository.claim_submission(record):
+                await self.a_repository.finish_if_active(
+                    record.action_instance_id, ActionStatus.FAILED.value
+                )
+                raise RuntimeError(_EXPIRED_SUBMISSION_MESSAGE)
+        except (Exception, asyncio.CancelledError):
+            try:
+                await self.a_repository.release_slots(
+                    action_id, [record.action_instance_id]
+                )
+            finally:
+                if receipt is not None:
+                    await self.creation.assets.rollback(receipt)
+            raise
+        try:
             await self.a_workflow.start(
                 definition, data, record.action_instance_id, record.user_id
             )
         except Exception:
+            # Keep the slot if Temporal may have accepted the start.
             await self.creation.assets.rollback(receipt)
             raise
         return record.action_instance_id
@@ -181,8 +228,14 @@ class ActionService:
 
     async def a_get_status(self, action_instance_id: str, user_id: str) -> ActionStatus:
         """Asynchronously fetch and persist an owned action's current status."""
-        await self.a_repository.require_for_user(action_instance_id, user_id)
+        action = await self.a_repository.require_for_user(action_instance_id, user_id)
         status = await self.a_workflow.get_status(action_instance_id)
+        if status in TERMINAL_WORKFLOW_STATUSES:
+            await self.a_repository.release_slots(
+                action.action_id, [action_instance_id]
+            )
+        if status is None and action.status == ActionStatus.PENDING:
+            return ActionStatus.TERMINATED
         status = status or ActionStatus.TERMINATED
         await self.a_repository.set_status_for_user(
             action_instance_id, user_id, status.value
@@ -203,10 +256,14 @@ class ActionService:
 
     async def a_refresh(self, action: ActionRecord) -> ActionRecord:
         """Refresh a stored action's status and completed result from its workflow."""
-        status = (
-            await self.a_workflow.get_status(action.action_instance_id)
-            or ActionStatus.UNKNOWN
-        )
+        status = await self.a_workflow.get_status(action.action_instance_id)
+        if status in TERMINAL_WORKFLOW_STATUSES:
+            await self.a_repository.release_slots(
+                action.action_id, [action.action_instance_id]
+            )
+        if status is None and action.status == ActionStatus.PENDING:
+            return action
+        status = status or ActionStatus.UNKNOWN
         if status == ActionStatus.COMPLETED:
             result = await self.a_workflow.get_result(action.action_instance_id)
             if result is not None:
@@ -223,7 +280,9 @@ class ActionService:
         return updated or action
 
     async def a_reconcile_active(self, page_size: int = 100) -> None:
-        """Scan active actions and persist terminal states from the workflow engine."""
+        """Reclaim unsubmitted slots and persist terminal workflow states."""
+        cutoff = self.clock() - _SUBMISSION_GRACE_PERIOD
+        await self.a_repository.expire_unsubmitted_slots(cutoff)
         after_instance_id = None
         while True:
             actions = await self.a_repository.list_active(after_instance_id, page_size)
@@ -233,10 +292,17 @@ class ActionService:
                 try:
                     status = await self.a_workflow.get_status(action.action_instance_id)
                     if status is None:
-                        # The record can briefly precede workflow creation.
+                        if action.created_at > cutoff:
+                            continue
+                        # Treat a missing workflow as a failed start after the
+                        # grace period, assuming no submission is still in flight.
+                        status = ActionStatus.FAILED
+                    elif status not in TERMINAL_WORKFLOW_STATUSES:
                         continue
-                    if is_active_status(status.value):
-                        continue
+                    # Release first so a failed release can be retried on the next scan.
+                    await self.a_repository.release_slots(
+                        action.action_id, [action.action_instance_id]
+                    )
                     result = None
                     if status == ActionStatus.COMPLETED:
                         result = await self.a_workflow.get_result(

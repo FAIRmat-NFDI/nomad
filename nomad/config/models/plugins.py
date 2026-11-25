@@ -729,6 +729,16 @@ class ActionEntryPoint(EntryPoint):
         None,
         description='Priority fairness key for the action. Determines how priority is assigned between users.',
     )
+    max_concurrent_runs_per_user: int = Field(
+        100,
+        ge=1,
+        description='Limit on pending and running instances of this action per user. Excess requests are rejected, not queued.',
+    )
+    max_concurrent_runs: int = Field(
+        100,
+        ge=1,
+        description='Limit on pending and running instances of this action across all users. Excess requests are rejected, not queued.',
+    )
 
     @model_validator(mode='before')
     @classmethod
