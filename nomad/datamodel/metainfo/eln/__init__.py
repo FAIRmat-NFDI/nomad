@@ -196,10 +196,10 @@ class ElnBaseSection(ArchiveSection):
         super().normalize(archive, logger)
 
         if isinstance(self, EntryData):
-            if archive.data == self and self.name:
-                archive.metadata.entry_name = self.name
-            elif self.name is None:
+            if self.name is None:
                 self.name = archive.metadata.entry_name.split('.')[0].replace('_', ' ')
+            if archive.data == self:
+                archive.metadata.entry_name = self.name
             EntryData.normalize(self, archive, logger)
 
         if not archive.results:
