@@ -76,6 +76,150 @@ async def test_get_specific_app_returns_app_and_search_quantities(client, no_war
     assert isinstance(body['search_quantities'], dict)
 
 
+@pytest.mark.parametrize(
+    'widget, expected_quantities',
+    [
+        pytest.param(
+            {'type': 'terms', 'search_quantity': 'entry_type'},
+            {'entry_type'},
+            id='terms',
+        ),
+        pytest.param(
+            {
+                'type': 'periodic_table',
+                'search_quantity': 'results.material.elements',
+            },
+            {'results.material.elements'},
+            id='periodic-table',
+        ),
+        pytest.param(
+            {
+                'type': 'periodictable',
+                'search_quantity': 'results.material.elements',
+            },
+            {'results.material.elements'},
+            id='periodic-table-deprecated',
+        ),
+        pytest.param(
+            {
+                'type': 'histogram',
+                'x': {'search_quantity': 'results.material.n_elements'},
+            },
+            {'results.material.n_elements'},
+            id='histogram',
+        ),
+        pytest.param(
+            {
+                'type': 'scatter_plot',
+                'x': {'search_quantity': 'results.material.n_elements'},
+                'y': {
+                    'search_quantity': "results.properties.electronic.band_gap[?type=='direct'].value"
+                },
+                'markers': {'color': {'search_quantity': 'entry_type'}},
+            },
+            {
+                'results.material.n_elements',
+                'results.properties.electronic.band_gap.value',
+                'results.properties.electronic.band_gap.type',
+                'entry_type',
+            },
+            id='scatter-plot-with-color-and-jmespath',
+        ),
+        pytest.param(
+            {
+                'type': 'scatterplot',
+                'x': 'results.material.n_elements',
+                'y': 'results.properties.electronic.band_gap.value',
+            },
+            {
+                'results.material.n_elements',
+                'results.properties.electronic.band_gap.value',
+            },
+            id='scatter-plot-deprecated',
+        ),
+        pytest.param(
+            {
+                'type': 'box_plot',
+                'y': {'search_quantity': 'results.material.n_elements'},
+            },
+            {'results.material.n_elements'},
+            id='box-plot-ungrouped',
+        ),
+        pytest.param(
+            {
+                'type': 'box_plot',
+                'y': {
+                    'search_quantity': 'results.properties.electronic.band_gap[*].value'
+                },
+                'group_by': 'results.properties.electronic.band_gap[*].type',
+            },
+            {
+                'results.properties.electronic.band_gap.value',
+                'results.properties.electronic.band_gap.type',
+            },
+            id='box-plot-grouped',
+        ),
+        pytest.param(
+            {
+                'type': 'box_plot',
+                'y': {
+                    'search_quantity': "results.properties.electronic.band_gap[?type=='direct'].value"
+                },
+                'group_by': 'results.material.chemical_formula_hill',
+                'subgroup_by': 'results.material.symmetry.crystal_system',
+                'markers': {
+                    'color': {'search_quantity': 'results.material.n_elements'}
+                },
+            },
+            {
+                'results.properties.electronic.band_gap.value',
+                'results.properties.electronic.band_gap.type',
+                'results.material.chemical_formula_hill',
+                'results.material.symmetry.crystal_system',
+                'results.material.n_elements',
+            },
+            id='box-plot-with-subgroups-color-and-jmespath',
+        ),
+    ],
+)
+def test_build_app_response_widget_search_quantities(
+    widget: dict[str, object],
+    expected_quantities: set[str],
+    monkeypatch,
+    no_warn,
+):
+    """Load exactly the quantities referenced by each widget, including JMESPath extras."""
+    app = App.model_validate(
+        {
+            'label': 'Test App',
+            'path': 'test-app',
+            'category': 'test',
+            'resource': 'entries',
+            'dashboard': {'widgets': [{'layout': {}, **widget}]},
+        }
+    )
+    quantities = {
+        name: apps_router.SearchQuantity(
+            quantity=name, quantity_normalized=apps_router.normalize_name(name)
+        )
+        for name in (
+            'entry_id',
+            'entry_type',
+            'results.material.elements',
+            'results.material.n_elements',
+            'results.material.chemical_formula_hill',
+            'results.material.symmetry.crystal_system',
+            'results.properties.electronic.band_gap.value',
+            'results.properties.electronic.band_gap.type',
+        )
+    }
+    monkeypatch.setattr(apps_router, 'all_search_quantities', quantities)
+
+    response = apps_router._build_app_response(app)
+
+    assert set(response['search_quantities']) == expected_quantities
+
+
 def test_duplicate_app_paths_raise_clear_error(monkeypatch):
     first = AppEntryPoint(
         id='first_app',

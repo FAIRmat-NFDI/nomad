@@ -42,6 +42,7 @@ from nomad.config.models.ui import (
     MenuItemNestedObject,
     MenuItemPeriodicTable,
     MenuItemTerms,
+    WidgetBoxPlot,
     WidgetHistogram,
     WidgetPeriodicTable,
     WidgetScatterPlot,
@@ -617,6 +618,30 @@ def _build_app_response(app: App) -> dict[str, Any]:
                     add_jmespath(
                         cd.search_quantity if not isinstance(cd, str) else cd,
                         'the marker color of a scatter plot widget',
+                    )
+            elif isinstance(widget, WidgetBoxPlot):
+                if widget.y:
+                    add_jmespath(
+                        widget.y.search_quantity
+                        if not isinstance(widget.y, str)
+                        else widget.y,
+                        'the y-axis of a box plot widget',
+                    )
+                if widget.group_by:
+                    add_jmespath(
+                        widget.group_by,
+                        'the grouping quantity of a box plot widget',
+                    )
+                if widget.subgroup_by:
+                    add_jmespath(
+                        widget.subgroup_by,
+                        'the subgrouping quantity of a box plot widget',
+                    )
+                if widget.markers and widget.markers.color:
+                    cd = widget.markers.color
+                    add_jmespath(
+                        cd.search_quantity if not isinstance(cd, str) else cd,
+                        'the marker color of a box plot widget',
                     )
 
     # Menus
