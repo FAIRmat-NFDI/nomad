@@ -139,17 +139,19 @@ class NORTHTool(BaseModel):
     with_path: bool = Field(
         False,
         description=(
-            'Whether the path of the file or directory the tool was launched '
-            'from is forwarded to the tool so it can open or deep-link to that '
-            'item. When enabled, the launcher passes the item path to the tool: '
-            'in the old hub it is appended to the tool URL via `path_prefix` '
-            '(e.g. `lab/tree/<path>` for JupyterLab); in the new hub it is sent '
-            'as `upload_id`/`path` query parameters for a handler inside the '
-            'tool image to consume. Only meaningful for tools that can open a '
-            'file from a URL (e.g. JupyterLab); set to False for tools that '
-            'cannot, such as desktop (noVNC) apps like VESTA or FIJI. This does '
-            'NOT control whether the tool is offered for a file in the NOMAD '
-            'UI. That is determined solely by `file_extensions`.'
+            'Whether the tool is opened at the project, folder or file it was '
+            'launched from. When enabled with the new hub, the NOMAD UI opens '
+            '`<north_base>/user-redirect/<tool>/<path_prefix>/projects/<project_id>/<path>`, '
+            "which the hub forwards to the user's server for this tool, starting "
+            'it first if needed; projects are mounted at '
+            '`<mount_path>/projects/<project_id>`. With the old hub, the UI opens '
+            '`<path_prefix>/<upload_mount_dir>/<path>` instead. When disabled, '
+            'the tool is opened at its `default_url`. Only meaningful for tools '
+            'that can open a file from a URL (e.g. JupyterLab, where `path_prefix` '
+            'is "lab/tree"); set to False for tools that cannot, such as desktop '
+            '(noVNC) apps like VESTA or FIJI. This does NOT control whether the '
+            'tool is offered for a file in the NOMAD UI. That is determined '
+            'solely by `file_extensions`.'
         ),
     )
     file_extensions: list[str] = Field(
@@ -159,8 +161,8 @@ class NORTHTool(BaseModel):
     mount_path: str | None = Field(
         None,
         description=(
-            'The path in the container where uploads and work directories will be mounted, '
-            'e.g. /home/jovyan for Jupyter containers.'
+            'The path in the container where the projects and the work directory '
+            'are mounted, e.g. /home/jovyan for Jupyter containers.'
         ),
     )
     icon: str | None = Field(

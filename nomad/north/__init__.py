@@ -25,7 +25,6 @@ from nomad.config.models.plugins import NorthToolEntryPoint
 from nomad.datamodel.data import User
 from nomad.mongo.groups import MongoUserGroup
 from nomad.processing import Upload
-from nomad.utils import slugify
 
 from ..app.v1.models.north import Mount, ReadMode, ToolModel
 
@@ -51,10 +50,15 @@ def get_tools() -> dict[str, ToolModel]:
 
 
 def get_upload_dir_name(upload: Upload) -> str:
-    # On Linux: The maximum length for a file name is 255 bytes
-    if upload.upload_name:
-        return f'uploads/{slugify(upload.upload_name)[:230]}-{upload.upload_id}'
-    return f'uploads/{upload.upload_id}'
+    """Return the directory, relative to the tool's `mount_path`, where the
+    project (upload) is mounted.
+
+    The name only depends on the project id, so that clients (e.g. the NOMAD UI)
+    can build the path to a project, folder or file in the tool without asking
+    the API, and the directory does not move when the project is renamed. Keep
+    this in sync with the NOMAD UI (nomad-gui `NorthToolsProvider`).
+    """
+    return f'projects/{upload.upload_id}'
 
 
 def get_mounts(user: User, tool: ToolModel) -> list[Mount]:
