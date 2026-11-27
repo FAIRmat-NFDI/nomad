@@ -701,6 +701,106 @@ class TestAdminUploads:
         else:
             assert entry.process_status == expected_state
 
+    @pytest.mark.parametrize(
+        'running_workflow_ids',
+        [pytest.param([], id='stale'), pytest.param(['wf-running'], id='running')],
+    )
+    def test_reset_workflow_lock(
+        self, user1, mongo_function, monkeypatch, running_workflow_ids
+    ):
+        """
+        `nomad admin uploads reset` must release the workflow lock, but only when
+        none of the upload's workflows are still running.
+
+        The upload starts as PENDING with a stale workflow id in `workflow_ids`.
+        Before this fix, reset set the status to READY but kept the stale id, so
+        the upload stayed blocked. In the `stale` case no workflow is running:
+        reset clears `workflow_ids` and resets the upload and its entries. In the
+        `running` case a workflow is still running: the command exits with an
+        error naming the upload and the running workflow, and leaves the upload
+        and its entries unchanged. Temporal is replaced by patching
+        `Upload.get_running_workflow_ids`.
+        """
+        upload_id = 'test_reset_workflow_lock_upload'
+        data = ExampleData(main_author=user1)
+        data.create_upload(upload_id=upload_id)
+        data.create_entry(upload_id=upload_id)
+        data.save(with_es=False, with_files=False)
+        Upload.objects(upload_id=upload_id).update(
+            set__process_status=ProcessStatus.PENDING,
+            set__workflow_ids=['wf-stale', *running_workflow_ids],
+        )
+        monkeypatch.setattr(
+            Upload, 'get_running_workflow_ids', lambda self: running_workflow_ids
+        )
+
+        result = invoke_cli(
+            cli,
+            ['admin', 'uploads', 'reset', '--with-entries', upload_id],
+            catch_exceptions=False,
+        )
+
+        upload = Upload.objects(upload_id=upload_id).first()
+        entry = Entry.objects(upload_id=upload_id).first()
+        if running_workflow_ids:
+            assert result.exit_code != 0
+            assert 'wf-running' in result.output
+            assert upload_id in result.output
+            assert upload.process_status == ProcessStatus.PENDING
+            assert upload.workflow_ids == ['wf-stale', 'wf-running']
+            assert entry.process_status == ProcessStatus.SUCCESS
+        else:
+            assert result.exit_code == 0
+            assert upload.process_status == ProcessStatus.READY
+            assert upload.workflow_ids == []
+            assert entry.process_status == ProcessStatus.READY
+
+    def test_process_resets_stuck_upload(self, user1, mongo_function, monkeypatch):
+        upload_id = 'test_process_resets_stuck_upload'
+        data = ExampleData(main_author=user1)
+        data.create_upload(upload_id=upload_id)
+        data.create_entry(upload_id=upload_id)
+        data.save(with_es=False, with_files=False)
+        Upload.objects(upload_id=upload_id).update(
+            set__process_status=ProcessStatus.PENDING,
+            set__current_process='_process_upload',
+            set__workflow_ids=['wf-stale'],
+        )
+        monkeypatch.setattr(Upload, 'get_running_workflow_ids', lambda self: [])
+
+        stored_before_processing = {}
+
+        def fake_process_upload(self, **kwargs):
+            stored = Upload.objects(upload_id=self.upload_id).first()
+            stored_before_processing.update(
+                process_status=stored.process_status,
+                workflow_ids=list(stored.workflow_ids),
+            )
+            # Reserve the upload like the real process_upload does. This fails
+            # if the reset was not persisted.
+            self.setup_upload_for_workflow('wf-new', '_process_upload')
+            # Stand in for the workflow completing.
+            Upload.objects(upload_id=self.upload_id).update(
+                set__process_status=ProcessStatus.SUCCESS, set__workflow_ids=[]
+            )
+
+        monkeypatch.setattr(Upload, 'process_upload', fake_process_upload)
+
+        result = invoke_cli(
+            cli,
+            ['admin', 'uploads', 'process', '--process-running', upload_id],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0
+        assert stored_before_processing == {
+            'process_status': ProcessStatus.READY,
+            'workflow_ids': [],
+        }
+        upload = Upload.objects(upload_id=upload_id).first()
+        assert upload.process_status == ProcessStatus.SUCCESS
+        assert upload.workflow_ids == []
+
     @pytest.mark.parametrize('all_entries', ['--check-all-entries', ''])
     @pytest.mark.parametrize('indexed', [True, False])
     @pytest.mark.parametrize('check_item', ['--entry-mismatch', '--missing-index'])

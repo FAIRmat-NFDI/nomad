@@ -413,7 +413,18 @@ def publish_upload_activity(input: PublishUploadWorkflowInput):
 
 @activity.defn
 def finalize_upload_processing_activity(input: FinalizeUploadProcessingInput):
-    upload = Upload.get(input.upload_id)
+    def remove_workflow_tmp_dir():
+        if input.workflow_tmp_dir and os.path.exists(input.workflow_tmp_dir):
+            shutil.rmtree(input.workflow_tmp_dir, ignore_errors=True)
+
+    try:
+        upload = Upload.get(input.upload_id)
+    except KeyError:
+        # The upload was deleted (e.g. by a delete that preempted this workflow,
+        # or a delete that failed after removing the record); nothing to finalize.
+        remove_workflow_tmp_dir()
+        return
+
     if input.result == 'success':
         # When processing is not triggered, set READY so processing can be started manually.
         upload.process_status = (
@@ -433,8 +444,7 @@ def finalize_upload_processing_activity(input: FinalizeUploadProcessingInput):
         upload.workflow_ids.remove(input.workflow_id)  # type: ignore
     upload.save()
 
-    if input.workflow_tmp_dir and os.path.exists(input.workflow_tmp_dir):
-        shutil.rmtree(input.workflow_tmp_dir, ignore_errors=True)
+    remove_workflow_tmp_dir()
 
     # Deferred processing and ownership transfers do not produce job inbox rows.
     # Run IDs distinguish reused workflow IDs while keeping activity retries idempotent.

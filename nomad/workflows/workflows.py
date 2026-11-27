@@ -107,30 +107,48 @@ class DeleteUploadWorkflow:
         heartbeat_timeout = timedelta(
             seconds=config.temporal.processing_timeouts.internal_processing_heartbeat_timeout
         )
-        await workflow.execute_activity(
-            delete_upload_search_activity,
-            input,
-            schedule_to_close_timeout=timeout,
-            heartbeat_timeout=heartbeat_timeout,
-            retry_policy=retry_policy,
-            priority=DELETE_UPLOAD_PRIORITY,
-        )
-        await workflow.execute_activity(
-            delete_upload_files_activity,
-            input,
-            schedule_to_close_timeout=timeout,
-            heartbeat_timeout=heartbeat_timeout,
-            retry_policy=retry_policy,
-            priority=DELETE_UPLOAD_PRIORITY,
-        )
-        await workflow.execute_activity(
-            delete_upload_record_activity,
-            input,
-            schedule_to_close_timeout=timeout,
-            heartbeat_timeout=heartbeat_timeout,
-            retry_policy=retry_policy,
-            priority=DELETE_UPLOAD_PRIORITY,
-        )
+        try:
+            await workflow.execute_activity(
+                delete_upload_search_activity,
+                input,
+                schedule_to_close_timeout=timeout,
+                heartbeat_timeout=heartbeat_timeout,
+                retry_policy=retry_policy,
+                priority=DELETE_UPLOAD_PRIORITY,
+            )
+            await workflow.execute_activity(
+                delete_upload_files_activity,
+                input,
+                schedule_to_close_timeout=timeout,
+                heartbeat_timeout=heartbeat_timeout,
+                retry_policy=retry_policy,
+                priority=DELETE_UPLOAD_PRIORITY,
+            )
+            await workflow.execute_activity(
+                delete_upload_record_activity,
+                input,
+                schedule_to_close_timeout=timeout,
+                heartbeat_timeout=heartbeat_timeout,
+                retry_policy=retry_policy,
+                priority=DELETE_UPLOAD_PRIORITY,
+            )
+        except Exception as e:
+            # On success the upload record is gone; only a failed delete leaves a
+            # record whose workflow lock must be released.
+            await workflow.execute_activity(
+                finalize_upload_processing_activity,
+                FinalizeUploadProcessingFailureInput(
+                    result='failure',
+                    upload_id=input.upload_id,
+                    workflow_id=workflow.info().workflow_id,
+                    failure_message='Delete upload failed',
+                    error_details=extract_temporal_error_details(e),
+                ),
+                schedule_to_close_timeout=timeout,
+                retry_policy=retry_policy,
+                priority=DELETE_UPLOAD_PRIORITY,
+            )
+            raise e
 
 
 @workflow.defn

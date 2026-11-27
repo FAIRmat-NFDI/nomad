@@ -33,6 +33,7 @@ from nomad.config import config
 from nomad.processing.base import ProcessFailure, ProcessStatus
 from nomad.processing.data import Upload
 from nomad.workflows.activities import (
+    finalize_upload_processing_activity,
     get_cleanup_entry_batch_from_file,
     handle_heartbeat_failure_activity,
     prepare_cleanup_activity,
@@ -45,6 +46,7 @@ from nomad.workflows.shared_objects import (
     CleanupEntryBatchFromFileInput,
     DeleteUploadWorkflowInput,
     EditUploadMetadataWorkflowInput,
+    FinalizeUploadProcessingFailureInput,
     ImportBundleWorkflowInput,
     ProcessEntryActivityInput,
     ProcessEntryBatchFromFileInput,
@@ -315,6 +317,77 @@ class TestDeleteUploadWorkflow:
             # Verify file deletion was not called since files don't exist
             mock_data_layer['staging_files_instance'].delete.assert_not_called()
             mock_data_layer['public_files_instance'].delete.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_successful_deletion_does_not_finalize(
+        self,
+        mock_data_layer,
+        temporal_worker,
+    ):
+        """The upload record is gone after a successful delete; nothing to finalize."""
+        async with temporal_worker() as env:
+            await env.client.execute_workflow(
+                'DeleteUploadWorkflow',
+                TestFixtures.delete_upload_input(),
+                id=f'test-delete-upload-workflow-{uuid.uuid4()}',
+                task_queue=TaskQueue.NOMAD_INTERNAL_WORKFLOWS,
+            )
+
+        mock_data_layer['upload_class'].get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_failed_deletion_releases_workflow_lock(
+        self,
+        mock_data_layer,
+        temporal_worker,
+    ):
+        """A failed delete removes its workflow id and marks the upload as failed."""
+        workflow_id = f'test-delete-upload-workflow-{uuid.uuid4()}'
+        upload = mock_data_layer['upload_instance']
+        upload.workflow_ids = [workflow_id]
+        upload.errors = []
+
+        def mock_fail(*errors):
+            upload.process_status = ProcessStatus.FAILURE
+            upload.errors.extend(str(error) for error in errors)
+
+        upload.fail = mock_fail
+        mock_data_layer['delete_upload'].side_effect = Exception('ES is down')
+
+        async with temporal_worker() as env:
+            with pytest.raises(WorkflowFailureError):
+                await env.client.execute_workflow(
+                    'DeleteUploadWorkflow',
+                    TestFixtures.delete_upload_input(),
+                    id=workflow_id,
+                    task_queue=TaskQueue.NOMAD_INTERNAL_WORKFLOWS,
+                )
+
+        assert upload.workflow_ids == []
+        assert upload.process_status == ProcessStatus.FAILURE
+        assert upload.last_status_message == 'Delete upload failed'
+        assert any('ES is down' in error for error in upload.errors)
+        upload.save.assert_called()
+        # The delete stopped at the first activity.
+        mock_data_layer['upload_objects'].delete.assert_not_called()
+
+    def test_finalize_skips_deleted_upload(self, mock_data_layer, tmp_path):
+        """Finalizing a workflow for an upload that no longer exists is a no-op."""
+        mock_data_layer['upload_class'].get.side_effect = KeyError(TEST_UPLOAD_ID)
+        workflow_tmp_dir = tmp_path / 'workflow-tmp'
+        workflow_tmp_dir.mkdir()
+
+        finalize_upload_processing_activity(
+            FinalizeUploadProcessingFailureInput(
+                result='failure',
+                upload_id=TEST_UPLOAD_ID,
+                workflow_id='some-workflow',
+                workflow_tmp_dir=str(workflow_tmp_dir),
+            )
+        )
+
+        assert not workflow_tmp_dir.exists()
+        mock_data_layer['notification_service'].emit.assert_not_called()
 
 
 class TestProcessEntryWorkflow:

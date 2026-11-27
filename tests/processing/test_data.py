@@ -28,7 +28,8 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 import yaml
-from temporalio.client import WorkflowFailureError
+from temporalio.client import WorkflowExecutionStatus, WorkflowFailureError
+from temporalio.service import RPCError, RPCStatusCode
 
 from nomad import infrastructure, utils
 from nomad.archive import to_json
@@ -1730,11 +1731,12 @@ async def test_delete_upload_does_not_preempt_existing_delete_workflow():
     handle = SimpleNamespace(
         describe=AsyncMock(
             return_value=SimpleNamespace(
+                status=WorkflowExecutionStatus.RUNNING,
                 raw_description=SimpleNamespace(
                     workflow_execution_info=SimpleNamespace(
                         type=SimpleNamespace(name='DeleteUploadWorkflow')
                     )
-                )
+                ),
             )
         ),
         terminate=AsyncMock(),
@@ -1745,3 +1747,143 @@ async def test_delete_upload_does_not_preempt_existing_delete_workflow():
         await upload._terminate_non_delete_workflows_for_delete(client)
 
     handle.terminate.assert_not_called()
+
+
+def _workflow_handle(status, workflow_type='UpdateUploadWorkflow'):
+    return SimpleNamespace(
+        describe=AsyncMock(
+            return_value=SimpleNamespace(
+                status=status,
+                raw_description=SimpleNamespace(
+                    workflow_execution_info=SimpleNamespace(
+                        type=SimpleNamespace(name=workflow_type)
+                    )
+                ),
+            )
+        ),
+        terminate=AsyncMock(),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    'status',
+    [
+        WorkflowExecutionStatus.FAILED,
+        WorkflowExecutionStatus.TIMED_OUT,
+        WorkflowExecutionStatus.TERMINATED,
+        WorkflowExecutionStatus.COMPLETED,
+    ],
+)
+async def test_delete_upload_ignores_closed_delete_workflow(status):
+    """
+    A delete workflow that is no longer running must not block a new delete.
+
+    A failed delete used to leave its workflow id in `workflow_ids`, and every later
+    delete was refused with "already being deleted". Here the registered
+    `DeleteUploadWorkflow` is closed, so the pre-delete check must not raise and
+    must not terminate it. It returns the current workflow ids and status, which
+    `setup_delete_upload_workflow` then uses to replace the stale id.
+    """
+    upload = Upload(
+        upload_id='test-upload',
+        main_author='test-author',
+        process_status=ProcessStatus.PENDING,
+        workflow_ids=['delete-workflow'],
+    )
+    handle = _workflow_handle(status, 'DeleteUploadWorkflow')
+    client = SimpleNamespace(get_workflow_handle=Mock(return_value=handle))
+
+    (
+        workflow_ids,
+        process_status,
+    ) = await upload._terminate_non_delete_workflows_for_delete(client)
+
+    assert workflow_ids == ['delete-workflow']
+    assert process_status == ProcessStatus.PENDING
+    handle.terminate.assert_not_called()
+
+
+def _mock_temporal_client(monkeypatch, handles: dict):
+    def get_workflow_handle(workflow_id):
+        handle = handles[workflow_id]
+        if isinstance(handle, Exception):
+            return SimpleNamespace(describe=AsyncMock(side_effect=handle))
+        return handle
+
+    client = SimpleNamespace(get_workflow_handle=Mock(side_effect=get_workflow_handle))
+
+    async def mock_get_client():
+        return client
+
+    monkeypatch.setattr('nomad.processing.data.get_client', mock_get_client)
+    return client
+
+
+def test_upload_reset_clears_stale_workflow_ids(monkeypatch, mongo_function):
+    upload = Upload.create(main_author=SimpleNamespace(user_id='test-author'))
+    upload.process_status = ProcessStatus.PENDING
+    upload.current_process = 'delete_upload'
+    upload.workflow_ids = ['closed-workflow', 'unknown-workflow']
+    upload.save()
+    _mock_temporal_client(
+        monkeypatch,
+        {
+            'closed-workflow': _workflow_handle(WorkflowExecutionStatus.FAILED),
+            'unknown-workflow': RPCError('not found', RPCStatusCode.NOT_FOUND, b''),
+        },
+    )
+
+    upload.reset(force=True)
+    upload.save()
+
+    upload = Upload.get(upload.upload_id)
+    assert upload.workflow_ids == []
+    assert upload.process_status == ProcessStatus.READY
+    assert upload.current_process is None
+    # The upload can be reserved for a new workflow again.
+    upload.setup_upload_for_workflow('new-workflow', '_process_upload')
+    assert upload.workflow_ids == ['new-workflow']
+
+
+def test_upload_reset_refuses_with_running_workflow(monkeypatch):
+    upload = Upload(
+        upload_id='test-upload',
+        main_author='test-author',
+        process_status=ProcessStatus.RUNNING,
+        current_process='_process_upload',
+        workflow_ids=['closed-workflow', 'running-workflow'],
+    )
+    _mock_temporal_client(
+        monkeypatch,
+        {
+            'closed-workflow': _workflow_handle(WorkflowExecutionStatus.COMPLETED),
+            'running-workflow': _workflow_handle(WorkflowExecutionStatus.RUNNING),
+        },
+    )
+
+    with pytest.raises(ProcessAlreadyRunning, match='running-workflow'):
+        upload.reset(force=True)
+
+    assert upload.process_status == ProcessStatus.RUNNING
+    assert upload.current_process == '_process_upload'
+    assert upload.workflow_ids == ['closed-workflow', 'running-workflow']
+
+
+def test_upload_reset_raises_when_temporal_unavailable(monkeypatch):
+    upload = Upload(
+        upload_id='test-upload',
+        main_author='test-author',
+        process_status=ProcessStatus.RUNNING,
+        workflow_ids=['some-workflow'],
+    )
+    _mock_temporal_client(
+        monkeypatch,
+        {'some-workflow': RPCError('unavailable', RPCStatusCode.UNAVAILABLE, b'')},
+    )
+
+    with pytest.raises(RPCError):
+        upload.reset(force=True)
+
+    assert upload.process_status == ProcessStatus.RUNNING
+    assert upload.workflow_ids == ['some-workflow']
