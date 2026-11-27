@@ -59,7 +59,7 @@ from pymongo import UpdateOne
 from structlog import wrap_logger
 from structlog.processors import StackInfoRenderer, TimeStamper, format_exc_info
 from temporalio import activity
-from temporalio.client import WorkflowFailureError
+from temporalio.client import WorkflowExecutionStatus, WorkflowFailureError
 from temporalio.common import RetryPolicy
 from temporalio.service import RPCError, RPCStatusCode
 
@@ -1884,6 +1884,68 @@ class Upload(Proc):
 
         Entry.objects(**query).update(set__process_status=ProcessStatus.READY)
 
+    def reset(
+        self,
+        force: bool = False,
+        worker_hostname: str | None = None,
+        process_status: str = ProcessStatus.READY,
+        errors: list[str] = None,
+        clear_queue: bool = True,
+    ):
+        """
+        Resets the process status and releases the Temporal workflow lock by
+        clearing `workflow_ids`. Changes are not saved; the caller must call `save()`.
+
+        Before anything is changed, Temporal is asked about every registered workflow.
+        The reset is refused if any of them is still running, because that workflow
+        could otherwise keep modifying the upload after the reset.
+
+        Raises:
+            ProcessAlreadyRunning: If any registered workflow is still running. The
+                message names the running workflow ids. Nothing is changed.
+            RPCError: If Temporal could not be queried for a workflow.
+        """
+        running_workflow_ids = self.get_running_workflow_ids()
+        if running_workflow_ids:
+            raise ProcessAlreadyRunning(
+                f'Upload {self.upload_id} still has running workflows: '
+                f'{", ".join(running_workflow_ids)}'
+            )
+        super().reset(
+            force=force,
+            worker_hostname=worker_hostname,
+            process_status=process_status,
+            errors=errors,
+            clear_queue=clear_queue,
+        )
+        self.workflow_ids = []
+
+    def get_running_workflow_ids(self) -> list[str]:
+        """
+        Returns the ids in `workflow_ids` whose Temporal workflow is still running.
+        Workflows that are closed or unknown to Temporal are not included.
+
+        Raises:
+            RPCError: If Temporal could not be queried for a workflow.
+        """
+        if not self.workflow_ids:
+            return []
+        return run_async(self._a_get_running_workflow_ids())
+
+    async def _a_get_running_workflow_ids(self) -> list[str]:
+        client = await get_client()
+        running_workflow_ids = []
+        for workflow_id in self.workflow_ids:  # type: ignore
+            try:
+                description = await client.get_workflow_handle(workflow_id).describe()
+            except RPCError as e:
+                if e.status == RPCStatusCode.NOT_FOUND:
+                    continue
+                raise
+            if description.status == WorkflowExecutionStatus.RUNNING:
+                running_workflow_ids.append(workflow_id)
+        return running_workflow_ids
+
     async def await_workflows(self):
         self.reload()
         while self.process_running:
@@ -2063,7 +2125,11 @@ class Upload(Proc):
                 raise e
 
             if workflow_type == 'DeleteUploadWorkflow':
-                raise ProcessAlreadyRunning('Upload is already being deleted')
+                if description.status == WorkflowExecutionStatus.RUNNING:
+                    raise ProcessAlreadyRunning('Upload is already being deleted')
+                # A closed delete workflow is a stale leftover (e.g. a failed
+                # delete); it is replaced by the new delete workflow below.
+                continue
 
             try:
                 await handle.terminate()

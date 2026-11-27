@@ -138,12 +138,26 @@ def _run_processing(
             )
             return False
 
-        if reset_first:
-            upload.reset(force=True)
-        elif upload.process_running:
-            upload.reset(force=True, process_status=proc.ProcessStatus.FAILURE)
+        reset = reset_first or upload.process_running
+        try:
+            if reset_first:
+                upload.reset(force=True)
+            elif upload.process_running:
+                upload.reset(force=True, process_status=proc.ProcessStatus.FAILURE)
+        except proc.ProcessAlreadyRunning as e:
+            logger.warn(
+                f'cannot trigger {label}, since the upload has running workflows',
+                error=str(e),
+                upload_id=upload.upload_id,
+            )
+            return False
 
-        upload.reload()
+        if reset:
+            # reset() only changes the object in memory, but the workflow
+            # reservation in process() checks the stored state.
+            upload.save()
+        else:
+            upload.reload()
         process(upload)
         if wait_until_complete:
             upload.block_until_complete(interval=0.5)
@@ -583,7 +597,24 @@ def reset(ctx, uploads, with_entries, success, failure):
     print(f'{uploads_count} uploads selected, resetting their processing ...')
 
     i = 0
+    not_reset = []
     for upload in uploads:
+        # Check first, so that nothing (including entries) is reset for uploads
+        # with workflows that could still modify them.
+        try:
+            running_workflow_ids = upload.get_running_workflow_ids()
+        except Exception as e:
+            print(f'cannot reset {upload.upload_id}: failed to query Temporal: {e}')
+            not_reset.append(upload.upload_id)
+            continue
+        if running_workflow_ids:
+            print(
+                f'cannot reset {upload.upload_id}: it still has running workflows: '
+                f'{", ".join(running_workflow_ids)}'
+            )
+            not_reset.append(upload.upload_id)
+            continue
+
         if with_entries:
             entry_update = proc.Entry.reset_pymongo_update()
             if success:
@@ -603,6 +634,12 @@ def reset(ctx, uploads, with_entries, success, failure):
         upload.save()
         i += 1
         print(f'reset {i} of {uploads_count} uploads')
+
+    if not_reset:
+        raise click.ClickException(
+            f'{len(not_reset)} uploads were not reset: {", ".join(not_reset)}. '
+            'Terminate their running workflows in Temporal first.'
+        )
 
 
 @uploads.command(help='(Re-)index all entries of the given uploads.')
